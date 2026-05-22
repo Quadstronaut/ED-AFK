@@ -32,6 +32,13 @@ def _parser() -> argparse.ArgumentParser:
         help="replay a journal file through the parser and print event counts",
     )
     sub_replay.add_argument("journal", type=Path, help="path to Journal.*.log")
+    sub_replay.add_argument(
+        "--record",
+        type=Path,
+        default=None,
+        metavar="OUT",
+        help="also write the replayed events as a session JSONL at OUT",
+    )
 
     sub.add_parser("doctor", help="check environment + config + binds + EDHM")
 
@@ -42,20 +49,122 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("restore-binds", help="restore the player's StartPreset")
 
+    sub_run = sub.add_parser(
+        "run",
+        help="run the bot main loop (Phase 12 — minimal: tail + record, no key sending yet)",
+    )
+    sub_run.add_argument(
+        "--journal-dir", type=Path, default=None,
+        help="override journal directory (default: from config.toml)",
+    )
+    sub_run.add_argument(
+        "--sessions-dir", type=Path, default=None,
+        help="override session output dir (default: $ED_AFK_SESSIONS_DIR or ~/ed-afk-sessions)",
+    )
+    sub_run.add_argument(
+        "--duration", type=float, default=0.0,
+        help="how many seconds to tail the journal before exiting (0 = exit immediately, useful for dry-run)",
+    )
+    sub_run.add_argument(
+        "--record", dest="record", action="store_true", default=False,
+        help="record session events to JSONL (default: off)",
+    )
+    sub_run.add_argument(
+        "--no-record", dest="record", action="store_false",
+        help="explicitly disable recording (default behaviour)",
+    )
+    sub_run.add_argument(
+        "--engage-keys", dest="engage_keys", action="store_true", default=False,
+        help="actually send DirectInput keys (default: off — NullSender, for safe dev runs)",
+    )
+    sub_run.add_argument(
+        "--no-engage-keys", dest="engage_keys", action="store_false",
+        help="explicitly disable key sending (default behaviour)",
+    )
+
     return p
 
 
 def cmd_replay(args) -> int:
     from .journal.tail import JournalTail
+    from .recorder import Recorder
     from collections import Counter
 
     tail = JournalTail(args.journal.parent)
     counts: Counter[str] = Counter()
-    for ev in tail.replay_file(args.journal):
-        counts[ev.event] += 1
+    recorder: Recorder | None = None
+    if getattr(args, "record", None) is not None:
+        recorder = Recorder(args.record)
+    try:
+        for ev in tail.replay_file(args.journal):
+            counts[ev.event] += 1
+            if recorder is not None:
+                recorder.record_journal(ev)
+    finally:
+        if recorder is not None:
+            recorder.close()
     for name, n in counts.most_common():
         print(f"{name:32} {n}")
     return 0
+
+
+def cmd_run(args) -> int:
+    """Phase-12 minimal main loop.
+
+    Currently does: open journal tail at `--journal-dir`, optionally open a
+    Recorder at `--sessions-dir`, loop calling `tail.step()` until
+    `--duration` seconds have elapsed. Does NOT yet dispatch executors or
+    send keys — `--engage-keys` is reserved for when the integration loop
+    lands. Use this for capturing real overnight sessions where you drive
+    the ship manually and want the bot to record your decisions.
+    """
+    import time
+    from datetime import datetime, timezone
+
+    from .journal.tail import JournalTail
+    from .recorder import Recorder, default_session_path
+
+    journal_dir = args.journal_dir
+    if journal_dir is None:
+        cfg = load_config(args.config if args.config.is_file() else None)
+        journal_dir = cfg.paths.journal_dir_expanded()
+
+    recorder: Recorder | None = None
+    if args.record:
+        if args.sessions_dir is not None:
+            args.sessions_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S")
+            session_path = args.sessions_dir / f"session_{stamp}.jsonl"
+        else:
+            session_path = default_session_path()
+        recorder = Recorder(session_path)
+        print(f"recording -> {session_path}")
+
+    if args.engage_keys:
+        print("WARNING: --engage-keys requested but executor dispatch not yet wired; ignoring")
+
+    try:
+        tail = JournalTail(journal_dir)
+        if args.duration <= 0:
+            return 0
+        deadline = time.monotonic() + args.duration
+        poll_interval = 0.5
+        while time.monotonic() < deadline:
+            try:
+                events = tail.step()
+            except FileNotFoundError:
+                events = []
+            for ev in events:
+                if recorder is not None:
+                    recorder.record_journal(ev)
+            time.sleep(poll_interval)
+        return 0
+    except KeyboardInterrupt:
+        print("\ninterrupted")
+        return 130
+    finally:
+        if recorder is not None:
+            recorder.close()
 
 
 def cmd_doctor(args) -> int:
@@ -103,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": cmd_doctor,
         "install-binds": cmd_install_binds,
         "restore-binds": cmd_restore_binds,
+        "run": cmd_run,
     }
     return dispatch[cmd](args)
 
