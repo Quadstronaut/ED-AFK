@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  ED-AFK keyboard-only binds preset.
+
+  Activated by writing "ED-AFK" to line 2 of StartPreset.4.start (Ship cockpit
+  slot). Player's existing General/SRV/On-Foot presets remain active.
+
+  All keys are reachable from the right hand on QWERTY US. The bot never
+  uses arrow keys or mouse — they're free for the player to use even when
+  this preset is active.
+
+  Reference: SPEC §5.1.5 (logical-action catalogue) and §5.1.6 (sample bot
+  binds).
+-->
+<Root PresetName="ED-AFK" MajorVersion="4" MinorVersion="2">
+  <KeyboardLayout>en-US</KeyboardLayout>
+
+  <!-- FSD / hyperspace -->
+  <HyperSuperCombination>
+    <Primary Device="Keyboard" Key="Key_J" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </HyperSuperCombination>
+  <Supercruise>
+    <Primary Device="Keyboard" Key="Key_K" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </Supercruise>
+  <Hyperspace>
+    <Primary Device="Keyboard" Key="Key_L" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </Hyperspace>
+  <TargetNextRouteSystem>
+    <Primary Device="Keyboard" Key="Key_H" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </TargetNextRouteSystem>
+
+  <!-- Throttle -->
+  <ForwardKey>
+    <Primary Device="Keyboard" Key="Key_W" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ForwardKey>
+  <BackwardKey>
+    <Primary Device="Keyboard" Key="Key_S" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </BackwardKey>
+  <SetSpeedZero>
+    <Primary Device="Keyboard" Key="Key_Numpad_0" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SetSpeedZero>
+  <SetSpeed25>
+    <Primary Device="Keyboard" Key="Key_Numpad_2" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SetSpeed25>
+  <SetSpeed50>
+    <Primary Device="Keyboard" Key="Key_Numpad_5" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SetSpeed50>
+  <SetSpeed75>
+    <Primary Device="Keyboard" Key="Key_Numpad_7" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SetSpeed75>
+  <SetSpeed100>
+    <Primary Device="Keyboard" Key="Key_Numpad_9" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SetSpeed100>
+
+  <!-- Attitude -->
+  <PitchUpButton>
+    <Primary Device="Keyboard" Key="Key_I" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </PitchUpButton>
+  <PitchDownButton>
+    <Primary Device="Keyboard" Key="Key_O" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </PitchDownButton>
+  <YawLeftButton>
+    <Primary Device="Keyboard" Key="Key_A" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </YawLeftButton>
+  <YawRightButton>
+    <Primary Device="Keyboard" Key="Key_D" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </YawRightButton>
+  <RollLeftButton>
+    <Primary Device="Keyboard" Key="Key_Q" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </RollLeftButton>
+  <RollRightButton>
+    <Primary Device="Keyboard" Key="Key_E" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </RollRightButton>
+
+  <!-- Lateral / vertical thrust (docking, v2) -->
+  <LeftThrustButton>
+    <Primary Device="Keyboard" Key="Key_LeftBracket" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </LeftThrustButton>
+  <RightThrustButton>
+    <Primary Device="Keyboard" Key="Key_RightBracket" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </RightThrustButton>
+  <UpThrustButton>
+    <Primary Device="Keyboard" Key="Key_Apostrophe" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UpThrustButton>
+  <DownThrustButton>
+    <Primary Device="Keyboard" Key="Key_SemiColon" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </DownThrustButton>
+
+  <!-- Emergency -->
+  <UseBoostJuice>
+    <Primary Device="Keyboard" Key="Key_Tab" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UseBoostJuice>
+  <DeployHardpointToggle>
+    <Primary Device="Keyboard" Key="Key_U" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </DeployHardpointToggle>
+  <ToggleCargoScoop>
+    <Primary Device="Keyboard" Key="Key_Y" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ToggleCargoScoop>
+  <LandingGearToggle>
+    <Primary Device="Keyboard" Key="Key_T" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </LandingGearToggle>
+  <DeployHeatSink>
+    <Primary Device="Keyboard" Key="Key_V" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </DeployHeatSink>
+  <FireChaffLauncher>
+    <Primary Device="Keyboard" Key="Key_C" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </FireChaffLauncher>
+
+  <!-- Weapons / DSS probes -->
+  <PrimaryFire>
+    <Primary Device="Keyboard" Key="Key_M" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </PrimaryFire>
+  <SecondaryFire>
+    <Primary Device="Keyboard" Key="Key_N" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SecondaryFire>
+  <CycleFireGroupNext>
+    <Primary Device="Keyboard" Key="Key_G" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </CycleFireGroupNext>
+  <CycleFireGroupPrevious>
+    <Primary Device="Keyboard" Key="Key_B" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </CycleFireGroupPrevious>
+
+  <!-- Exploration: Honk (req 4) + FSS + SAA (DSS) -->
+  <ExplorationFSSDiscoveryScan>
+    <Primary Device="Keyboard" Key="Key_F" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSDiscoveryScan>
+  <ExplorationFSSEnter>
+    <Primary Device="Keyboard" Key="Key_BackSlash" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSEnter>
+  <ExplorationFSSQuit>
+    <Primary Device="Keyboard" Key="Key_Escape" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSQuit>
+  <ExplorationFSSRadioTuningX_Increase>
+    <Primary Device="Keyboard" Key="Key_Period" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSRadioTuningX_Increase>
+  <ExplorationFSSRadioTuningX_Decrease>
+    <Primary Device="Keyboard" Key="Key_Comma" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSRadioTuningX_Decrease>
+  <ExplorationFSSZoomIn>
+    <Primary Device="Keyboard" Key="Key_Equals" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSZoomIn>
+  <ExplorationFSSZoomOut>
+    <Primary Device="Keyboard" Key="Key_Minus" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSZoomOut>
+  <ExplorationFSSCameraPitchIncreaseButton>
+    <Primary Device="Keyboard" Key="Key_I" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSCameraPitchIncreaseButton>
+  <ExplorationFSSCameraPitchDecreaseButton>
+    <Primary Device="Keyboard" Key="Key_O" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSCameraPitchDecreaseButton>
+  <ExplorationFSSCameraYawDecreaseButton>
+    <Primary Device="Keyboard" Key="Key_A" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSCameraYawDecreaseButton>
+  <ExplorationFSSCameraYawIncreaseButton>
+    <Primary Device="Keyboard" Key="Key_D" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSCameraYawIncreaseButton>
+  <ExplorationFSSTarget>
+    <Primary Device="Keyboard" Key="Key_Space" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationFSSTarget>
+
+  <!-- SAA (DSS) -->
+  <ExplorationSAAExitThirdPerson>
+    <Primary Device="Keyboard" Key="Key_Escape" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationSAAExitThirdPerson>
+  <ExplorationSAAChangeScannedAreaViewToggle>
+    <Primary Device="Keyboard" Key="Key_Z" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ExplorationSAAChangeScannedAreaViewToggle>
+  <SAAThirdPersonYawLeftButton>
+    <Primary Device="Keyboard" Key="Key_A" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SAAThirdPersonYawLeftButton>
+  <SAAThirdPersonYawRightButton>
+    <Primary Device="Keyboard" Key="Key_D" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SAAThirdPersonYawRightButton>
+  <SAAThirdPersonPitchUpButton>
+    <Primary Device="Keyboard" Key="Key_I" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SAAThirdPersonPitchUpButton>
+  <SAAThirdPersonPitchDownButton>
+    <Primary Device="Keyboard" Key="Key_O" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SAAThirdPersonPitchDownButton>
+
+  <!-- HUD modes -->
+  <PlayerHUDModeToggle>
+    <Primary Device="Keyboard" Key="Key_X" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </PlayerHUDModeToggle>
+
+  <!-- UI navigation -->
+  <FocusLeftPanel>
+    <Primary Device="Keyboard" Key="Key_1" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </FocusLeftPanel>
+  <FocusRightPanel>
+    <Primary Device="Keyboard" Key="Key_4" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </FocusRightPanel>
+  <UIFocus>
+    <Primary Device="Keyboard" Key="Key_LeftShift" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UIFocus>
+  <CycleNextPanel>
+    <Primary Device="Keyboard" Key="Key_E" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </CycleNextPanel>
+  <CycleNextPage>
+    <Primary Device="Keyboard" Key="Key_R" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </CycleNextPage>
+  <UI_Up>
+    <Primary Device="Keyboard" Key="Key_W" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UI_Up>
+  <UI_Down>
+    <Primary Device="Keyboard" Key="Key_S" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UI_Down>
+  <UI_Left>
+    <Primary Device="Keyboard" Key="Key_A" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UI_Left>
+  <UI_Right>
+    <Primary Device="Keyboard" Key="Key_D" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UI_Right>
+  <UI_Select>
+    <Primary Device="Keyboard" Key="Key_Space" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UI_Select>
+  <UI_Back>
+    <Primary Device="Keyboard" Key="Key_Backspace" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UI_Back>
+
+  <!-- Maps -->
+  <GalaxyMapOpen>
+    <Primary Device="Keyboard" Key="Key_6" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </GalaxyMapOpen>
+  <SystemMapOpen>
+    <Primary Device="Keyboard" Key="Key_7" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SystemMapOpen>
+
+  <Pause>
+    <Primary Device="Keyboard" Key="Key_P" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </Pause>
+</Root>
