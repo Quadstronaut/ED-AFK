@@ -1,0 +1,41 @@
+{
+  "_source": "EDCD/coriolis-data modules/standard/frame_shift_drive.json (MIT). Transcribed from the table in SPEC.md §8.2. Pattern: LC = {A:12, B:10, C:8, D:10, E:11}. PC = 2.00 + 0.15 * (class - 2). maxfuel is per-class.",
+  "_license": "MIT",
+  "modules": [
+    { "class": 2, "rating": "E", "linear_constant": 11, "power_constant": 2.00, "opt_mass": 48,   "max_fuel_per_jump": 0.60 },
+    { "class": 2, "rating": "D", "linear_constant": 10, "power_constant": 2.00, "opt_mass": 54,   "max_fuel_per_jump": 0.60 },
+    { "class": 2, "rating": "C", "linear_constant": 8,  "power_constant": 2.00, "opt_mass": 60,   "max_fuel_per_jump": 0.60 },
+    { "class": 2, "rating": "B", "linear_constant": 10, "power_constant": 2.00, "opt_mass": 75,   "max_fuel_per_jump": 0.80 },
+    { "class": 2, "rating": "A", "linear_constant": 12, "power_constant": 2.00, "opt_mass": 90,   "max_fuel_per_jump": 0.90 },
+
+    { "class": 3, "rating": "E", "linear_constant": 11, "power_constant": 2.15, "opt_mass": 80,   "max_fuel_per_jump": 1.20 },
+    { "class": 3, "rating": "D", "linear_constant": 10, "power_constant": 2.15, "opt_mass": 90,   "max_fuel_per_jump": 1.20 },
+    { "class": 3, "rating": "C", "linear_constant": 8,  "power_constant": 2.15, "opt_mass": 100,  "max_fuel_per_jump": 1.20 },
+    { "class": 3, "rating": "B", "linear_constant": 10, "power_constant": 2.15, "opt_mass": 125,  "max_fuel_per_jump": 1.50 },
+    { "class": 3, "rating": "A", "linear_constant": 12, "power_constant": 2.15, "opt_mass": 150,  "max_fuel_per_jump": 1.80 },
+
+    { "class": 4, "rating": "E", "linear_constant": 11, "power_constant": 2.30, "opt_mass": 280,  "max_fuel_per_jump": 2.00 },
+    { "class": 4, "rating": "D", "linear_constant": 10, "power_constant": 2.30, "opt_mass": 315,  "max_fuel_per_jump": 2.00 },
+    { "class": 4, "rating": "C", "linear_constant": 8,  "power_constant": 2.30, "opt_mass": 350,  "max_fuel_per_jump": 2.00 },
+    { "class": 4, "rating": "B", "linear_constant": 10, "power_constant": 2.30, "opt_mass": 437.5,"max_fuel_per_jump": 2.50 },
+    { "class": 4, "rating": "A", "linear_constant": 12, "power_constant": 2.30, "opt_mass": 525,  "max_fuel_per_jump": 3.00 },
+
+    { "class": 5, "rating": "E", "linear_constant": 11, "power_constant": 2.45, "opt_mass": 560,  "max_fuel_per_jump": 3.30 },
+    { "class": 5, "rating": "D", "linear_constant": 10, "power_constant": 2.45, "opt_mass": 630,  "max_fuel_per_jump": 3.30 },
+    { "class": 5, "rating": "C", "linear_constant": 8,  "power_constant": 2.45, "opt_mass": 700,  "max_fuel_per_jump": 3.30 },
+    { "class": 5, "rating": "B", "linear_constant": 10, "power_constant": 2.45, "opt_mass": 875,  "max_fuel_per_jump": 4.10 },
+    { "class": 5, "rating": "A", "linear_constant": 12, "power_constant": 2.45, "opt_mass": 1050, "max_fuel_per_jump": 5.00 },
+
+    { "class": 6, "rating": "E", "linear_constant": 11, "power_constant": 2.60, "opt_mass": 960,  "max_fuel_per_jump": 5.30 },
+    { "class": 6, "rating": "D", "linear_constant": 10, "power_constant": 2.60, "opt_mass": 1080, "max_fuel_per_jump": 5.30 },
+    { "class": 6, "rating": "C", "linear_constant": 8,  "power_constant": 2.60, "opt_mass": 1200, "max_fuel_per_jump": 5.30 },
+    { "class": 6, "rating": "B", "linear_constant": 10, "power_constant": 2.60, "opt_mass": 1500, "max_fuel_per_jump": 6.60 },
+    { "class": 6, "rating": "A", "linear_constant": 12, "power_constant": 2.60, "opt_mass": 1800, "max_fuel_per_jump": 8.00 },
+
+    { "class": 7, "rating": "E", "linear_constant": 11, "power_constant": 2.75, "opt_mass": 1440, "max_fuel_per_jump": 8.50 },
+    { "class": 7, "rating": "D", "linear_constant": 10, "power_constant": 2.75, "opt_mass": 1620, "max_fuel_per_jump": 8.50 },
+    { "class": 7, "rating": "C", "linear_constant": 8,  "power_constant": 2.75, "opt_mass": 1800, "max_fuel_per_jump": 8.50 },
+    { "class": 7, "rating": "B", "linear_constant": 10, "power_constant": 2.75, "opt_mass": 2250, "max_fuel_per_jump": 10.60 },
+    { "class": 7, "rating": "A", "linear_constant": 12, "power_constant": 2.75, "opt_mass": 2700, "max_fuel_per_jump": 12.80 }
+  ]
+}

@@ -1,0 +1,51 @@
+[project]
+name = "ed-autojump"
+version = "0.2.0"
+description = "Autonomous exploration bot for Elite Dangerous: Odyssey"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Quadstronaut" }]
+
+dependencies = [
+    "pydantic>=2.0",
+    "watchdog>=4.0",
+    "requests>=2.31",
+    "pydirectinput>=1.0",
+    "tomli>=2.0;python_version<'3.11'",
+]
+
+[project.optional-dependencies]
+cv = [
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "dxcam-cpp",
+    "pytesseract>=0.3.10",
+]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+ed-autojump = "ed_autojump.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ed_autojump = ["data/*.json", "schemas/*.json", "binds/*.binds", "edhm-presets/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+markers = [
+    "requires_game: tests that need the live Elite Dangerous game running (skipped by default)",
+    "slow: long-running tests",
+]
+addopts = "-q -m 'not requires_game'"
