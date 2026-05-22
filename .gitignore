@@ -1,0 +1,63 @@
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Project artifacts
+logs/
+*.log
+captures/
+*.pkl
+calibration/*.json
+calibration/*.png
+secrets.toml
+config.local.toml
+
+# Bundled journal samples
+samples/
+fixtures/journals/*.log
+!fixtures/journals/README.md
+
+# OS-specific
+*.dll
+*.exe
+*.msi
