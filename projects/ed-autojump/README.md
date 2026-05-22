@@ -3,20 +3,22 @@
 Autonomous exploration bot for Elite Dangerous: Odyssey. First tool in the
 ED-AFK monorepo. Honks, scoops, jumps, optionally FSS / DSS / docks.
 
-> **Status:** v0.2 — phases 0–6 ship as production-ready (offline-verified);
-> phases 7–11 ship as framework + offline replay tests. In-game evidence
-> for phases 7–11 is deferred pending live calibration. See SPEC.md for
-> the design and §17 for phase exit criteria; `calibration/README.md` for
-> what to validate in-game.
+> **Status:** v0.2 — all 11 phases shipped on `main`. Phases 0–6
+> production-ready (offline-verified, 179 tests passing under triple-test
+> discipline). Phases 7–11 ship as framework + offline replay tests;
+> in-game evidence deferred pending live calibration. See SPEC.md §17
+> for phase exit criteria; `calibration/README.md` for what to validate
+> in-game.
 
 ## Quick start
 
 ```pwsh
 cd projects/ed-autojump
-py -3.11 -m venv .venv
+py -3.11 -m venv .venv      # 3.11, 3.12, 3.13, or 3.14 all work
 .\.venv\Scripts\Activate.ps1
-pip install -e .[dev]
-pytest
+pip install -e .[dev]       # add ,cv for tier-C CV deps (opencv, dxcam, tesseract)
+pytest                       # 179 pass, 3 @requires_game deselected
+ed-autojump --help          # console entry point
 ```
 
 ## Layout
@@ -25,24 +27,27 @@ pytest
 projects/ed-autojump/
   pyproject.toml
   src/ed_autojump/
-    cli.py                # entry point
+    cli.py                # entry point (registered as `ed-autojump`)
     config.py             # config.toml loader
     state.py              # in-memory FSM
-    journal/              # journal tail + event models
+    binds_tool.py         # install / swap / restore StartPreset.4.start
+    journal/              # journal tail + pydantic event models
     status/               # Status.json + NavRoute.json watchers
-    keys/                 # binds parser + DirectInput sender
-    fsd/                  # fuel math + danger list
-    planner/              # Spansh integration + filters
-    executor/             # state-driven macros (honk, escape, scoop, jump)
+    keys/                 # binds parser + DirectInput sender (Null/Recording/real)
+    fsd/                  # fuel math + danger list (coriolis-data constants)
+    planner/              # Spansh integration + danger/fuel filters
+    executor/             # state-driven macros (honk, jump, scoop, fss, dss)
     eddn/                 # EDDN publisher (opt-in)
     hud/                  # EDHM detect, GraphicsConfigurationOverride writer
-    vision/               # tier-C CV (FSS / DSS) — gated
-    fixtures_internal/    # bundled .binds + EDHM preset + FSD constants
+    docking/              # v2 pre-flight predicates + permission flow
+    launcher/             # v2 min-ed-launcher detection + argv
+    binds/                # bundled ED-AFK.4.2.binds preset
+    data/                 # bundled FSD constants (fsd_modules.json)
   tests/
     fixtures/journals/    # anonymized real-journal samples
-    test_*.py
+    test_*.py             # 179 offline tests, 3 @requires_game stubs
   calibration/
-    README.md             # what to run in-game to validate tier-C behaviour
+    README.md             # what to validate in-game for tier-C behaviour
 ```
 
 ## Phase status
