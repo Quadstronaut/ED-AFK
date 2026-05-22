@@ -42,6 +42,12 @@ class Sender(ABC):
     def hold(self, action: str, *, hold: float) -> KeyEvent:
         return self.press(action, hold=hold)
 
+    def release_all(self) -> None:
+        """Emergency release. Default: no-op; subclasses with persistent
+        key state override (NullSender stays a no-op; DirectInputSender
+        sends keyUp for every scancode it has ever pressed)."""
+        return None
+
 
 class NullSender(Sender):
     def __init__(self, binds: Optional[BindsFile] = None):
@@ -83,6 +89,15 @@ class RecordingSender(Sender):
             time.sleep(hold)
         return ev
 
+    def release_all(self) -> None:
+        self.events.append(KeyEvent(
+            timestamp=time.time(),
+            action="release_all",
+            scancode=0,
+            modifier_scancode=None,
+            hold_s=0.0,
+        ))
+
     def actions(self) -> list[str]:
         return [e.action for e in self.events]
 
@@ -100,6 +115,7 @@ class DirectInputSender(Sender):
     def __init__(self, binds: BindsFile, *, default_hold_s: float = 0.05):
         self.binds = binds
         self.default_hold_s = default_hold_s
+        self._ever_pressed: set[int] = set()
         # Defer the import so tests don't need pydirectinput at all.
         import pydirectinput
 
@@ -115,7 +131,9 @@ class DirectInputSender(Sender):
         sc = scancode_for(binding.key)
         mod_sc = scancode_for(binding.modifier) if binding.modifier else None
 
+        self._ever_pressed.add(sc)
         if mod_sc is not None:
+            self._ever_pressed.add(mod_sc)
             self._pdi.keyDown(None, scancode=mod_sc, _pause=False)
         self._pdi.keyDown(None, scancode=sc, _pause=False)
         try:
@@ -131,3 +149,17 @@ class DirectInputSender(Sender):
             modifier_scancode=mod_sc,
             hold_s=hold,
         )
+
+    def release_all(self) -> None:
+        """Send keyUp for every scancode this sender has ever pressed.
+
+        Defensive against a panic firing during a long hold (PitchUpButton
+        held 2-4s, etc.). Sends keyUp unconditionally — Windows tolerates
+        a keyUp for a key that wasn't down.
+        """
+        for sc in list(self._ever_pressed):
+            try:
+                self._pdi.keyUp(None, scancode=sc, _pause=False)
+            except Exception:
+                # Swallow — release_all is best-effort during emergency.
+                pass

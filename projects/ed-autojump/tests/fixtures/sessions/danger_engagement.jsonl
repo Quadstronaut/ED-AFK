@@ -1,0 +1,3 @@
+{"ts":"2026-05-22T23:00:00.000Z","kind":"journal","event_name":"Loadout","payload":{"timestamp":"2026-05-22T23:00:00Z","event":"Loadout","Ship":"krait_mkii","ShipID":1,"FuelCapacity":{"Main":32.0,"Reserve":0.83},"MaxJumpRange":50.0,"UnladenMass":420.0}}
+{"ts":"2026-05-22T23:00:10.000Z","kind":"journal","event_name":"FSDJump","payload":{"timestamp":"2026-05-22T23:00:10Z","event":"FSDJump","StarSystem":"NeutronCo1","SystemAddress":99,"StarPos":[0,0,0],"JumpDist":15.0,"FuelUsed":4.0,"FuelLevel":28.0}}
+{"ts":"2026-05-22T23:00:11.000Z","kind":"outcome","outcome_type":"EscapeOutcome","payload":{"star_class":"N","pitch_held_s":4.5,"throttle_action":"SetSpeed50"}}
