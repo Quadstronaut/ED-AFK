@@ -80,6 +80,7 @@ class Orchestrator:
         status_reader: Optional[StatusReader] = None,
         eddn_publisher: Optional[EddnPublisher] = None,
         navroute_reader: Optional[NavRouteReader] = None,
+        auto_engage: bool = True,
     ):
         self.sender = sender
         self.recorder = recorder
@@ -92,6 +93,7 @@ class Orchestrator:
         self.status_reader = status_reader
         self.eddn_publisher = eddn_publisher
         self.navroute_reader = navroute_reader
+        self.auto_engage = auto_engage
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -168,6 +170,41 @@ class Orchestrator:
                 "reason": "in_danger",
             })
             self.request_stop()
+            return
+        # Auto-engage next jump if conditions are met.
+        self._maybe_engage_next_jump(status)
+
+    def _maybe_engage_next_jump(self, status: Status) -> None:
+        """Press HyperSuperCombination if we have a safe target + Status
+        flags are all clear + we're not already mid-engagement."""
+        if not self.auto_engage:
+            return
+        target = self.state.next_target
+        if target is None:
+            return
+        if self.state.engagement_in_progress:
+            return
+        # Refuse to engage danger-class.
+        if should_refuse_target(target, danger_classes=self.config.routing.danger_classes):
+            return
+        # Status must be free of blocking flags.
+        if status.docked or status.fsd_charging or status.fsd_cooldown:
+            return
+        if status.fsd_mass_locked:
+            return
+        # (overheating + is_in_danger already short-circuit above)
+        try:
+            self.sender.press("HyperSuperCombination", hold=0.05)
+        except KeyError:
+            self._record_outcome("EngageBindMissing", {
+                "action": "HyperSuperCombination",
+            })
+            return
+        self.state.engagement_in_progress = True
+        self._record_outcome("EngageJump", {
+            "target_system": target.name,
+            "star_class": target.star_class,
+        })
 
     def _poll_panic(self) -> bool:
         """Returns True if the panic switch is tripped. Records the abort
@@ -353,6 +390,8 @@ class Orchestrator:
 
     def _on_start_jump(self, ev: StartJump) -> None:
         self.state.apply_start_jump(ev)
+        # Clear the engagement debounce — FSD acknowledged our press.
+        self.state.engagement_in_progress = False
         result: ChargeResult = handle_start_jump(
             ev,
             self.sender,
