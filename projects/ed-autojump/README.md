@@ -17,9 +17,18 @@ cd projects/ed-autojump
 py -3.11 -m venv .venv      # 3.11, 3.12, 3.13, or 3.14 all work
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]       # add ,cv for tier-C CV deps (opencv, dxcam, tesseract)
-pytest                       # 179 pass, 3 @requires_game deselected
+pytest                       # 200+ pass, 3 @requires_game deselected, recorded-sessions auto-skip if absent
 ed-autojump --help          # console entry point
+
+# Unattended overnight capture (Tier 2 — see calibration/overnight-runbook.md)
+.\scripts\nightly-run.ps1 -DurationHours 6
 ```
+
+The `nightly-run.ps1` wrapper invokes `ed-autojump run --record` and tees
+output to `%USERPROFILE%\ed-afk-sessions\`. The Tier-1 regression suite
+(`tests/test_recorded_sessions.py`) auto-discovers those JSONL files and
+asserts safety invariants: no HullDamage, no engagement on danger
+StarClass, no fuel starvation, no abandoned routes.
 
 ## Layout
 
@@ -43,11 +52,18 @@ projects/ed-autojump/
     launcher/             # v2 min-ed-launcher detection + argv
     binds/                # bundled ED-AFK.4.2.binds preset
     data/                 # bundled FSD constants (fsd_modules.json)
+    recorder.py           # session JSONL writer (overnight capture)
+    anonymizer.py         # scrub CMDR / FID / AccountID from session JSONL
+    session_audit.py      # pure functions for safety asserts on recorded sessions
   tests/
     fixtures/journals/    # anonymized real-journal samples
-    test_*.py             # 179 offline tests, 3 @requires_game stubs
+    test_*.py             # 200+ offline tests, 3 @requires_game stubs
+  scripts/
+    nightly-run.ps1       # Tier-2 unattended runner (manual or task-scheduled)
+    ed-afk-nightly.xml    # Task Scheduler XML (manual import only)
   calibration/
     README.md             # what to validate in-game for tier-C behaviour
+    overnight-runbook.md  # Tier-1/2 capture + morning regression-check loop
 ```
 
 ## Phase status
