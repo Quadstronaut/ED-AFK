@@ -332,6 +332,16 @@ class Orchestrator:
                 "ship": ev.ship,
             })
             self.request_stop()
+            return
+        # Jump-range sanity (warning only — non-blocking).
+        expected = self.config.ship.expected_max_jump_range_ly
+        if expected > 0 and ev.max_jump_range < expected * 0.9:
+            self._record_outcome("LoadoutWarning", {
+                "reason": "jump_range_below_expected",
+                "actual": ev.max_jump_range,
+                "expected": expected,
+                "tolerance_ratio": 0.9,
+            })
 
     def _on_fsd_target(self, ev: FSDTarget) -> None:
         self.state.apply_fsd_target(ev)
