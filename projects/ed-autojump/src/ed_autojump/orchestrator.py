@@ -26,20 +26,30 @@ from .executor.jump import (
     perform_star_escape,
     should_refuse_target,
 )
+from .executor.honk import HonkOutcome, perform_honk
 from .executor.scoop import ScoopOutcome, perform_scoop, should_scoop
 from .journal.events import (
     Event,
     FSDJump,
     FSDTarget,
+    FSSAllBodiesFound,
+    FSSDiscoveryScan,
     FuelScoop,
     HullDamage,
     Loadout,
     StartJump,
 )
+from .eddn.publisher import EddnError, EddnPublisher
 from .keys.sender import Sender
 from .panic import PanicSwitch
+from .planner.spansh import SpanshRouteResult
 from .recorder import Recorder
 from .state import GameState, State
+from .status.status import Status, StatusReader
+
+
+# (source_system, destination_system, range_ly) -> Optional[SpanshRouteResult]
+RoutePlannerFn = Callable[[str, str, float], Optional[SpanshRouteResult]]
 
 
 class Orchestrator:
@@ -65,6 +75,9 @@ class Orchestrator:
         sleeper: Callable[[float], None] = time.sleep,
         heat_supplier: Optional[Callable[[], Optional[float]]] = None,
         panic_switch: Optional[PanicSwitch] = None,
+        route_planner: Optional[RoutePlannerFn] = None,
+        status_reader: Optional[StatusReader] = None,
+        eddn_publisher: Optional[EddnPublisher] = None,
     ):
         self.sender = sender
         self.recorder = recorder
@@ -72,11 +85,21 @@ class Orchestrator:
         self.config = config
         self.clock = clock
         self.sleeper = sleeper
-        self.heat_supplier = heat_supplier
         self.panic_switch = panic_switch
+        self.route_planner = route_planner
+        self.status_reader = status_reader
+        self.eddn_publisher = eddn_publisher
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
+        # heat_supplier defaults: explicit arg wins; else if status_reader
+        # is wired, read from state.status.heat; else None.
+        if heat_supplier is not None:
+            self.heat_supplier: Optional[Callable[[], Optional[float]]] = heat_supplier
+        elif status_reader is not None:
+            self.heat_supplier = self._status_heat
+        else:
+            self.heat_supplier = None
 
     # --- public surface -----------------------------------------------------
 
@@ -96,6 +119,36 @@ class Orchestrator:
         if self.recorder is not None:
             self.recorder.close()
         self._shutdown_done = True
+
+    def _status_heat(self) -> Optional[float]:
+        """Default heat_supplier when a status_reader is wired."""
+        if self.state.status is not None:
+            return self.state.status.heat
+        return None
+
+    def tick_status(self) -> None:
+        """Pull Status.json once, apply to state, check safety flags.
+
+        Safe to call when status_reader is None — no-ops. Should be called
+        from the live loop's poll-interval pause."""
+        if self.status_reader is None:
+            return
+        status = self.status_reader.poll()
+        if status is None:
+            return
+        self.state.apply_status(status)
+        if status.overheating:
+            self._record_outcome("SafetyAbort", {
+                "reason": "overheating",
+                "heat": status.heat,
+            })
+            self.request_stop()
+            return
+        if status.is_in_danger:
+            self._record_outcome("SafetyAbort", {
+                "reason": "in_danger",
+            })
+            self.request_stop()
 
     def _poll_panic(self) -> bool:
         """Returns True if the panic switch is tripped. Records the abort
@@ -175,6 +228,9 @@ class Orchestrator:
                 except FileNotFoundError:
                     chunk = []
                 if not chunk:
+                    self.tick_status()
+                    if self.stop_requested:
+                        return
                     self.sleeper(poll_interval_s)
                     continue
                 for ev in chunk:
@@ -220,7 +276,25 @@ class Orchestrator:
             self._on_fsd_jump(ev, follow_stream)
         elif isinstance(ev, HullDamage):
             self._on_hull_damage(ev)
+        elif isinstance(ev, FSSDiscoveryScan):
+            self._publish_eddn("fssdiscoveryscan", ev)
+        elif isinstance(ev, FSSAllBodiesFound):
+            self._publish_eddn("fssallbodiesfound", ev)
         # Other events: pass through; state already updated by recorder/journal.
+
+    def _publish_eddn(self, schema_key: str, ev: Event) -> None:
+        if self.eddn_publisher is None:
+            return
+        if not self.config.eddn.publish:
+            return
+        message = ev.model_dump(mode="json", by_alias=True)
+        try:
+            self.eddn_publisher.publish(schema_key, message)
+        except EddnError as exc:
+            self._record_outcome("EddnPublishFailed", {
+                "schema": schema_key,
+                "error": str(exc),
+            })
 
     # --- handlers ----------------------------------------------------------
 
@@ -270,7 +344,16 @@ class Orchestrator:
             "throttle_action": escape.throttle_action,
         })
 
-        # Scoop decision: KGBFOAM + fuel below refuel_threshold + loadout has scoop.
+        # Plot next route if planner is wired.
+        self._maybe_plot_route()
+
+        # Scoop if low fuel + scoopable + has scoop module.
+        self._maybe_scoop(ev, follow_stream)
+
+        # Honk if enabled.
+        self._maybe_honk(follow_stream)
+
+    def _maybe_scoop(self, ev: FSDJump, follow_stream: Optional[Iterator[Event]]) -> None:
         loadout = self.state.loadout
         if loadout is None or not loadout.fuel_scoop_present():
             return
@@ -283,7 +366,6 @@ class Orchestrator:
             refuel_threshold=self.config.routing.refuel_threshold,
         ):
             return
-
         outcome: ScoopOutcome = perform_scoop(
             self.sender,
             events=follow_stream,
@@ -297,6 +379,64 @@ class Orchestrator:
             "initial_fuel_t": outcome.initial_fuel_t,
             "final_fuel_t": outcome.final_fuel_t,
             "max_heat_seen": outcome.max_heat_seen,
+        })
+
+    def _maybe_honk(self, follow_stream: Optional[Iterator[Event]]) -> None:
+        """Run perform_honk if enabled. Called after escape (and after
+        any scoop completes). Follow-stream is the same event source as
+        scoop so the honk routine can watch for the matching FSSDiscoveryScan."""
+        if not self.config.exploration.honk:
+            return
+        honk_events: Iterable[Event] = follow_stream if follow_stream is not None else iter([])
+        outcome: HonkOutcome = perform_honk(
+            self.sender,
+            honk_events,
+            clock=self.clock,
+            sleeper=self.sleeper,
+        )
+        self._record_outcome("HonkOutcome", {
+            "result": outcome.result.name,
+            "held_for_s": outcome.held_for_s,
+            "waited_for_s": outcome.waited_for_s,
+        })
+
+    def _maybe_plot_route(self) -> None:
+        """Trigger a Spansh plot if conditions are met.
+
+        Called after every FSDJump arrival. Conditions:
+        - route_planner injected
+        - Loadout known (need max_jump_range)
+        - current_system known
+        - destination configured
+        Idempotency: caller is responsible — we call every arrival; for
+        a real run, the planner should de-dup by checking NavRoute itself.
+        """
+        if self.route_planner is None:
+            return
+        if self.state.loadout is None:
+            return
+        if not self.state.current_system:
+            return
+        dest = self.config.routing.destination
+        if not dest:
+            return
+        range_ly = self.state.loadout.max_jump_range
+        try:
+            result = self.route_planner(self.state.current_system, dest, range_ly)
+        except Exception as exc:  # noqa: BLE001
+            self._record_outcome("RoutePlotFailed", {
+                "source": self.state.current_system,
+                "destination": dest,
+                "error": str(exc),
+            })
+            return
+        if result is None:
+            return
+        self._record_outcome("RoutePlotted", {
+            "source": self.state.current_system,
+            "destination": dest,
+            "total_jumps": result.total_jumps,
+            "total_distance_ly": result.total_distance_ly,
         })
 
     def _on_hull_damage(self, ev: HullDamage) -> None:
