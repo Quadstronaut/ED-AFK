@@ -45,6 +45,7 @@ from .panic import PanicSwitch
 from .planner.spansh import SpanshRouteResult
 from .recorder import Recorder
 from .state import GameState, State
+from .status.navroute import NavRoute, NavRouteReader
 from .status.status import Status, StatusReader
 
 
@@ -78,6 +79,7 @@ class Orchestrator:
         route_planner: Optional[RoutePlannerFn] = None,
         status_reader: Optional[StatusReader] = None,
         eddn_publisher: Optional[EddnPublisher] = None,
+        navroute_reader: Optional[NavRouteReader] = None,
     ):
         self.sender = sender
         self.recorder = recorder
@@ -89,6 +91,7 @@ class Orchestrator:
         self.route_planner = route_planner
         self.status_reader = status_reader
         self.eddn_publisher = eddn_publisher
+        self.navroute_reader = navroute_reader
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -126,6 +129,18 @@ class Orchestrator:
             return self.state.status.heat
         return None
 
+    def tick_navroute(self) -> None:
+        """Pull NavRoute.json once and apply to state. No-op without reader."""
+        if self.navroute_reader is None:
+            return
+        try:
+            nr = self.navroute_reader.poll()
+        except Exception as exc:  # noqa: BLE001
+            self._record_outcome("NavRouteError", {"error": str(exc)})
+            return
+        if nr is not None:
+            self.state.apply_navroute(nr)
+
     def tick_status(self) -> None:
         """Pull Status.json once, apply to state, check safety flags.
 
@@ -133,7 +148,11 @@ class Orchestrator:
         from the live loop's poll-interval pause."""
         if self.status_reader is None:
             return
-        status = self.status_reader.poll()
+        try:
+            status = self.status_reader.poll()
+        except Exception as exc:  # noqa: BLE001
+            self._record_outcome("StatusError", {"error": str(exc)})
+            return
         if status is None:
             return
         self.state.apply_status(status)
@@ -227,8 +246,14 @@ class Orchestrator:
                     chunk = tail.step()
                 except FileNotFoundError:
                     chunk = []
+                except Exception as exc:  # noqa: BLE001
+                    # Defensive: log + continue. Overnight bot must survive
+                    # transient OS errors (disk hiccup, antivirus lock, etc.)
+                    self._record_outcome("TailError", {"error": str(exc)})
+                    chunk = []
                 if not chunk:
                     self.tick_status()
+                    self.tick_navroute()
                     if self.stop_requested:
                         return
                     self.sleeper(poll_interval_s)
@@ -408,8 +433,8 @@ class Orchestrator:
         - Loadout known (need max_jump_range)
         - current_system known
         - destination configured
-        Idempotency: caller is responsible — we call every arrival; for
-        a real run, the planner should de-dup by checking NavRoute itself.
+        - NavRoute is empty/unknown (when nav-reader is wired; skip plot
+          if we already have a plotted route).
         """
         if self.route_planner is None:
             return
@@ -419,6 +444,14 @@ class Orchestrator:
             return
         dest = self.config.routing.destination
         if not dest:
+            return
+        # If we have a navroute reader and it shows a non-empty route,
+        # skip — the user (or a prior plot) already gave us one.
+        if (
+            self.navroute_reader is not None
+            and self.state.last_navroute is not None
+            and not self.state.last_navroute.empty
+        ):
             return
         range_ly = self.state.loadout.max_jump_range
         try:

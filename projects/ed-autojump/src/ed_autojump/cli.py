@@ -81,6 +81,30 @@ def _parser() -> argparse.ArgumentParser:
         "--no-engage-keys", dest="engage_keys", action="store_false",
         help="explicitly disable key sending (default behaviour)",
     )
+    sub_run.add_argument(
+        "--status", dest="status", action="store_true", default=True,
+        help="enable Status.json polling (default: on; HeatSupplier feeds scoop guard)",
+    )
+    sub_run.add_argument(
+        "--no-status", dest="status", action="store_false",
+        help="disable Status.json polling",
+    )
+    sub_run.add_argument(
+        "--eddn", dest="eddn", action="store_true", default=None,
+        help="publish to EDDN on FSS scans (default: from config.eddn.publish)",
+    )
+    sub_run.add_argument(
+        "--no-eddn", dest="eddn", action="store_false",
+        help="explicitly disable EDDN publishing",
+    )
+    sub_run.add_argument(
+        "--route-plot", dest="route_plot", action="store_true", default=False,
+        help="enable Spansh route auto-plotting when NavRoute is empty",
+    )
+    sub_run.add_argument(
+        "--destination", dest="destination", default=None,
+        help="override config.routing.destination (e.g. 'Beagle Point')",
+    )
 
     return p
 
@@ -119,16 +143,26 @@ def cmd_run(args) -> int:
     from datetime import datetime, timezone
 
     from .config import load_config
+    from .eddn.publisher import EddnPublisher
     from .journal.tail import JournalTail
     from .keys import NullSender, parse_binds
     from .orchestrator import Orchestrator
     from .panic import PanicSwitch
+    from .planner.spansh import SpanshClient
     from .recorder import Recorder, default_session_path
     from .state import GameState
+    from .status.navroute import NavRouteReader
+    from .status.status import StatusReader
 
     cfg = load_config(args.config if args.config.is_file() else None)
     journal_dir = args.journal_dir or cfg.paths.journal_dir_expanded()
     panic = PanicSwitch()
+
+    # Apply CLI overrides into config.
+    if args.destination:
+        cfg.routing.destination = args.destination
+    if args.eddn is not None:
+        cfg.eddn.publish = args.eddn
 
     # Recorder setup.
     recorder: Recorder | None = None
@@ -152,6 +186,43 @@ def cmd_run(args) -> int:
     else:
         sender = NullSender()
 
+    # Status + NavRoute readers (default on when journal dir exists).
+    status_reader = None
+    navroute_reader = None
+    if args.status:
+        status_path = journal_dir / "Status.json"
+        navroute_path = journal_dir / "NavRoute.json"
+        status_reader = StatusReader(status_path)
+        navroute_reader = NavRouteReader(navroute_path)
+
+    # EDDN publisher.
+    eddn_publisher = None
+    if cfg.eddn.publish:
+        eddn_publisher = EddnPublisher(
+            uploader_id=cfg.eddn.uploader_id,
+            software_name=cfg.eddn.software_name,
+            software_version=cfg.eddn.software_version,
+            enabled=True,
+        )
+
+    # Route planner adapter.
+    route_planner = None
+    if args.route_plot:
+        client = SpanshClient()
+
+        def _planner(source: str, dest: str, range_ly: float):
+            try:
+                return client.plot_route(
+                    source=source,
+                    destination=dest,
+                    range_ly=range_ly,
+                    efficiency=cfg.routing.efficiency,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Orchestrator catches + records; we don't need to here.
+                raise
+        route_planner = _planner
+
     state = GameState()
     orch = Orchestrator(
         sender=sender,
@@ -159,6 +230,10 @@ def cmd_run(args) -> int:
         state=state,
         config=cfg,
         panic_switch=panic,
+        status_reader=status_reader,
+        navroute_reader=navroute_reader,
+        eddn_publisher=eddn_publisher,
+        route_planner=route_planner,
     )
 
     try:
@@ -177,19 +252,17 @@ def cmd_run(args) -> int:
 
 
 def cmd_doctor(args) -> int:
-    from .hud.detect import detect_edhm, detect_graphics_override
+    from .doctor import format_results, overall_status, run_all_checks
 
     cfg = load_config(args.config if args.config.is_file() else None)
     print(f"ed-autojump {__version__}")
     print(f"  config:        {args.config}")
-    print(f"  journal dir:   {cfg.paths.journal_dir_expanded()}")
-    print(f"  binds dir:     {cfg.paths.binds_dir_expanded()}")
-    edhm = detect_edhm()
-    print(f"  EDHM-UI:       {'found' if edhm.ui_installed else 'not found'}")
-    print(f"  EDHM DLL:      {'found' if edhm.dll_installed else 'not found'}")
-    go = detect_graphics_override()
-    print(f"  GraphicsOverride.xml: {'present' if go else 'absent'}")
-    return 0
+    results = run_all_checks(cfg)
+    print(format_results(results))
+    rc = overall_status(results)
+    print()
+    print("FAIL — fix the issues above before running the bot." if rc else "All critical checks passed.")
+    return rc
 
 
 def cmd_install_binds(args) -> int:
