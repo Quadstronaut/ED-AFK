@@ -158,18 +158,10 @@ def cmd_run(args) -> int:
     cfg = load_config(args.config if args.config.is_file() else None)
     journal_dir = args.journal_dir or cfg.paths.journal_dir_expanded()
     panic = PanicSwitch()
-    backend = resolve_backend()
-    listener = HotkeyListener(
-        panic_switch=panic,
-        backend=backend,
-        hotkey=cfg.safety.panic_hotkey,
-    )
-    if isinstance(backend, _NullBackend):
-        print(
-            "WARNING: panic-hotkey backend unavailable (install `keyboard` to enable "
-            f"{cfg.safety.panic_hotkey}); Ctrl+C in this terminal still trips panic."
-        )
-    listener.start()
+    # Hotkey backend is only resolved when we actually run (duration > 0).
+    # The `keyboard` library installs Win32 hooks that can crash the
+    # interpreter on a fast-exit subprocess; defer until we're going to use it.
+    listener: HotkeyListener | None = None
 
     # Apply CLI overrides into config.
     if args.destination:
@@ -253,6 +245,19 @@ def cmd_run(args) -> int:
         tail = JournalTail(journal_dir)
         if args.duration <= 0:
             return 0
+        # Resolve + start hotkey listener now that we know we'll be running.
+        backend = resolve_backend()
+        listener = HotkeyListener(
+            panic_switch=panic,
+            backend=backend,
+            hotkey=cfg.safety.panic_hotkey,
+        )
+        if isinstance(backend, _NullBackend):
+            print(
+                "WARNING: panic-hotkey backend unavailable (install `keyboard` to enable "
+                f"{cfg.safety.panic_hotkey}); Ctrl+C in this terminal still trips panic."
+            )
+        listener.start()
         orch.run_live(tail, duration_s=args.duration)
         return 0
     except KeyboardInterrupt:
@@ -261,7 +266,8 @@ def cmd_run(args) -> int:
         orch.request_stop()
         return 130
     finally:
-        listener.stop()
+        if listener is not None:
+            listener.stop()
         orch.shutdown()
 
 
