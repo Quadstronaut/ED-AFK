@@ -3,12 +3,12 @@
 Autonomous exploration bot for Elite Dangerous: Odyssey. First tool in the
 ED-AFK monorepo. Honks, scoops, jumps, optionally FSS / DSS / docks.
 
-> **Status:** v0.2 — all 11 phases shipped on `main`. Phases 0–6
-> production-ready (offline-verified, 179 tests passing under triple-test
-> discipline). Phases 7–11 ship as framework + offline replay tests;
-> in-game evidence deferred pending live calibration. See SPEC.md §17
-> for phase exit criteria; `calibration/README.md` for what to validate
-> in-game.
+> **Status:** v0.2 — Phases 0–6 + Phase 12 (main loop) production-ready
+> on `main`. 290 tests under triple-test discipline. Phases 7–11 ship as
+> framework + offline replay tests; in-game evidence deferred pending
+> live calibration. See SPEC.md §17 for phase exit criteria;
+> `calibration/README.md` and `calibration/overnight-runbook.md` for
+> what to validate in-game.
 
 ## Quick start
 
@@ -17,11 +17,15 @@ cd projects/ed-autojump
 py -3.11 -m venv .venv      # 3.11, 3.12, 3.13, or 3.14 all work
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]       # add ,cv for tier-C CV deps (opencv, dxcam, tesseract)
-pytest                       # 200+ pass, 3 @requires_game deselected, recorded-sessions auto-skip if absent
-ed-autojump --help          # console entry point
+pytest                       # 290 pass, 3 @requires_game deselected, recorded-sessions auto-skip if absent
+ed-autojump doctor           # pre-flight: binds, journal-dir, sessions-dir, EDHM, pydirectinput
+ed-autojump --help
 
 # Unattended overnight capture (Tier 2 — see calibration/overnight-runbook.md)
 .\scripts\nightly-run.ps1 -DurationHours 6
+
+# Real bot run (records + drives keys; --route-plot enables Spansh auto-plotting)
+ed-autojump run --record --engage-keys --route-plot --duration 21600
 ```
 
 The `nightly-run.ps1` wrapper invokes `ed-autojump run --record` and tees
@@ -52,9 +56,12 @@ projects/ed-autojump/
     launcher/             # v2 min-ed-launcher detection + argv
     binds/                # bundled ED-AFK.4.2.binds preset
     data/                 # bundled FSD constants (fsd_modules.json)
+    orchestrator.py       # Phase 12 main loop (JournalTail -> dispatch -> Recorder)
+    panic.py              # thread-safe panic switch (poll + trip + on_trip callback)
     recorder.py           # session JSONL writer (overnight capture)
     anonymizer.py         # scrub CMDR / FID / AccountID from session JSONL
     session_audit.py      # pure functions for safety asserts on recorded sessions
+    doctor.py             # pre-flight checks (binds + dirs + EDHM + pydirectinput)
   tests/
     fixtures/journals/    # anonymized real-journal samples
     test_*.py             # 200+ offline tests, 3 @requires_game stubs
@@ -82,6 +89,7 @@ projects/ed-autojump/
 | 9 | DSS 6-direction (req 6) | framework — deferred pending calibration |
 | 10 | docking (v2) | framework — deferred pending calibration |
 | 11 | headless launcher (v2) | framework — deferred pending calibration |
+| 12 | Orchestrator main loop + panic + Spansh + Status + EDDN + doctor | implemented |
 
 ## Attribution
 

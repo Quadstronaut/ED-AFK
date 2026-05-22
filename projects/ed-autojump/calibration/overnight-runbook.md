@@ -2,30 +2,48 @@
 
 How to capture and validate unattended overnight ed-autojump sessions.
 
-> **Honest scoping.** The bot currently runs the *recording* loop only —
-> it tails the journal and writes a session JSONL. **Executor dispatch
-> (key sending → jump / scoop / escape) is not yet wired into the main
-> loop**. Capture-mode is still valuable: it lets you play manually while
-> the recorder logs everything, building a regression-test corpus that
-> the Tier-1 safety suite asserts against on every `pytest`. Once the
-> executor integration lands, the same script flips on with no scaffolding
-> changes — drop `--no-engage-keys` and the bot drives.
+> **Phase 12 shipped.** Executor dispatch is now live: jump → escape →
+> scoop → honk all run from the main loop on real journal events.
+> Default mode is still NullSender (`--no-engage-keys`) for safe dev
+> runs; drop that flag to drive keys. The recording loop continues to
+> capture every event + outcome regardless of whether keys are engaged.
 
 ## TL;DR
 
 ```pwsh
 cd G:\Documents\GIT\ED-AFK\projects\ed-autojump
 
-# Run for 6 hours, record to ~\ed-afk-sessions\
+# 0. Pre-flight (do this once per machine and after every binds change):
+ed-autojump doctor
+
+# 1. Run for 6 hours, record to ~\ed-afk-sessions\, RECORDING ONLY:
 .\scripts\nightly-run.ps1 -DurationHours 6
 
+# 2. Or run the actual autopilot for 6 hours, with key dispatch +
+#    Spansh route auto-plot when NavRoute is empty:
+ed-autojump run --record --engage-keys --route-plot \
+    --destination "Beagle Point" --duration 21600
+
 # Each session lands at %USERPROFILE%\ed-afk-sessions\session_<utc>.jsonl
-# plus a sibling nightly_<instance>_<utc>.log for the runner's own output.
 
 # In the morning, run the regression suite:
 .\.venv\Scripts\Activate.ps1
 pytest tests/test_recorded_sessions.py -v
 ```
+
+## `ed-autojump run` flags
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--engage-keys` | off | DirectInputSender (real key dispatch). Off uses NullSender. |
+| `--record` | off | Write session JSONL to `--sessions-dir` (default `~/ed-afk-sessions`) |
+| `--status` / `--no-status` | on | Poll Status.json for OverHeating + IsInDanger flags |
+| `--eddn` / `--no-eddn` | from config | Publish FSS scans to EDDN |
+| `--route-plot` | off | Auto-plot via Spansh when NavRoute is empty |
+| `--destination` | from config | Override route destination (e.g. "Beagle Point") |
+| `--duration` | 0 | Seconds to run. 0 = exit immediately (dry-run). |
+| `--journal-dir` | from config | Override the FDev Saved-Games journal dir |
+| `--sessions-dir` | env / `~/ed-afk-sessions` | Override session output dir |
 
 If the recorded-session tests fail, the failure ID points to which night's
 JSONL went bad. Open it and look for `HullDamage`, `outcome` rows with a

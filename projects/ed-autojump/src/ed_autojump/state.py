@@ -12,6 +12,7 @@ from enum import Enum, auto
 from typing import Optional
 
 from .journal.events import FSDJump, FSDTarget, Loadout, StartJump
+from .status.navroute import NavRoute
 from .status.status import Status
 
 
@@ -47,6 +48,9 @@ class GameState:
     # Last seen Status.json.
     status: Optional[Status] = None
 
+    # Last seen NavRoute.json.
+    last_navroute: Optional[NavRoute] = None
+
     # Current/last system, cached from FSDJump.
     current_system: Optional[str] = None
     current_system_address: Optional[int] = None
@@ -72,6 +76,9 @@ class GameState:
 
     def apply_status(self, st: Status) -> None:
         self.status = st
+
+    def apply_navroute(self, nr: NavRoute) -> None:
+        self.last_navroute = nr
 
     def apply_fsd_target(self, ev: FSDTarget) -> None:
         self.next_target = ev
