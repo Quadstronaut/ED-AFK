@@ -1,0 +1,50 @@
+[ship]
+expected_ship = "cutter"
+expected_max_jump_range_ly = 31.288
+expected_fuel_capacity_t = 64.0
+
+[routing]
+mode = "external_spansh"
+destination = "Beagle Point"
+efficiency = 60
+range_margin = 0.97
+fuel_safety_threshold = 0.20
+refuel_threshold = 0.70
+
+[exploration]
+honk = true
+fss = "off"
+dss = "off"
+
+[safety]
+hull_panic_threshold = 0.70
+heat_panic_threshold = 1.00
+heatsink_threshold = 0.80
+no_journal_timeout_s = 90.0
+panic_hotkey = "ctrl+alt+p"
+
+[input]
+backend = "pydirectinput"
+key_delay_ms = 75
+pitch_up_default_s = 2.0
+
+[binds]
+preset_name = "ED-AFK"
+auto_swap_start_preset = true
+restore_on_exit = true
+
+[hud]
+edhm_detect = true
+graphics_override_fallback = true
+
+[cv]
+capture_backend = "dxcam-cpp"
+require_sdr = true
+require_borderless_windowed = true
+target_resolution = [2560, 1440]
+ocr_engine = "tesseract"
+
+[eddn]
+publish = true
+software_name = "ED-AFK / ed-autojump"
+software_version = "0.2.0"

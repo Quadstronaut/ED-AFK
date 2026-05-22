@@ -1,0 +1,1 @@
+"""HUD detection + GraphicsConfigurationOverride writer."""
