@@ -20,6 +20,7 @@ from .config import Config
 
 
 CRITICAL_ACTIONS = (
+    "HyperSuperCombination",   # the engage-jump key — bot can't fly without it
     "SetSpeedZero",
     "SetSpeed25",
     "SetSpeed50",

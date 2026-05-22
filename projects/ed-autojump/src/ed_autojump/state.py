@@ -63,6 +63,11 @@ class GameState:
     # The just-seen StartJump:Hyperspace, used by the throttle-zero guard.
     last_start_jump: Optional[StartJump] = None
 
+    # Debounce: True between HyperSuperCombination press and StartJump
+    # arrival (or timeout). Prevents double-pressing the engage key
+    # while we wait for the FSD to confirm.
+    engagement_in_progress: bool = False
+
     # Per-system FSS / DSS bookkeeping.
     bodies_in_current_system: dict[int, dict] = field(default_factory=dict)
 

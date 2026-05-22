@@ -95,6 +95,7 @@ def test_critical_actions_present_explicitly():
     """Belt-and-braces: regardless of AST scanning, these MUST be bound."""
     binds = parse_binds(BINDS_PATH)
     must_have = {
+        "HyperSuperCombination",        # engage next jump
         "SetSpeedZero",
         "SetSpeed25",
         "SetSpeed50",
