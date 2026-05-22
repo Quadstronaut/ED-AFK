@@ -148,6 +148,7 @@ def cmd_run(args) -> int:
     from .keys import NullSender, parse_binds
     from .orchestrator import Orchestrator
     from .panic import PanicSwitch
+    from .panic_listener import HotkeyListener, _NullBackend, resolve_backend
     from .planner.spansh import SpanshClient
     from .recorder import Recorder, default_session_path
     from .state import GameState
@@ -157,6 +158,18 @@ def cmd_run(args) -> int:
     cfg = load_config(args.config if args.config.is_file() else None)
     journal_dir = args.journal_dir or cfg.paths.journal_dir_expanded()
     panic = PanicSwitch()
+    backend = resolve_backend()
+    listener = HotkeyListener(
+        panic_switch=panic,
+        backend=backend,
+        hotkey=cfg.safety.panic_hotkey,
+    )
+    if isinstance(backend, _NullBackend):
+        print(
+            "WARNING: panic-hotkey backend unavailable (install `keyboard` to enable "
+            f"{cfg.safety.panic_hotkey}); Ctrl+C in this terminal still trips panic."
+        )
+    listener.start()
 
     # Apply CLI overrides into config.
     if args.destination:
@@ -248,6 +261,7 @@ def cmd_run(args) -> int:
         orch.request_stop()
         return 130
     finally:
+        listener.stop()
         orch.shutdown()
 
 
