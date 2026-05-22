@@ -3,9 +3,11 @@
 Autonomous exploration bot for Elite Dangerous: Odyssey. First tool in the
 ED-AFK monorepo. Honks, scoops, jumps, optionally FSS / DSS / docks.
 
-> **Status:** v0.2 — phases 0–6 implemented; phases 7–11 framework-only,
-> deferred pending in-game calibration. See SPEC.md for the design and
-> §17 for phase exit criteria.
+> **Status:** v0.2 — phases 0–6 ship as production-ready (offline-verified);
+> phases 7–11 ship as framework + offline replay tests. In-game evidence
+> for phases 7–11 is deferred pending live calibration. See SPEC.md for
+> the design and §17 for phase exit criteria; `calibration/README.md` for
+> what to validate in-game.
 
 ## Quick start
 
