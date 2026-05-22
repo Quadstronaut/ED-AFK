@@ -109,26 +109,28 @@ def cmd_replay(args) -> int:
 
 
 def cmd_run(args) -> int:
-    """Phase-12 minimal main loop.
+    """Phase-12 main loop.
 
-    Currently does: open journal tail at `--journal-dir`, optionally open a
-    Recorder at `--sessions-dir`, loop calling `tail.step()` until
-    `--duration` seconds have elapsed. Does NOT yet dispatch executors or
-    send keys — `--engage-keys` is reserved for when the integration loop
-    lands. Use this for capturing real overnight sessions where you drive
-    the ship manually and want the bot to record your decisions.
+    Wires JournalTail → Orchestrator → executor dispatch with Recorder
+    snooping every event + outcome. By default uses NullSender (does not
+    send keys); --engage-keys swaps in DirectInputSender driven by the
+    parsed ED-AFK.4.2.binds preset.
     """
-    import time
     from datetime import datetime, timezone
 
+    from .config import load_config
     from .journal.tail import JournalTail
+    from .keys import NullSender, parse_binds
+    from .orchestrator import Orchestrator
+    from .panic import PanicSwitch
     from .recorder import Recorder, default_session_path
+    from .state import GameState
 
-    journal_dir = args.journal_dir
-    if journal_dir is None:
-        cfg = load_config(args.config if args.config.is_file() else None)
-        journal_dir = cfg.paths.journal_dir_expanded()
+    cfg = load_config(args.config if args.config.is_file() else None)
+    journal_dir = args.journal_dir or cfg.paths.journal_dir_expanded()
+    panic = PanicSwitch()
 
+    # Recorder setup.
     recorder: Recorder | None = None
     if args.record:
         if args.sessions_dir is not None:
@@ -140,31 +142,38 @@ def cmd_run(args) -> int:
         recorder = Recorder(session_path)
         print(f"recording -> {session_path}")
 
+    # Sender selection. Real key dispatch requires the binds preset.
     if args.engage_keys:
-        print("WARNING: --engage-keys requested but executor dispatch not yet wired; ignoring")
+        from .keys import DirectInputSender
+        binds_path = Path(__file__).parent / "binds" / "ED-AFK.4.2.binds"
+        binds = parse_binds(binds_path)
+        sender = DirectInputSender(binds)
+        print(f"engaging keys via {binds_path.name}")
+    else:
+        sender = NullSender()
+
+    state = GameState()
+    orch = Orchestrator(
+        sender=sender,
+        recorder=recorder,
+        state=state,
+        config=cfg,
+        panic_switch=panic,
+    )
 
     try:
         tail = JournalTail(journal_dir)
         if args.duration <= 0:
             return 0
-        deadline = time.monotonic() + args.duration
-        poll_interval = 0.5
-        while time.monotonic() < deadline:
-            try:
-                events = tail.step()
-            except FileNotFoundError:
-                events = []
-            for ev in events:
-                if recorder is not None:
-                    recorder.record_journal(ev)
-            time.sleep(poll_interval)
+        orch.run_live(tail, duration_s=args.duration)
         return 0
     except KeyboardInterrupt:
-        print("\ninterrupted")
+        print("\ninterrupted — tripping panic switch")
+        panic.trip()
+        orch.request_stop()
         return 130
     finally:
-        if recorder is not None:
-            recorder.close()
+        orch.shutdown()
 
 
 def cmd_doctor(args) -> int:
