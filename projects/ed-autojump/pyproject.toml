@@ -22,6 +22,12 @@ cv = [
     "dxcam-cpp",
     "pytesseract>=0.3.10",
 ]
+hotkey = [
+    # Enables the global Ctrl+Alt+P panic hotkey listener. Without this
+    # the bot still runs — just no OS-level panic. Ctrl+C in the
+    # terminal continues to work either way.
+    'keyboard>=0.13; sys_platform == "win32"',
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",

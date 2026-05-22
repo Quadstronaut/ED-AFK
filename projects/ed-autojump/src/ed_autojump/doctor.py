@@ -135,6 +135,18 @@ def check_pydirectinput() -> CheckResult:
         )
 
 
+def check_panic_hotkey() -> CheckResult:
+    """Verify the global panic-hotkey listener can be wired."""
+    from .panic_listener import _NullBackend, resolve_backend
+    backend = resolve_backend()
+    if isinstance(backend, _NullBackend):
+        return _warn(
+            "panic_hotkey",
+            "no global hotkey backend — install `keyboard` (extras: hotkey) for Ctrl+Alt+P",
+        )
+    return _pass("panic_hotkey", f"{type(backend).__name__} ready")
+
+
 def run_all_checks(cfg: Config) -> list[CheckResult]:
     """Execute every check; return the list (ordered)."""
     from . import __file__ as pkg_file
@@ -150,6 +162,7 @@ def run_all_checks(cfg: Config) -> list[CheckResult]:
         check_binds_preset(binds_path),
         check_status_files(journal_dir),
         check_pydirectinput(),
+        check_panic_hotkey(),
         check_edhm(),
     ]
 
