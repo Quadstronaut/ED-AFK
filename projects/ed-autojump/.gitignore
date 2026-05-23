@@ -12,3 +12,6 @@ logs/
 calibration/profile.json
 *.swp
 .DS_Store
+
+# Test fixtures — anonymized journal samples required by pytest; override repo-root *.log ignore.
+!tests/fixtures/journals/*.log

@@ -1,0 +1,1 @@
+{ "timestamp":"2026-01-10T04:00:00Z", "event":"Loadout", "Ship":"sidewinder", "ShipID":1, "ShipName":"AnonShip", "MaxJumpRange":8.0, "FuelCapacity":{ "Main":2.000000, "Reserve":0.300000 }, "UnladenMass":47.0, "Modules":[ { "Slot":"FrameShiftDrive", "Item":"int_hyperdrive_size2_class5", "On":true, "Priority":0, "Health":1.0, "Value":1 } ] }
