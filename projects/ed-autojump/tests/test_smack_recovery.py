@@ -110,8 +110,10 @@ class _ClearAfterN:
 
 class TestBlindPath:
     def test_fixed_pitches_and_full_press_order(self):
-        """Blind path: fixed PitchUpButton x N, then Supercruise, then
-        TargetNextRouteSystem — in that order, with no compass align."""
+        """Blind path: fixed PitchUpButton x N, then full throttle -> engage
+        Supercruise -> full throttle again, then TargetNextRouteSystem — in that
+        order, with no compass align. SC throttle is a separate axis, so full
+        throttle is pressed TWICE around the engage."""
         sender = _RecordingSender()
         out = perform_smack_recovery(
             sender,
@@ -120,10 +122,10 @@ class TestBlindPath:
         )
         assert out.pitches == DEFAULT_BLIND_PITCHES
         assert out.star_cleared is None  # blind: never sensed the star
-        # Exactly: N pitches, one engage, one route target (no align presses).
+        # Exactly: N pitches, throttle/engage/throttle, one route target.
         assert sender.actions() == (
             ["PitchUpButton"] * DEFAULT_BLIND_PITCHES
-            + ["Supercruise", "TargetNextRouteSystem"]
+            + ["SetSpeed100", "Supercruise", "SetSpeed100", "TargetNextRouteSystem"]
         )
 
     def test_supercruise_pressed_once(self):
