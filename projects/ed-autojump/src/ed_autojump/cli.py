@@ -365,19 +365,28 @@ def cmd_run(args) -> int:
             print(f"vision: alignment OFF ({reason}) — the ship will NOT be "
                   "steered. Run `ed-autojump calibrate-compass` and set "
                   "[vision].enabled = true to enable orientation.")
-        # Sun grabber feeds the brightness "get off the star" pitch — used by
-        # the brightness/sc_assist escape modes AND by the one-shot startup
-        # escape that runs in EVERY non-blind mode (incl. refuel) when we load in
-        # parked at a star. So build it for anything but "blind".
+        # The "get off the star" maneuver's dependency depends on the mode:
+        #   compass (DEFAULT) -> uses the NAV-COMPASS (compass_reader); NO sun grab.
+        #   brightness/sc_assist/refuel -> use the sun-brightness grabber (top 2/3).
+        #   blind -> fixed-timer pitch; needs neither.
         escape_mode = cfg.escape.escape_mode
-        if escape_mode != "blind":
+        if escape_mode == "compass":
+            if compass_reader is None:
+                # Loud: compass mode without vision can't get off the star at all.
+                print("escape: mode='compass' but vision/compass is OFF — the ship "
+                      "will NOT get off the star (arrivals will stall at it). Run "
+                      "`ed-autojump calibrate-compass` and set [vision].enabled = true.")
+            else:
+                print("escape: mode='compass' — target star -> nav-compass pitch-under "
+                      "-> fly clear -> target next -> orient (no brightness, no scoop)")
+        elif escape_mode != "blind":
             sun_grab = build_sun_grabber(cfg)
             if sun_grab is None:
                 print(f"escape: mode={escape_mode!r} but sun grabber unavailable; "
                       "startup get-off-star pitch disabled (jumps may stall at the star)")
             elif escape_mode == "refuel":
-                print("escape: mode='refuel' — startup get-off-star pitch + scoop-to-full "
-                      f"on low fuel (compass align {'ON' if compass_reader is not None else 'OFF'})")
+                print("escape: mode='refuel' (DEPRECATED — SC Assist rams the star); "
+                      f"compass align {'ON' if compass_reader is not None else 'OFF'}")
             else:
                 print(f"escape: sensed mode={escape_mode!r} (sun region probe active)")
     orch = Orchestrator(

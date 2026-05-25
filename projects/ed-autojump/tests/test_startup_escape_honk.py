@@ -97,11 +97,16 @@ def _clearing_sun_grab():
 
 def _orch(status_reader, sun_grab):
     # CONSTANT clock: sun_avoid is frame-driven, not timeout-driven.
+    # escape_mode='brightness': these tests cover the OPT-IN brightness startup
+    # path (perform_realspace_escape). The DEFAULT is now 'compass' (covered by
+    # test_compass_escape.py); brightness stays for users who choose it.
+    cfg = Config()
+    cfg.escape.escape_mode = "brightness"
     return Orchestrator(
         sender=RecordingSender(_binds()),
         recorder=None,
         state=GameState(),
-        config=Config(),
+        config=cfg,
         clock=lambda: 0.0,
         sleeper=lambda _t: None,
         status_reader=status_reader,

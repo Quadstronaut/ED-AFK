@@ -20,8 +20,10 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 
 from .config import Config
 from .executor.escape import (
+    CompassEscapeOutcome,
     RealspaceEscapeOutcome,
     SensedEscapeOutcome,
+    perform_compass_escape,
     perform_realspace_escape,
     perform_sensed_escape,
     sun_brightness,
@@ -302,28 +304,92 @@ class Orchestrator:
     def _maybe_startup_escape(self, status: Status) -> None:
         """Get into the system on launch: HONK, then get off the arrival star.
 
-        ONE routine for both cases (perform_realspace_escape): PITCH the star
-        off-screen FIRST (always — never throttle pointed at the star), THEN
-        supercruise — and the SC engage is SKIPPED when we're already in SC
-        (status.in_supercruise). Pitch-first means the star is dodged regardless
-        of that branch; then we fly clear, re-aim, and the engage gate jumps.
+        The DEFAULT 'compass' mode targets the star and uses the nav-compass to
+        pitch it UNDER the ship (see _startup_compass_escape). The legacy
+        brightness/blind modes (opt-in) use the sun-brightness pitch instead
+        (_startup_brightness_escape).
 
         On a fresh load we sit at the arrival star with no arrival event, so the
         engage gate is held off (refuses to jump) until this clears the pending
-        flag. Skips when docked or with no sun probe. Keeps pending set (retry
-        next tick) if the pitch couldn't clear the star or SC entry never logged."""
+        flag. Skips when docked. Keeps pending set (retry next tick) if the star
+        could not be confirmed under us / clear, or SC entry never logged."""
         if status.docked:
             self._startup_escape_pending = False
             return
-        if self.sun_grab is None:
-            self._startup_escape_pending = False
-            return
 
-        # HONK FIRST — a plain key hold (see _startup_honk). Once, up front.
+        # HONK FIRST — a plain key hold (see _startup_honk). Once, up front. It
+        # is independent of the escape mode and the get-off-star maneuver.
         if not self._startup_honked:
             self._startup_honk()
             self._startup_honked = True
 
+        if self.config.escape.escape_mode == "compass":
+            self._startup_compass_escape(status)
+            return
+
+        # Legacy brightness/blind startup (opt-in): needs the sun grabber.
+        if self.sun_grab is None:
+            self._record_outcome("StartupEscapeSkipped", {
+                "reason": "no_sun_grab",
+                "escape_mode": self.config.escape.escape_mode,
+            })
+            self._startup_escape_pending = False
+            return
+        self._startup_brightness_escape(status)
+
+    def _startup_compass_escape(self, status: Status) -> None:
+        """Startup get-off-star via the compass maneuver (DEFAULT mode): target
+        the star, pitch it under us via the nav-compass, fly clear, target the
+        next hop, orient.
+
+        Requires compass (vision) wiring; without it the maneuver is impossible,
+        so clear the pending flag (don't wedge the run forever) and record why —
+        the ship will NOT have moved off the star. Arm it with [vision] +
+        calibrate-compass."""
+        if self.compass_reader is None or self.frame_grabber is None:
+            self._record_outcome("StartupEscapeSkipped", {
+                "reason": "compass_unavailable",
+                "detail": "escape_mode='compass' needs the nav-compass vision "
+                          "(enable [vision] + run calibrate-compass)",
+            })
+            self._startup_escape_pending = False
+            return
+        e = self.config.escape
+        outcome: CompassEscapeOutcome = perform_compass_escape(
+            self.sender,
+            compass_reader=self.compass_reader,
+            compass_capture=self.frame_grabber,
+            align_kwargs=self._align_kwargs(),
+            already_in_supercruise=status.in_supercruise,  # skip the engage if in SC
+            in_supercruise=self._poll_in_supercruise,
+            star_target_action=e.star_target_action,
+            target_settle_s=e.compass_target_settle_s,
+            clear_offset_y=e.compass_clear_offset_y,
+            samples=self.config.vision.align_samples,
+            pitch_hold=e.compass_pitch_hold_s,
+            pitch_settle_s=e.compass_pitch_settle_s,
+            max_iters=e.compass_max_iters,
+            timeout_s=e.compass_timeout_s,
+            full_throttle=e.clear_throttle,
+            fly_clear_s=e.compass_fly_clear_s,
+            sleeper=self.sleeper,
+            clock=self.clock,
+        )
+        self._record_outcome(
+            "StartupCompassEscape",
+            self._compass_outcome_payload(outcome, in_supercruise=status.in_supercruise),
+        )
+        # Clear the engage gate ONLY on a confirmed success: star under us AND
+        # (if we tried to engage SC) it actually entered. Anything else -> retry
+        # next tick, keeping the jump gate closed while we're stuck at the star.
+        success = bool(outcome.star_under) and (outcome.sc_entered is not False)
+        self._startup_escape_pending = not success
+
+    def _startup_brightness_escape(self, status: Status) -> None:
+        """Legacy startup get-off-star via the sun-brightness pitch (opt-in;
+        escape_mode != 'compass'). PITCH the star off-screen FIRST (never
+        throttle pointed at the star), THEN supercruise (skipped if already in
+        SC). Kept for users who run brightness/blind modes."""
         e = self.config.escape
         # DIAGNOSTIC (operator-approved): log the RAW sun brightness fraction +
         # dump the probe frame, so detection is tuned from data, not guesses.
@@ -365,6 +431,27 @@ class Orchestrator:
             and not outcome.sun_avoid.cleared
         )
         self._startup_escape_pending = bool(pitch_failed or outcome.sc_entered is False)
+
+    @staticmethod
+    def _compass_outcome_payload(outcome: CompassEscapeOutcome, *,
+                                 in_supercruise: Optional[bool] = None) -> dict:
+        """Flatten a CompassEscapeOutcome into a record payload (shared by the
+        startup and arrival compass escapes)."""
+        payload: dict[str, Any] = {
+            "targeted_star": outcome.targeted_star,
+            "star_seen": outcome.star_seen,
+            "star_under": outcome.star_under,
+            "pitch_iters": outcome.pitch_iters,
+            "engaged_sc": outcome.engaged_sc,
+            "sc_entered": outcome.sc_entered,
+            "flew_clear": outcome.flew_clear,
+            "targeted_next": outcome.targeted_next,
+            "aligned": outcome.aligned,
+            "notes": outcome.notes,
+        }
+        if in_supercruise is not None:
+            payload["in_supercruise"] = in_supercruise
+        return payload
 
     def _maybe_engage_next_jump(self, status: Status) -> None:
         """Press HyperSuperCombination if we have a safe target + Status
@@ -728,11 +815,17 @@ class Orchestrator:
         align_kwargs = self._align_kwargs()
         handled_scoop = False
 
-        if escape_mode == "refuel":
-            # DEFAULT flow: approach the arrival star, scoop to full (skips
-            # straight to the peel-off when already full), engage Supercruise
-            # Assist, cancel via TargetNextRouteSystem, depart + align. Replaces
-            # both the escape AND the post-jump scoop.
+        if escape_mode == "compass":
+            # DEFAULT flow: target the star, use the nav-compass to pitch it
+            # UNDER the ship, fly clear, target the next hop, orient. No
+            # brightness anywhere. handled_scoop=True because the maneuver flies
+            # AWAY from the star — there's nothing to scoop afterward (matches
+            # the operator's "disable refuel, no scoop yet" decision).
+            self._do_compass_escape(ev, align_kwargs)
+            handled_scoop = True
+        elif escape_mode == "refuel":
+            # DEPRECATED (WRONG — Supercruise Assist rams the star; see
+            # EscapeConfig docstring). Kept for reference only; not the default.
             self._do_refuel(ev, follow_stream, align_kwargs)
             handled_scoop = True
         elif escape_mode != "blind" and self.sun_grab is not None:
@@ -811,6 +904,49 @@ class Orchestrator:
             timeout_s=v.timeout_s,
             samples=v.align_samples,
         )
+
+    def _do_compass_escape(self, ev: FSDJump, align_kwargs: dict) -> None:
+        """Arrival get-off-star via the compass maneuver (DEFAULT). On a
+        hyperspace arrival the ship is in realspace at the star; the maneuver
+        targets the star, pitches it under us via the nav-compass, engages SC if
+        needed, flies clear, targets the next hop, and orients.
+
+        Deliberately does NOT take/consume the journal follow-stream (it watches
+        the compass, not the journal), so it can never collide with the engage
+        gate the way the refuel flow did."""
+        if self.compass_reader is None or self.frame_grabber is None:
+            self._record_outcome("CompassEscapeSkipped", {
+                "reason": "compass_unavailable",
+                "detail": "escape_mode='compass' needs the nav-compass vision "
+                          "(enable [vision] + run calibrate-compass)",
+            })
+            return
+        e = self.config.escape
+        # On a hyperspace arrival we drop into realspace at the star. Re-poll the
+        # LIVE supercruise flag (Status.json just flipped) rather than trusting a
+        # possibly-stale pre-jump value, so we engage SC only when we must.
+        in_sc = self._poll_in_supercruise()
+        outcome: CompassEscapeOutcome = perform_compass_escape(
+            self.sender,
+            compass_reader=self.compass_reader,
+            compass_capture=self.frame_grabber,
+            align_kwargs=align_kwargs,
+            already_in_supercruise=in_sc,
+            in_supercruise=self._poll_in_supercruise,
+            star_target_action=e.star_target_action,
+            target_settle_s=e.compass_target_settle_s,
+            clear_offset_y=e.compass_clear_offset_y,
+            samples=self.config.vision.align_samples,
+            pitch_hold=e.compass_pitch_hold_s,
+            pitch_settle_s=e.compass_pitch_settle_s,
+            max_iters=e.compass_max_iters,
+            timeout_s=e.compass_timeout_s,
+            full_throttle=e.clear_throttle,
+            fly_clear_s=e.compass_fly_clear_s,
+            sleeper=self.sleeper,
+            clock=self.clock,
+        )
+        self._record_outcome("CompassEscape", self._compass_outcome_payload(outcome))
 
     def _do_refuel(
         self, ev: FSDJump, follow_stream: Optional[Iterator[Event]], align_kwargs: dict

@@ -32,6 +32,16 @@
     <Primary Device="Keyboard" Key="Key_H" />
     <Secondary Device="{NoDevice}" Key="" />
   </TargetNextRouteSystem>
+  <!-- Targeting: "Select Target Ahead" locks the object in the reticle. On a
+       hyperspace arrival the ship faces the star, so this targets the STAR and
+       puts it on the nav-compass (the compass-escape maneuver then pitches it
+       under the ship). The in-game default key 'T' is already taken by
+       LandingGearToggle in this preset, so SelectTarget is on Key_3 here. The
+       player MUST re-import this preset in ED for the in-game bind to match. -->
+  <SelectTarget>
+    <Primary Device="Keyboard" Key="Key_3" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </SelectTarget>
 
   <!-- Throttle -->
   <ForwardKey>

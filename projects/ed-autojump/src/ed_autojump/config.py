@@ -215,12 +215,17 @@ class EscapeConfig:
     """Post-FSDJump star escape configuration.
 
     escape_mode:
-        "refuel" (DEFAULT) — journal-driven scoop-to-full, then a clean peel-off.
-          Approach the arrival star, watch FuelScoop events: cut throttle at the
-          scoop-rate plateau, fill until Total == capacity, then engage Supercruise
-          Assist (nav-panel macro), orbit ~3 s, cancel via TargetNextRouteSystem,
-          full throttle, wait, and compass-align. Already-full arrivals skip the
-          scoop and just peel off. See refuel_* knobs below.
+        "compass" (DEFAULT) — compass-driven get-off-star, NO brightness. Target
+          the star (Select Target Ahead) so the nav-compass points at it, then
+          PITCH it UNDER the ship — compass-gated: pitch up until the target dot is
+          well below the nose (offset_y <= -compass_clear_offset_y) OR goes hollow
+          (behind). ONLY once the nose is off the star: engage supercruise if not
+          already in it, fly clear, target the next hop, and orient. NEVER throttles
+          while the star is ahead (a failed pitch bails without throttle). The jump
+          itself fires from the orchestrator's engage gate. See compass_* knobs.
+        "refuel" (DEPRECATED — WRONG, do not use) — journal-driven scoop via
+          Supercruise Assist. SC Assist is a collision-prone approach autopilot, not
+          a scoop: it rams the star. Kept for reference only. See refuel_* knobs.
         "brightness" — vision-sensed sun-avoid: CHECK the top-2/3 of the screen
           (bottom 1/3 is cockpit, excluded), and if a bright star is present pitch
           up HARD and sustained until it is completely gone, then accelerate (star
@@ -234,7 +239,17 @@ class EscapeConfig:
         (full width, y=0..0.667*H) — the bottom 1/3 is cockpit and excluded.
     """
 
-    escape_mode: str = "refuel"        # "refuel" (default) | "brightness" | "sc_assist" | "blind"
+    escape_mode: str = "compass"       # "compass" (default) | "brightness" | "refuel" (DEPRECATED) | "sc_assist" | "blind"
+    # --- "compass" mode (DEFAULT): target star -> compass pitch-under -> fly -----
+    #     clear -> target next -> orient. NO brightness. See the class docstring.
+    star_target_action: str = "SelectTarget"   # ED action that locks the star ("Select Target Ahead")
+    compass_target_settle_s: float = 0.4   # wait after targeting before reading the compass
+    compass_clear_offset_y: float = 0.6    # star is "under us" when its compass dot offset_y <= -this (or hollow/behind)
+    compass_pitch_hold_s: float = 1.0      # PitchUpButton hold per iteration (hard, sustained)
+    compass_pitch_settle_s: float = 1.0    # wait after each pitch for rotational momentum to settle before re-reading
+    compass_max_iters: int = 20            # max pitch presses before bailing (a bail NEVER throttles)
+    compass_timeout_s: float = 30.0        # abort the pitch-under after this many seconds (failsafe)
+    compass_fly_clear_s: float = 7.0       # seconds flying away from the star before targeting the next hop
     sun_bright_thresh: int = 125       # grayscale pixel value threshold (EDAPGui default)
     sun_present_frac: float = 0.02     # bright fraction above which a star IS present (CHECK)
     sun_detect_samples: int = 3        # grabs to sample for the CHECK; max-of-N beats a flaky black frame

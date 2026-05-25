@@ -840,7 +840,12 @@ class TestEscapeConfig:
     def test_default_values(self):
         from ed_autojump.config import EscapeConfig
         cfg = EscapeConfig()
-        assert cfg.escape_mode == "refuel"
+        # DEFAULT is now the compass maneuver (target star -> nav-compass
+        # pitch-under -> fly -> orient). "refuel" is deprecated (SC Assist rams).
+        assert cfg.escape_mode == "compass"
+        assert cfg.star_target_action == "SelectTarget"
+        assert cfg.compass_clear_offset_y == pytest.approx(0.6)
+        assert cfg.compass_pitch_hold_s == pytest.approx(1.0)
         assert cfg.sun_bright_thresh == 125
         # Hard-pitch defaults: clear only when the star is essentially gone
         # (0.005, near the clear-sky floor), with 1.0 s sustained pitch holds
