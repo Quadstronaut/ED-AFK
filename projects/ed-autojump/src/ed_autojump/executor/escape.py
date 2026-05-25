@@ -642,6 +642,7 @@ def perform_realspace_escape(
     sender: Any,
     sun_capture: Callable[[], Any],
     *,
+    already_in_supercruise: bool = False,
     in_supercruise: Optional[Callable[[], bool]] = None,
     sc_entry_timeout_s: float = 30.0,
     sc_entry_poll_s: float = 0.5,
@@ -674,6 +675,13 @@ def perform_realspace_escape(
       MONITOR LOGS for SC entry (BAIL + retry if it never logs) -> pitch the
       star off-screen IN SC -> full throttle AGAIN (separate SC axis) -> wait
       ``post_sc_wait_s`` -> target next -> orient.
+
+    ``already_in_supercruise``: when the ship is ALREADY in supercruise at
+    startup, there is nothing to engage — skip the throttle->engage->log-wait
+    and go straight to the move-out-of-the-way (pitch off the star -> throttle
+    to fly clear -> target -> orient). The maneuver is otherwise identical, so
+    the same "fly AROUND the star, then re-aim and jump" behaviour applies in
+    both normal space (after engaging) and supercruise.
 
     The SC-entry gate is a hard FAIL: if the ship never enters supercruise the
     engage failed and we are still in normal space, so we bail without
@@ -709,36 +717,40 @@ def perform_realspace_escape(
             ),
         )
 
-    # 3. STAR ahead -> supercruise REQUIRED. Full throttle to ENGAGE, then engage
-    #    SC. NO delay between these two — you fire the FSD right after speeding up.
-    sender.press(full_throttle, hold=0.05)   # normal-space throttle, to engage SC
-    sender.press(SC_ENGAGE, hold=0.05)
-
-    # 4. MONITOR THE LOGS for supercruise entry. If it never logs the engage
-    #    FAILED — we're still in NORMAL space (almost certainly still on the
-    #    star). Pitching, throttling, targeting, orienting would all act on a
-    #    ship that never left: bail with NONE of that so the caller retries.
-    #    (None = no SC check wired, unit tests only: fall through and proceed.)
-    sc_entered = wait_for_supercruise(
-        in_supercruise,
-        timeout_s=sc_entry_timeout_s,
-        poll_s=sc_entry_poll_s,
-        clock=clock,
-        sleeper=sleeper,
-    )
-    if sc_entered is False:
-        return RealspaceEscapeOutcome(
-            star_detected=True,
-            sun_avoid=None,
-            engaged_sc=True,
-            sc_entered=False,
-            aligned=None,
-            notes=(
-                "engaged FSD but supercruise entry never logged within "
-                f"{sc_entry_timeout_s:g}s; bailed without pitch/throttle/target/"
-                "orient — caller should retry the engage"
-            ),
+    # 3-4. STAR ahead. If we're in NORMAL space we must ENGAGE supercruise first
+    #      (full throttle to engage, then SC, then MONITOR THE LOGS for entry —
+    #      bail+retry if it never logs). If we're ALREADY in supercruise there is
+    #      nothing to engage; skip straight to moving the star out of the way.
+    if already_in_supercruise:
+        sc_entered: Optional[bool] = True
+    else:
+        sender.press(full_throttle, hold=0.05)   # normal-space throttle, to engage SC
+        sender.press(SC_ENGAGE, hold=0.05)
+        # MONITOR THE LOGS. If SC entry never logs the engage FAILED — we're
+        # still in NORMAL space (almost certainly still on the star). Pitching,
+        # throttling, targeting, orienting would all act on a ship that never
+        # left: bail with NONE of that so the caller retries. (None = no SC check
+        # wired, unit tests only: fall through and proceed.)
+        sc_entered = wait_for_supercruise(
+            in_supercruise,
+            timeout_s=sc_entry_timeout_s,
+            poll_s=sc_entry_poll_s,
+            clock=clock,
+            sleeper=sleeper,
         )
+        if sc_entered is False:
+            return RealspaceEscapeOutcome(
+                star_detected=True,
+                sun_avoid=None,
+                engaged_sc=True,
+                sc_entered=False,
+                aligned=None,
+                notes=(
+                    "engaged FSD but supercruise entry never logged within "
+                    f"{sc_entry_timeout_s:g}s; bailed without pitch/throttle/"
+                    "target/orient — caller should retry the engage"
+                ),
+            )
 
     # 5. NOW IN SUPERCRUISE: move out of the way — pitch UP HARD until the star
     #    is off-screen. Vision is the lone tolerated best-effort: record the
@@ -770,15 +782,18 @@ def perform_realspace_escape(
         clock=clock, sleeper=sleeper,
     )
 
+    if already_in_supercruise:
+        notes = ("star ahead, already in SC -> pitched clear -> full SC throttle "
+                 "-> waited, targeted, aligned")
+    else:
+        notes = ("star ahead; engaged SC -> waited for SC entry "
+                 f"(entered={sc_entered}) -> pitched clear in SC -> full SC "
+                 "throttle -> waited, targeted, aligned")
     return RealspaceEscapeOutcome(
         star_detected=True,
         sun_avoid=avoid_result,
-        engaged_sc=True,
+        engaged_sc=not already_in_supercruise,
         sc_entered=sc_entered,
         aligned=aligned,
-        notes=(
-            "star ahead; engaged SC -> waited for SC entry "
-            f"(entered={sc_entered}) -> pitched clear in SC -> full SC throttle "
-            "-> waited, targeted, aligned"
-        ),
+        notes=notes,
     )

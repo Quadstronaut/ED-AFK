@@ -24,6 +24,7 @@ from .executor.escape import (
     SensedEscapeOutcome,
     perform_realspace_escape,
     perform_sensed_escape,
+    sun_brightness,
 )
 from .executor.jump import (
     ChargeOutcome,
@@ -176,6 +177,54 @@ class Orchestrator:
             self._record_outcome("HonkBindMissing",
                                  {"action": "ExplorationFSSDiscoveryScan"})
 
+    def _log_sun_probe(self, e: Any) -> None:
+        """Record the sun-brightness probe's RAW value + dump the frame.
+
+        Operator-approved diagnostic. The star CHECK (star_present) once returned
+        False with a star dead ahead, so the escape skipped the pitch and threw
+        throttle. We will NOT tune the threshold blind — this logs the computed
+        bright fraction vs the present threshold and saves the probe PNG so a live
+        run gives us the real number."""
+        if self.sun_grab is None:
+            return
+        try:
+            frame = self.sun_grab()
+        except Exception as exc:  # noqa: BLE001
+            self._record_outcome("StartupVisionProbeError", {"error": str(exc)})
+            return
+        try:
+            frac = sun_brightness(frame, e.sun_bright_thresh)
+        except Exception as exc:  # noqa: BLE001
+            self._record_outcome("StartupVisionProbeError", {"error": str(exc)})
+            return
+        self._record_outcome("StartupVisionProbe", {
+            "bright_fraction": frac,
+            "present_threshold": e.sun_present_frac,
+            "bright_thresh": e.sun_bright_thresh,
+            "detected": frac >= e.sun_present_frac,
+            "frame": self._dump_frame(frame, "sun"),
+        })
+
+    def _dump_frame(self, frame: Any, label: str) -> Optional[str]:
+        """Best-effort save of a capture frame to a `debug/` dir next to the
+        session recording. Returns the path, or None if it could not be saved
+        (no cv2, no recorder, write error). Never raises."""
+        try:
+            import cv2  # noqa: PLC0415 — deferred; live-only, absent in CI
+            from datetime import datetime, timezone
+            from pathlib import Path
+
+            rec_path = getattr(self.recorder, "path", None)
+            base = (rec_path.parent if rec_path is not None
+                    else Path.home() / "ed-afk-sessions") / "debug"
+            base.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
+            out = base / f"{label}_{ts}.png"
+            cv2.imwrite(str(out), frame)
+            return str(out)
+        except Exception:  # noqa: BLE001 — diagnostic only, must never break the run
+            return None
+
     def _poll_in_supercruise(self) -> bool:
         """Log-backed 'are we in supercruise yet?' check for the escape's second
         throttle. The escape blocks the live loop, so the per-tick Status poll is
@@ -274,30 +323,41 @@ class Orchestrator:
             self._startup_escape_realspace(e)
             return
 
-        # ALREADY IN SUPERCRUISE: do NOT pitch + accelerate. That fly-clear is
-        # what ran the ship straight at the star. In supercruise you don't fly
-        # AROUND the star — you point at the next system and jump, and the jump
-        # removes you. So we just orient toward the target; the engage gate fires
-        # the jump (with the §9.2 throttle-zero-on-StartJump safety). The harder
-        # "maneuver stars while in SC" case is deferred per spec.
-        aligned: Optional[bool] = None
-        if self.compass_reader is not None and self.frame_grabber is not None:
-            outcome = align_to_target(
-                self.compass_reader,
-                self.sender,
-                capture=self.frame_grabber,
-                clock=self.clock,
-                sleeper=self.sleeper,
-                **self._align_kwargs(),
-            )
-            aligned = outcome.aligned
+        # ALREADY IN SUPERCRUISE: same maneuver as realspace MINUS the SC engage
+        # (we're in SC already). If a star is in the way: pitch it off-screen,
+        # throttle to FLY AROUND it, then re-aim at the target and let the engage
+        # gate jump. If no star is detected: unobstructed -> just target + orient
+        # (NO blind throttle — that's what ran the ship into the star).
+        #
+        # DIAGNOSTIC (operator-approved): the star-detection that decides
+        # pitch-vs-skip missed a real star once. Log the RAW brightness fraction
+        # and dump the probe frame so we tune the threshold from data, not
+        # guesses.
+        self._log_sun_probe(e)
+        outcome = perform_realspace_escape(
+            self.sender,
+            self.sun_grab,
+            already_in_supercruise=True,
+            in_supercruise=self._poll_in_supercruise,
+            compass_reader=self.compass_reader,
+            compass_capture=self.frame_grabber,
+            align_kwargs=self._align_kwargs(),
+            bright_thresh=e.sun_bright_thresh,
+            present_frac=e.sun_present_frac,
+            clear_frac=e.sun_clear_frac,
+            pitch_hold=e.sun_pitch_hold_s,
+            timeout_s=e.sun_timeout_s,
+            full_throttle=e.clear_throttle,
+            post_sc_wait_s=e.smack_post_sc_wait_s,
+            sleeper=self.sleeper,
+            clock=self.clock,
+        )
         self._record_outcome("StartupEscape", {
-            "in_supercruise": True,
-            "star_detected": None,
-            "accelerated": False,
-            "aligned": aligned,
-            "notes": ("already in supercruise — oriented to target, NO "
-                      "pitch/accelerate; engage gate jumps"),
+            "space": "supercruise",
+            "star_detected": outcome.star_detected,
+            "sun_cleared": outcome.sun_avoid.cleared if outcome.sun_avoid else None,
+            "aligned": outcome.aligned,
+            "notes": outcome.notes,
         })
         # SC path is a single shot — clear the pending flag so we don't re-run it
         # (and so the engage gate is released to jump).
