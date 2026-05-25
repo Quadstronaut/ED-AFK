@@ -665,6 +665,69 @@ class TestPerformRealspaceEscape:
         assert "PitchUpButton" not in sender.actions()
         assert "TargetNextRouteSystem" in sender.actions()
 
+    def test_already_in_sc_skips_engage_then_pitches_and_flies(self):
+        """already_in_supercruise=True + star ahead: NO engage (no Supercruise
+        press) — go straight to the move-out-of-the-way: pitch the star
+        off-screen, ONE throttle to fly clear, then target + align. This is the
+        'fly AROUND the star' maneuver for a ship launched already in SC."""
+        call_count = [0]
+        bright = _make_frame(10, 10, 200)
+        dark = _make_frame(10, 10, 0)
+
+        def _sun_capture():
+            call_count[0] += 1
+            # call 1: CHECK (bright); call 2: pitch once; call 3+: dark -> cleared.
+            return bright if call_count[0] <= 2 else dark
+
+        sender = _CountingSender()
+        out = perform_realspace_escape(
+            sender,
+            _sun_capture,
+            already_in_supercruise=True,
+            compass_reader=_FakeCompassReader(),
+            compass_capture=lambda: _make_frame(50, 50, 10),
+            align_kwargs={},
+            clear_frac=0.05,
+            pitch_hold=0.1,
+            settle_s=0.0,
+            max_iters=30,
+            timeout_s=999.0,
+            post_sc_wait_s=0.0,
+            sleeper=lambda _: None,
+            clock=_FixedClock(start=0.0, step=0.0),
+        )
+        assert out.star_detected is True
+        assert out.engaged_sc is False   # already in SC — did NOT engage
+        assert out.sc_entered is True
+        assert out.aligned is True
+        acts = sender.actions()
+        assert "Supercruise" not in acts          # no engage
+        assert "PitchUpButton" in acts            # pitched the star off-screen
+        assert acts.count("SetSpeed100") == 1     # ONE throttle (fly clear only)
+        assert "TargetNextRouteSystem" in acts    # re-aimed at the target
+        assert acts.index("PitchUpButton") < acts.index("SetSpeed100")
+
+    def test_already_in_sc_no_star_targets_and_orients_only(self):
+        """already_in_supercruise=True + no star: unobstructed — just target +
+        orient. NO throttle (the blind-throttle-into-star path is gone)."""
+        sender = _CountingSender()
+        out = perform_realspace_escape(
+            sender,
+            lambda: _make_frame(10, 10, 0),  # dark -> no star
+            already_in_supercruise=True,
+            compass_reader=_FakeCompassReader(),
+            compass_capture=lambda: _make_frame(50, 50, 10),
+            align_kwargs={},
+            post_sc_wait_s=0.0,
+            sleeper=lambda _: None,
+            clock=_FixedClock(start=0.0, step=0.0),
+        )
+        assert out.star_detected is False
+        assert "Supercruise" not in sender.actions()
+        assert "SetSpeed100" not in sender.actions()
+        assert "PitchUpButton" not in sender.actions()
+        assert "TargetNextRouteSystem" in sender.actions()
+
 
 # ---------------------------------------------------------------------------
 # perform_sensed_escape — sc_assist mode
