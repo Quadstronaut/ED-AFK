@@ -35,11 +35,15 @@
   <!-- Targeting: "Select Target Ahead" locks the object in the reticle. On a
        hyperspace arrival the ship faces the star, so this targets the STAR and
        puts it on the nav-compass (the compass-escape maneuver then pitches it
-       under the ship). The in-game default key 'T' is already taken by
-       LandingGearToggle in this preset, so SelectTarget is on Key_3 here. The
-       player MUST re-import this preset in ED for the in-game bind to match. -->
+       under the ship). KEY CHOICE: default 'T' is LandingGearToggle; digits 1-4
+       are the HUD panels (operator keeps those) and 6-7 are maps; numpad and
+       F-keys are avoided (they clash with system utilities). So this reuses
+       Key_N, freed from SecondaryFire — the bot never fires weapons and the
+       operator confirmed weapons control isn't needed. (PrimaryFire=M and
+       CycleFireGroupNext=G are left bound: the DSS scanner uses them, though dss
+       is currently off.) Re-import this preset in ED for the bind to take. -->
   <SelectTarget>
-    <Primary Device="Keyboard" Key="Key_3" />
+    <Primary Device="Keyboard" Key="Key_N" />
     <Secondary Device="{NoDevice}" Key="" />
   </SelectTarget>
 
@@ -148,8 +152,11 @@
     <Primary Device="Keyboard" Key="Key_M" />
     <Secondary Device="{NoDevice}" Key="" />
   </PrimaryFire>
+  <!-- SecondaryFire UNBOUND: its key (N) now serves SelectTarget (see above).
+       The bot never fires weapons; operator confirmed weapons control isn't
+       needed. PrimaryFire (M) stays bound for the DSS scanner. -->
   <SecondaryFire>
-    <Primary Device="Keyboard" Key="Key_N" />
+    <Primary Device="{NoDevice}" Key="" />
     <Secondary Device="{NoDevice}" Key="" />
   </SecondaryFire>
   <CycleFireGroupNext>

@@ -584,8 +584,9 @@ ROUTE_TARGET = "TargetNextRouteSystem"
 # "Select Target Ahead" — locks the object in the reticle. On a hyperspace
 # arrival the ship faces the star, so this targets the STAR, which is what puts
 # it on the nav-compass for the pitch-under maneuver. The ED-AFK preset binds
-# this to Key_3 (the in-game default 'T' is taken by LandingGearToggle); the
-# player must re-import the preset for the in-game bind to match.
+# this to Key_N — freed from SecondaryFire (the bot never fires weapons). 'T' is
+# LandingGearToggle, 1-4 are HUD panels, 6-7 are maps, and numpad/F-keys clash
+# with system utilities. Re-import the preset for the in-game bind to take.
 SELECT_TARGET = "SelectTarget"
 
 
