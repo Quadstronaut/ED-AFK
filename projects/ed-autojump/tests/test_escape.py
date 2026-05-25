@@ -322,6 +322,28 @@ class TestFlyClear:
         assert out.repitches == 0
         assert "PitchUpButton" not in sender.actions()
 
+    def test_step_greater_than_clear_s_does_not_oversleep(self):
+        """step_s > clear_s: loop must not block past the deadline.
+
+        With clear_s=0.5 and step_s=10.0, the guard must clamp step_s so the
+        function returns quickly (the _FixedClock makes 'time' deterministic).
+        We just verify it completes and still presses throttle once.
+        """
+        sender = _CountingSender()
+        # Clock advances 0.6s per call — past clear_s=0.5 on the first elapsed check.
+        clock = _FixedClock(start=0.0, step=0.6)
+        dark = lambda: _make_frame(10, 10, 0)
+        sleep_calls: list[float] = []
+        out = fly_clear(
+            sender, dark, throttle="SetSpeed100",
+            reenter_frac=0.20, clear_s=0.5, step_s=10.0,
+            clock=clock, sleeper=lambda s: sleep_calls.append(s),
+        )
+        assert isinstance(out, FlyClearOutcome)
+        assert sender.actions()[0] == "SetSpeed100"
+        # Any sleep that DID fire must be <= clear_s (guard clamped it).
+        assert all(s <= 0.5 for s in sleep_calls), f"oversleep detected: {sleep_calls}"
+
     def test_repitches_when_star_reenters_view(self):
         """If brightness exceeds reenter_frac mid-clear, fly_clear pitches up again."""
         sender = _CountingSender()

@@ -22,6 +22,7 @@ heat_panic_threshold = 1.00
 heatsink_threshold = 0.80
 no_journal_timeout_s = 90.0
 panic_hotkey = "ctrl+alt+p"
+engagement_debounce_timeout_s = 30.0  # seconds before a stalled jump-charge clears the debounce flag and retries
 
 [input]
 backend = "pydirectinput"
@@ -96,6 +97,11 @@ sun_timeout_s = 8.0         # abort after this many seconds (~120 deg pitch max)
 # Center screen region to probe for star brightness: (x, y, w, h).
 # (0, 0, 0, 0) = auto-compute center 40%×38% of the primary screen at runtime.
 sun_region = [0, 0, 0, 0]
+# Fly-clear phase: after the star clears center, fly AWAY before turning toward target.
+clear_throttle = "SetSpeed100"  # throttle action while flying clear (full ahead)
+clear_s = 8.0                   # seconds to fly away from the star
+clear_reenter_frac = 0.20       # if brightness exceeds this fraction mid-clear, pitch up again
+clear_step_s = 0.5              # poll/step interval during the clear phase (seconds)
 
 [nav]
 # Press TargetNextRouteSystem (H) before each engage so the next route star

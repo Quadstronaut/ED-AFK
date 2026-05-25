@@ -280,3 +280,35 @@ def test_align_converges_with_samples():
     out = _run(sim, samples=3)
     assert out.aligned is True
     assert abs(sim.ox) < 0.15
+
+
+def test_measure_strict_majority_even_samples_tie_is_not_found():
+    """samples=6, exactly 3 found (50/50 tie) -> not_found (strict majority required)."""
+    reads = [
+        CompassRead(found=True, offset_x=0.1, offset_y=0.0, in_front=True, confidence=0.9),
+        CompassRead(found=True, offset_x=0.1, offset_y=0.0, in_front=True, confidence=0.9),
+        CompassRead(found=True, offset_x=0.1, offset_y=0.0, in_front=True, confidence=0.9),
+        CompassRead.not_found(),
+        CompassRead.not_found(),
+        CompassRead.not_found(),
+    ]
+    reader = _SeqReader(reads)
+    result = _measure(reader, lambda: None, samples=6)
+    assert result.found is False, "50/50 tie must be treated as not_found"
+
+
+def test_measure_strict_majority_odd_samples_4_of_7_is_found():
+    """samples=7, exactly 4 found (>50%) -> returns a real read (same as before fix)."""
+    reads = [
+        CompassRead(found=True, offset_x=0.2, offset_y=0.0, in_front=True, confidence=0.9),
+        CompassRead(found=True, offset_x=0.2, offset_y=0.0, in_front=True, confidence=0.9),
+        CompassRead(found=True, offset_x=0.2, offset_y=0.0, in_front=True, confidence=0.9),
+        CompassRead(found=True, offset_x=0.2, offset_y=0.0, in_front=True, confidence=0.9),
+        CompassRead.not_found(),
+        CompassRead.not_found(),
+        CompassRead.not_found(),
+    ]
+    reader = _SeqReader(reads)
+    result = _measure(reader, lambda: None, samples=7)
+    assert result.found is True, "4-of-7 is a strict majority and must pass"
+    assert result.offset_x == 0.2

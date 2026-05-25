@@ -275,8 +275,9 @@ def build_sun_grabber(cfg: Any) -> Optional[Callable[[], Any]]:
     orchestrator degrades to blind escape in that case.
     """
     try:
-        escape_region = tuple(getattr(cfg, "escape", None) and cfg.escape.sun_region
-                              or (0, 0, 0, 0))
+        _escape_cfg = getattr(cfg, "escape", None)
+        _sun_region = tuple(_escape_cfg.sun_region) if _escape_cfg is not None else (0, 0, 0, 0)
+        escape_region = _sun_region if _sun_region != (0, 0, 0, 0) else (0, 0, 0, 0)
         if escape_region == (0, 0, 0, 0):
             user32 = ctypes.windll.user32
             user32.SetProcessDPIAware()
