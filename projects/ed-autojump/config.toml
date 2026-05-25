@@ -48,3 +48,45 @@ ocr_engine = "tesseract"
 publish = true
 software_name = "ED-AFK / ed-autojump"
 software_version = "0.2.0"
+
+[menu_nav]
+enabled = true
+group_owner_commander = "Quadstronaut"
+
+[menu_nav.calibration.Duvrazh]
+continue_key = "space"
+pg_nav_direction = "right"
+pg_nav_count = 1
+group_nav_direction = "down"
+group_nav_count = 3
+
+[vision]
+# Nav-compass alignment (orient the ship at the next target before jumping).
+# backend: "cyan" (finds the cyan target dot; ring-centered so it tolerates
+# head-sway -- validated on this machine) | "yolo-onnx" (EDAP model; did NOT
+# recognise this compass) | "ultralytics" | "opencv" (colour-free, WIP).
+# capture_backend: "gdi" (default; dxcam returns black on this machine) | "dxcam".
+enabled = true
+backend = "cyan"
+capture_backend = "gdi"
+# Compass screen rect (x, y, w, h). Calibrated 2026-05-24 on the 1920x1080
+# primary; generous box centred on the compass (~746,860) to allow drift.
+region = [676, 790, 140, 140]
+compass_radius = 25.0          # fallback radius; ring detection overrides it live
+align_tol = 0.2                # dot within 20% of centre = aligned (NOT pixel-tight)
+deadzone = 0.12                # ignore tiny offsets -- don't chase sub-dot precision
+timeout_s = 20.0               # give up aligning after this; then skip the jump
+
+[nav]
+# Press TargetNextRouteSystem (H) before each engage so the next route star
+# is locked without nav-panel scrolling -- also gives the compass a target
+# to align to. Disable if your build cycles the route target forward on each
+# press (verify in flight).
+retarget_route_before_engage = true
+# Supercruise Assist (throttle-mode). OFF until the docking/orbit flow lands.
+# PREREQUISITE: ED has NO keybind for SC Assist, so the bot can't toggle it
+# with a key. To use it you must set, in ED's right panel / flight settings,
+# Supercruise Assist to engage on blue-zone throttle. Then engaging = locking
+# a target + throttling into the blue zone (sc_assist_throttle_action).
+supercruise_assist = false
+sc_assist_throttle_action = "SetSpeed75"

@@ -63,6 +63,33 @@ def test_cli_run_duration_zero_returns_clean(tmp_path: Path):
     assert r.returncode == 0, f"stderr: {r.stderr}"
 
 
+def test_cli_launch_help_exits_zero():
+    r = _run_cli(["launch", "--help"])
+    assert r.returncode == 0, f"stderr: {r.stderr}"
+    assert "commander" in r.stdout
+    assert "mel-path" in r.stdout or "mel_path" in r.stdout
+
+
+def test_cli_setup_frontier_creds_help_exits_zero():
+    r = _run_cli(["setup-frontier-creds", "--help"])
+    assert r.returncode == 0, f"stderr: {r.stderr}"
+    assert "commanders" in r.stdout
+
+
+def test_cli_calibrate_menu_help_exits_zero():
+    r = _run_cli(["calibrate-menu", "--help"])
+    assert r.returncode == 0, f"stderr: {r.stderr}"
+    assert "commander" in r.stdout
+    assert "is-owner" in r.stdout or "is_owner" in r.stdout
+
+
+def test_cli_run_help_includes_launch_flag():
+    """`--launch` must appear in `run --help` so users discover the integration."""
+    r = _run_cli(["run", "--help"])
+    assert r.returncode == 0, f"stderr: {r.stderr}"
+    assert "--launch" in r.stdout
+
+
 def test_cli_replay_with_record_produces_session_jsonl(tmp_path: Path):
     """`ed-autojump replay --record OUT JOURNAL` should produce a session
     file with the recorded journal events."""

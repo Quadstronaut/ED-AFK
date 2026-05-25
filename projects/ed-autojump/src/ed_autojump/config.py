@@ -71,6 +71,10 @@ class SafetyConfig:
     no_journal_timeout_s: float = 90.0
     panic_hotkey: str = "ctrl+alt+p"
     legal_state_allowed: tuple[str, ...] = ("Clean", "Allied")
+    # If StartJump doesn't follow within this many seconds of pressing
+    # HyperSuperCombination, force-clear the debounce flag and try again.
+    # 30s covers normal jump-charge time + a generous slack for slow disks.
+    engagement_debounce_timeout_s: float = 30.0
 
 
 @dataclass
@@ -122,6 +126,131 @@ class EddnConfig:
 
 
 @dataclass
+class LauncherConfig:
+    """min-ed-launcher invocation defaults + commander↔profile mapping.
+
+    `profiles` maps the friendly commander name (Duvrazh, Bistronaut, …)
+    to the on-disk `.frontier-<name>.cred` profile slug. Default Account1..4
+    matches the existing Sandboxie launch scheme so the same .cred files
+    travel between sandboxie and non-sandboxie usage modulo DPAPI binding.
+    """
+
+    mel_path: str = ""  # "" = auto-detect (PATH, scoop, common install dirs)
+    default_commander: str = "Duvrazh"
+    default_auth: str = "frontier"   # "frontier" | "steam"
+    default_product: str = "edo"     # "edo" | "edh4"
+    default_group: str = "Quadstronaut"
+    autorun: bool = True
+    autoquit: bool = True
+    skip_install_prompt: bool = True
+    dryrun_timeout_s: float = 10.0   # pre-flight auth check — catches Console.ReadLine() hang
+    launch_timeout_s: float = 120.0  # max wait for main menu after spawn
+    # "Menu is interactive" is signalled by ED's audio going non-silent. The
+    # intro cutscene emits only a ~0.1s blip then silence, so we require the
+    # audio to stay non-silent for this many seconds continuously before
+    # treating it as menu music — a brief blip never qualifies.
+    menu_audio_sustain_s: float = 2.0
+    # After Fileheader fires in the journal, wait this many seconds for the
+    # main menu UI to become interactive before assuming ready. Lacking a
+    # journal event that tracks "menu is usable" (Music{MainMenu} only fires
+    # when music is on; no other event marks UI-interactive), a fixed delay
+    # is the safe proxy.
+    post_fileheader_wait_s: float = 10.0
+    profiles: dict[str, str] = field(default_factory=lambda: {
+        "Duvrazh": "account1",
+        "Bistronaut": "account2",
+        "Tristronaut": "account3",
+        "Quadstronaut": "account4",
+    })
+
+
+@dataclass
+class MenuNavConfig:
+    """Main-menu navigation parameters (Continue → PG → group → Launch).
+
+    `calibration` is populated by `ed-autojump calibrate-menu` — keyed by
+    commander, each entry holds the press counts the bot must send to
+    reach Private Group then the saved group entry. Until calibrated for
+    a commander, the bot refuses to drive their menu (raises).
+
+    `group_owner_commander` skips the select-group step: the group owner
+    enters PG mode and lands directly in their own lobby.
+    """
+
+    enabled: bool = False  # opt-in until calibration done
+    post_main_menu_buffer_s: float = 3.0
+    key_delay_ms: int = 250
+    load_game_timeout_s: float = 180.0
+    dismiss_dialogs: bool = True  # send Space+Escape after main-menu detect
+    group_owner_commander: str = "Quadstronaut"
+    calibration: dict[str, dict[str, int]] = field(default_factory=dict)
+
+
+@dataclass
+class NavConfig:
+    """In-system navigation robustness.
+
+    `retarget_route_before_engage`: press TargetNextRouteSystem (bound to H
+    in the ED-AFK preset) before each engage so the next route star is
+    locked deterministically — no nav-panel scrolling — and the compass has
+    a target to align to. Harmless to re-press. NOTE (verify in flight): if a
+    given build *cycles* the route target forward on each press, this could
+    over-advance — disable it then.
+
+    Supercruise Assist (throttle-mode) groundwork — OFF until the docking /
+    orbit flow that uses it is built (Phase 9/10). ED exposes NO keybind for
+    Supercruise Assist, so a key can't toggle it; the bot relies on the
+    in-game setting "Supercruise Assist = engage on blue-zone throttle". With
+    that set, the engage is just throttling into the blue zone with a target
+    locked (`sc_assist_throttle_action`).
+    """
+
+    retarget_route_before_engage: bool = True
+    supercruise_assist: bool = False
+    sc_assist_throttle_action: str = "SetSpeed75"
+
+
+@dataclass
+class VisionConfig:
+    """Nav-compass alignment (orient the ship toward the next target).
+
+    Disabled by default until `ed-autojump calibrate-compass` records the
+    on-screen compass region — like [menu_nav], the bot won't drive blind.
+
+    backend: "yolo-onnx" (default, light onnxruntime) | "ultralytics"
+    (opt-in, heavy torch) | "opencv" (colour-free, no model). The OpenCV
+    reader is always the fallback regardless of backend.
+
+    region: (x, y, w, h) screen rect to capture for the compass. The
+    sentinel (0,0,0,0) means "uncalibrated" — vision stays off until set.
+    Empty model_onnx/model_pt mean "use the vendored weights".
+    """
+
+    enabled: bool = False
+    backend: str = "yolo-onnx"
+    capture_backend: str = "gdi"  # gdi default; dxcam available as opt-in
+    model_onnx: str = ""   # "" -> vendored vision/model/compass.onnx
+    model_pt: str = ""     # "" -> vendored vision/model/compass.pt
+    conf_threshold: float = 0.25
+    require_agreement: bool = False
+    agree_tol: float = 0.2
+    region: tuple[int, int, int, int] = (0, 0, 0, 0)
+    # Half-extent of the compass disc in pixels; 0 = derive from the crop at
+    # read-time. Set this after calibrating the compass region capture rect.
+    compass_radius: float = 0.0
+    # Closed-loop tunables (all overridable from config for in-flight tuning).
+    align_tol: float = 0.08
+    deadzone: float = 0.05
+    gain: float = 0.4
+    min_press_s: float = 0.03
+    max_press_s: float = 0.4
+    search_press_s: float = 0.2
+    settle_s: float = 0.12
+    max_iters: int = 60
+    timeout_s: float = 20.0
+
+
+@dataclass
 class PathsConfig:
     journal_dir: str = r"%USERPROFILE%\Saved Games\Frontier Developments\Elite Dangerous"
     binds_dir: str = r"%LOCALAPPDATA%\Frontier Developments\Elite Dangerous\Options\Bindings"
@@ -147,6 +276,10 @@ class Config:
     cv: CvConfig = field(default_factory=CvConfig)
     eddn: EddnConfig = field(default_factory=EddnConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
+    launcher: LauncherConfig = field(default_factory=LauncherConfig)
+    menu_nav: MenuNavConfig = field(default_factory=MenuNavConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
+    nav: NavConfig = field(default_factory=NavConfig)
 
 
 def _merge(section_obj: object, table: dict) -> None:
@@ -173,7 +306,8 @@ def load_config(path: str | Path | None = None) -> Config:
 
     for section_name in (
         "ship", "routing", "exploration", "safety", "input",
-        "binds", "hud", "cv", "eddn", "paths",
+        "binds", "hud", "cv", "eddn", "paths", "launcher", "menu_nav",
+        "vision", "nav",
     ):
         if section_name in raw:
             _merge(getattr(cfg, section_name), raw[section_name])

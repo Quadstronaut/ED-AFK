@@ -26,6 +26,7 @@ from .executor.jump import (
     perform_star_escape,
     should_refuse_target,
 )
+from .executor.align import align_to_target
 from .executor.honk import HonkOutcome, perform_honk
 from .executor.scoop import ScoopOutcome, perform_scoop, should_scoop
 from .journal.events import (
@@ -81,6 +82,8 @@ class Orchestrator:
         eddn_publisher: Optional[EddnPublisher] = None,
         navroute_reader: Optional[NavRouteReader] = None,
         auto_engage: bool = True,
+        compass_reader: Optional[object] = None,
+        frame_grabber: Optional[Callable[[], object]] = None,
     ):
         self.sender = sender
         self.recorder = recorder
@@ -94,6 +97,8 @@ class Orchestrator:
         self.eddn_publisher = eddn_publisher
         self.navroute_reader = navroute_reader
         self.auto_engage = auto_engage
+        self.compass_reader = compass_reader
+        self.frame_grabber = frame_grabber
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -182,8 +187,21 @@ class Orchestrator:
         target = self.state.next_target
         if target is None:
             return
+        # Self-heal: if HSC was pressed but StartJump never arrived (slow
+        # disk, journal flush stall, missed event), force-clear the flag
+        # after the timeout so we don't sit forever in a broken state.
         if self.state.engagement_in_progress:
-            return
+            started = self.state.engagement_started_at
+            timeout = self.config.safety.engagement_debounce_timeout_s
+            if started is None or (self.clock() - started) < timeout:
+                return
+            self._record_outcome("EngagementTimeout", {
+                "target_system": target.name,
+                "elapsed_s": self.clock() - (started or 0.0),
+                "timeout_s": timeout,
+            })
+            self.state.engagement_in_progress = False
+            self.state.engagement_started_at = None
         # Refuse to engage danger-class.
         if should_refuse_target(target, danger_classes=self.config.routing.danger_classes):
             return
@@ -193,6 +211,22 @@ class Orchestrator:
         if status.fsd_mass_locked:
             return
         # (overheating + is_in_danger already short-circuit above)
+        # Lock the next route star deterministically (H) before aligning —
+        # no nav-panel scrolling, and it gives the compass a target to point
+        # at. Non-fatal if the bind is absent.
+        if self.config.nav.retarget_route_before_engage:
+            try:
+                self.sender.press("TargetNextRouteSystem", hold=0.05)
+                self._record_outcome("RetargetRoute", {"target_system": target.name})
+            except KeyError:
+                self._record_outcome("RetargetBindMissing",
+                                     {"action": "TargetNextRouteSystem"})
+        # Orient toward the target before committing the jump. With vision
+        # off this is a no-op (returns True); with vision on, a failed
+        # alignment blocks the engage so we never fire the FSD pointed at
+        # the star / off-target. The next status tick retries.
+        if not self._aligned_for_engage():
+            return
         try:
             self.sender.press("HyperSuperCombination", hold=0.05)
         except KeyError:
@@ -201,10 +235,46 @@ class Orchestrator:
             })
             return
         self.state.engagement_in_progress = True
+        self.state.engagement_started_at = self.clock()
         self._record_outcome("EngageJump", {
             "target_system": target.name,
             "star_class": target.star_class,
         })
+
+    def _aligned_for_engage(self) -> bool:
+        """Run the compass alignment loop before engaging. Returns True (no
+        gate) when vision is disabled or unwired, preserving the blind
+        behaviour. When vision is on, returns whether the ship is oriented
+        at the target — a False blocks the FSD press."""
+        v = self.config.vision
+        if not v.enabled or self.compass_reader is None or self.frame_grabber is None:
+            return True
+        outcome = align_to_target(
+            self.compass_reader,
+            self.sender,
+            capture=self.frame_grabber,
+            align_tol=v.align_tol,
+            deadzone=v.deadzone,
+            gain=v.gain,
+            min_press=v.min_press_s,
+            max_press=v.max_press_s,
+            search_press=v.search_press_s,
+            settle_s=v.settle_s,
+            max_iters=v.max_iters,
+            timeout_s=v.timeout_s,
+            clock=self.clock,
+            sleeper=self.sleeper,
+        )
+        self._record_outcome("Align", {
+            "aligned": outcome.aligned,
+            "iterations": outcome.iterations,
+            "reason": outcome.reason,
+            "offset_x": outcome.final.offset_x,
+            "offset_y": outcome.final.offset_y,
+            "in_front": outcome.final.in_front,
+            "confidence": outcome.final.confidence,
+        })
+        return outcome.aligned
 
     def _poll_panic(self) -> bool:
         """Returns True if the panic switch is tripped. Records the abort
@@ -392,6 +462,7 @@ class Orchestrator:
         self.state.apply_start_jump(ev)
         # Clear the engagement debounce — FSD acknowledged our press.
         self.state.engagement_in_progress = False
+        self.state.engagement_started_at = None
         result: ChargeResult = handle_start_jump(
             ev,
             self.sender,

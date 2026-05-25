@@ -151,6 +151,43 @@ class SupercruiseExit(Event):
     body_type: Optional[str] = Field(default=None, alias="BodyType")
 
 
+class Music(Event):
+    """Fires every time the game's music track changes.
+
+    For the launcher's purposes, the key value is `MusicTrack == "MainMenu"`,
+    which is written ~immediately after FileHeader on a fresh launch and
+    indicates the main menu is up and ready for user input. Other values
+    observed include: NoTrack, Exploration, Combat_*, Supercruise, Starport,
+    GalacticPowers (PowerPlay), CQC, Codex, etc.
+    """
+
+    event: Literal["Music"]
+    music_track: str = Field(alias="MusicTrack")
+
+
+class LoadGame(Event):
+    """Fires when the player selects a mode and the game session loads in.
+
+    For the launcher this is the handoff signal: once LoadGame is written
+    we know we're past the main menu and the AFK loop can take over.
+    `GameMode` is one of Open/Solo/Group; when Group, `Group` is the
+    group's display name (useful for verifying we joined the right one).
+    """
+
+    event: Literal["LoadGame"]
+    commander: str = Field(alias="Commander")
+    fid: Optional[str] = Field(default=None, alias="FID")
+    horizons: Optional[bool] = Field(default=None, alias="Horizons")
+    odyssey: Optional[bool] = Field(default=None, alias="Odyssey")
+    ship: Optional[str] = Field(default=None, alias="Ship")
+    ship_id: Optional[int] = Field(default=None, alias="ShipID")
+    game_mode: Optional[str] = Field(default=None, alias="GameMode")
+    group: Optional[str] = Field(default=None, alias="Group")
+    credits: Optional[int] = Field(default=None, alias="Credits")
+    fuel_level: Optional[float] = Field(default=None, alias="FuelLevel")
+    fuel_capacity: Optional[float] = Field(default=None, alias="FuelCapacity")
+
+
 AnyEvent = Union[
     Loadout,
     FSDTarget,
@@ -164,6 +201,8 @@ AnyEvent = Union[
     HullDamage,
     SupercruiseEntry,
     SupercruiseExit,
+    Music,
+    LoadGame,
     Event,
 ]
 
@@ -182,6 +221,8 @@ _EVENT_MODELS: dict[str, type[Event]] = {
     "HullDamage": HullDamage,
     "SupercruiseEntry": SupercruiseEntry,
     "SupercruiseExit": SupercruiseExit,
+    "Music": Music,
+    "LoadGame": LoadGame,
 }
 
 

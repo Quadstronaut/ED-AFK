@@ -105,6 +105,80 @@ def _parser() -> argparse.ArgumentParser:
         "--destination", dest="destination", default=None,
         help="override config.routing.destination (e.g. 'Beagle Point')",
     )
+    sub_run.add_argument(
+        "--launch", dest="launch", action="store_true", default=False,
+        help="also launch the game first (Phase 13: MEL -> main menu -> PG -> LoadGame)",
+    )
+    sub_run.add_argument(
+        "--commander", dest="commander", default=None,
+        help="commander to launch as (default: config.launcher.default_commander)",
+    )
+    sub_run.add_argument(
+        "--auth", dest="auth", choices=["frontier", "steam"], default=None,
+        help="auth method for launch (default: config.launcher.default_auth)",
+    )
+    sub_run.add_argument(
+        "--group", dest="group", default=None,
+        help="private group to join (default: config.launcher.default_group)",
+    )
+    sub_run.add_argument(
+        "--dryrun", dest="dryrun_pre_flight", action="store_true", default=False,
+        help="run MEL /dryrun first to catch stale .cred hang (slow; off by default)",
+    )
+    sub_run.add_argument(
+        "--no-dryrun", dest="dryrun_pre_flight", action="store_false",
+        help="(default) skip MEL /dryrun pre-flight",
+    )
+
+    # ed-autojump launch — standalone launch (no AFK loop after).
+    sub_launch = sub.add_parser(
+        "launch",
+        help="launch ED via min-ed-launcher -> main menu -> optionally PG -> LoadGame",
+    )
+    sub_launch.add_argument("--commander", default=None,
+                            help="commander name (default: config.launcher.default_commander)")
+    sub_launch.add_argument("--auth", choices=["frontier", "steam"], default=None)
+    sub_launch.add_argument("--product", choices=["edo", "edh4"], default=None)
+    sub_launch.add_argument("--group", default=None,
+                            help="private group to verify after LoadGame")
+    sub_launch.add_argument("--mel-path", type=Path, default=None,
+                            help="explicit MinEdLauncher.exe path (default: auto-detect)")
+    sub_launch.add_argument("--journal-dir", type=Path, default=None)
+    sub_launch.add_argument("--dryrun", dest="dryrun_pre_flight",
+                            action="store_true", default=False,
+                            help="run MEL /dryrun first to catch stale .cred hang (slow; off by default)")
+    sub_launch.add_argument("--no-dryrun", dest="dryrun_pre_flight",
+                            action="store_false",
+                            help="(default) skip MEL /dryrun pre-flight")
+    sub_launch.add_argument("--no-nav", dest="force_no_nav", action="store_true", default=False,
+                            help="force menu_nav off for this launch (operator handoff at main menu)")
+
+    # ed-autojump setup-frontier-creds — interactive cred onboarding.
+    sub_creds = sub.add_parser(
+        "setup-frontier-creds",
+        help="interactively log in to MEL for each commander to write .cred files",
+    )
+    sub_creds.add_argument(
+        "--commanders", nargs="*", default=None,
+        help="space-separated commander names (default: all in config.launcher.profiles)",
+    )
+    sub_creds.add_argument("--mel-path", type=Path, default=None)
+
+    # ed-autojump calibrate-menu — interactive press-count capture.
+    sub_cal = sub.add_parser(
+        "calibrate-menu",
+        help="walk-through to determine main-menu press counts for a commander",
+    )
+    sub_cal.add_argument("--commander", required=True,
+                         help="commander to calibrate (e.g. Duvrazh)")
+    sub_cal.add_argument("--is-owner", action="store_true", default=False,
+                         help="commander owns the private group (skips select-group step)")
+
+    # ed-autojump calibrate-compass — auto-locate the nav compass on screen.
+    sub.add_parser(
+        "calibrate-compass",
+        help="auto-locate the nav compass and print a [vision] region block",
+    )
 
     return p
 
@@ -228,7 +302,61 @@ def cmd_run(args) -> int:
                 raise
         route_planner = _planner
 
+    # --launch: invoke MEL → wait main menu → optional menu nav → wait LoadGame
+    # BEFORE the AFK loop begins. If the launch fails, abort with a clear
+    # message rather than start the loop on a non-launched game.
+    if getattr(args, "launch", False):
+        from .launcher import LauncherError
+        from .launcher.flow import FlowStatus, launch_and_enter_game
+        from .launcher.menu_nav import MenuNavigator
+
+        try:
+            launch_spec = _build_launch_spec(
+                cfg, commander=args.commander, auth=args.auth,
+            )
+            mel = _resolve_mel(cfg)
+        except LauncherError as exc:
+            print(f"--launch failed: {exc}")
+            return 2
+
+        # Reuse the same sender for menu navigation (DirectInputSender works
+        # without binds via press_raw; NullSender doesn't press anything).
+        launch_tail = JournalTail(journal_dir)
+        nav = None
+        if cfg.menu_nav.enabled and args.engage_keys:
+            nav = MenuNavigator(sender=sender, config=cfg.menu_nav,
+                                sleep=__import__("time").sleep)
+
+        result = launch_and_enter_game(
+            spec=launch_spec, mel=mel, tail=launch_tail,
+            menu_navigator=nav,
+            menu_nav_cfg=cfg.menu_nav, launcher_cfg=cfg.launcher,
+            expected_group=args.group or cfg.launcher.default_group,
+            expected_commander=launch_spec.commander,
+            pre_flight_dryrun=args.dryrun_pre_flight,
+        )
+        if result.status not in (FlowStatus.OK, FlowStatus.MAIN_MENU_READY):
+            print(f"--launch failed: {result.status.value} — {result.detail}")
+            return 1
+
     state = GameState()
+    # Wire nav-compass alignment when engaging keys. build_vision returns
+    # (None, None) unless [vision] is enabled AND a region is calibrated, so
+    # this is a no-op for everyone who hasn't run calibrate-compass.
+    compass_reader = frame_grabber = None
+    if args.engage_keys:
+        from .vision.capture import build_vision
+        compass_reader, frame_grabber = build_vision(cfg)
+        if compass_reader is not None:
+            print(f"vision: alignment ON (backend={cfg.vision.backend}, "
+                  f"region={tuple(cfg.vision.region)})")
+        else:
+            # Loud, so a blind run is never mistaken for a steering one.
+            reason = ("[vision].enabled = false" if not cfg.vision.enabled
+                      else "no compass region calibrated")
+            print(f"vision: alignment OFF ({reason}) — the ship will NOT be "
+                  "steered. Run `ed-autojump calibrate-compass` and set "
+                  "[vision].enabled = true to enable orientation.")
     orch = Orchestrator(
         sender=sender,
         recorder=recorder,
@@ -239,6 +367,8 @@ def cmd_run(args) -> int:
         navroute_reader=navroute_reader,
         eddn_publisher=eddn_publisher,
         route_planner=route_planner,
+        compass_reader=compass_reader,
+        frame_grabber=frame_grabber,
     )
 
     try:
@@ -269,6 +399,227 @@ def cmd_run(args) -> int:
         if listener is not None:
             listener.stop()
         orch.shutdown()
+
+
+def _build_launch_spec(cfg, *, commander=None, auth=None, product=None):
+    """Build a LaunchSpec from config + CLI overrides. Raises LauncherError
+    if the commander isn't in config.launcher.profiles."""
+    from .launcher import LaunchSpec, resolve_profile
+
+    cmdr = commander or cfg.launcher.default_commander
+    profile = resolve_profile(cmdr, cfg.launcher)
+    return LaunchSpec(
+        commander=cmdr,
+        profile_slug=profile.profile_slug,
+        auth=auth or cfg.launcher.default_auth,
+        product=product or cfg.launcher.default_product,
+        autorun=cfg.launcher.autorun,
+        autoquit=cfg.launcher.autoquit,
+        skip_install_prompt=cfg.launcher.skip_install_prompt,
+    )
+
+
+def _resolve_mel(cfg, *, explicit_path=None):
+    """Locate MinEdLauncher.exe via explicit path → config → auto-detect.
+    Returns a MinEdLauncher instance ready to spawn."""
+    from .launcher import MinEdLauncher, detect_min_ed_launcher
+
+    path = explicit_path
+    if path is None and cfg.launcher.mel_path:
+        path = Path(cfg.launcher.mel_path)
+    det = detect_min_ed_launcher(explicit_path=path)
+    if not det.found:
+        from .launcher import LauncherError
+        raise LauncherError(
+            "MinEdLauncher.exe not found — pass --mel-path, set "
+            "[launcher].mel_path in config.toml, or install it on PATH"
+        )
+    return MinEdLauncher(exe_path=det.path)
+
+
+def cmd_launch(args) -> int:
+    """Standalone launch — start ED, wait for main menu, optionally nav to PG."""
+    from .journal.tail import JournalTail
+    from .launcher import LauncherError
+    from .launcher.flow import FlowStatus, launch_and_enter_game
+    from .launcher.menu_nav import MenuNavigator
+
+    cfg = load_config(args.config if args.config.is_file() else None)
+    journal_dir = args.journal_dir or cfg.paths.journal_dir_expanded()
+
+    try:
+        spec = _build_launch_spec(
+            cfg, commander=args.commander, auth=args.auth, product=args.product,
+        )
+        mel = _resolve_mel(cfg, explicit_path=args.mel_path)
+    except LauncherError as exc:
+        print(f"error: {exc}")
+        return 2
+
+    tail = JournalTail(journal_dir)
+
+    # Build the navigator only if menu_nav is enabled AND not forced off.
+    navigator = None
+    nav_cfg = cfg.menu_nav
+    if args.force_no_nav:
+        # Effectively disable nav for this run by giving a copy with enabled=False.
+        from dataclasses import replace
+        nav_cfg = replace(nav_cfg, enabled=False)
+    if nav_cfg.enabled:
+        from .keys import DirectInputSender
+        sender = DirectInputSender(binds=None)
+        navigator = MenuNavigator(sender=sender, config=nav_cfg, sleep=__import__("time").sleep)
+
+    result = launch_and_enter_game(
+        spec=spec, mel=mel, tail=tail,
+        menu_navigator=navigator,
+        menu_nav_cfg=nav_cfg, launcher_cfg=cfg.launcher,
+        expected_group=args.group or cfg.launcher.default_group,
+        expected_commander=spec.commander,
+        pre_flight_dryrun=args.dryrun_pre_flight,
+    )
+
+    if result.status == FlowStatus.OK:
+        print(f"[launch] OK — entered as {result.load_game_event.commander}")
+        return 0
+    if result.status == FlowStatus.MAIN_MENU_READY:
+        print(f"[launch] main menu ready — operator handoff. {result.detail}")
+        return 0
+    print(f"[launch] FAILED: {result.status.value} — {result.detail}")
+    return 1
+
+
+def cmd_setup_creds(args) -> int:
+    """Interactive .cred onboarding wizard."""
+    from .launcher import LauncherError
+    from .launcher.wizard import setup_frontier_creds
+
+    cfg = load_config(args.config if args.config.is_file() else None)
+    commanders = args.commanders or list(cfg.launcher.profiles.keys())
+    try:
+        mel = _resolve_mel(cfg, explicit_path=args.mel_path)
+    except LauncherError as exc:
+        print(f"error: {exc}")
+        return 2
+    result = setup_frontier_creds(commanders, launcher_cfg=cfg.launcher, mel=mel)
+    print("")
+    print("=== Summary ===")
+    print(f"  Succeeded: {result.succeeded}")
+    print(f"  Skipped:   {result.skipped}")
+    print(f"  Failed:    {result.failed}")
+    return 0 if not result.failed else 1
+
+
+def cmd_calibrate_menu(args) -> int:
+    """Interactive menu calibration. Prints TOML snippet for user to paste."""
+    from .launcher.wizard import calibrate_menu
+
+    cfg = load_config(args.config if args.config.is_file() else None)
+    is_owner = args.is_owner or (args.commander == cfg.menu_nav.group_owner_commander)
+    calibration = calibrate_menu(commander=args.commander, is_owner=is_owner)
+
+    # Detect whether [menu_nav] is already present + enabled in config.toml.
+    # If not, prepend the header block so first-time users don't paste only
+    # the calibration sub-section (which leaves enabled = false default →
+    # navigator refuses to run, surprising the user mid-launch).
+    menu_nav_header_needed = not cfg.menu_nav.enabled
+
+    print("")
+    print("=== Calibration captured ===")
+    print("Add the block(s) below to your config.toml:")
+    print("")
+
+    if menu_nav_header_needed:
+        print("# --- first-time setup: paste this ONCE (skip if [menu_nav] already exists) ---")
+        print("[menu_nav]")
+        print("enabled = true")
+        print(f'group_owner_commander = "{cfg.menu_nav.group_owner_commander}"')
+        print("")
+
+    print("# --- per-commander calibration (one block per commander) ---")
+    print(f"[menu_nav.calibration.{args.commander}]")
+    for k, v in calibration.to_dict().items():
+        if isinstance(v, str):
+            print(f'{k} = "{v}"')
+        else:
+            print(f"{k} = {v}")
+    print("")
+    if menu_nav_header_needed:
+        print("NOTE: place the [menu_nav] block BEFORE any [menu_nav.calibration.*]")
+        print("blocks in your config.toml — TOML treats them as nested tables and")
+        print("requires the parent table's own keys to be defined first.")
+    return 0
+
+
+def cmd_calibrate_compass(args) -> int:
+    """Grab the screen, find the nav compass ring, print a [vision] region block."""
+    import os
+    import time
+
+    cfg = load_config(args.config if args.config.is_file() else None)
+    try:
+        from .vision.capture import ScreenGrabber, locate_compass_ring, ring_to_region
+    except Exception as e:  # noqa: BLE001
+        print(f"vision deps missing ({e}); install with:  pip install -e .[vision]")
+        return 1
+
+    print("Be in the cockpit with the nav-compass panel visible (the small disc")
+    print("left of the radar). Capturing in 3 seconds...")
+    time.sleep(3)
+
+    try:
+        grabber = ScreenGrabber((0, 0, 0, 0), backend=cfg.vision.capture_backend)  # full screen
+    except Exception as e:  # noqa: BLE001
+        print(f"could not start screen capture ({e})")
+        return 1
+    frame = None
+    for _ in range(10):
+        frame = grabber.grab()
+        if frame is not None:
+            break
+        time.sleep(0.1)
+    if frame is None:
+        print("screen capture returned no frame")
+        return 1
+
+    result = locate_compass_ring(frame)
+    if result is None:
+        print("No compass ring found. Make sure the cockpit + nav compass are")
+        print("visible and the HUD is bright enough.")
+        return 1
+
+    cx, cy, r = result
+    region = ring_to_region(cx, cy, r, frame.shape[1], frame.shape[0])
+    x, y, w, h = region
+
+    # Save an annotated capture so the user can eyeball the detection.
+    try:
+        import cv2
+        outdir = Path(os.path.expandvars(cfg.paths.calibration_dir))
+        outdir.mkdir(parents=True, exist_ok=True)
+        annotated = frame.copy()
+        cv2.circle(annotated, (cx, cy), r, (0, 255, 0), 2)
+        cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        outpath = outdir / "compass_calibration.png"
+        cv2.imwrite(str(outpath), annotated)
+        print(f"(saved annotated capture to {outpath} — check the green ring + box)")
+    except Exception:  # noqa: BLE001
+        pass
+
+    print("")
+    print("=== Compass located — add this to your config.toml ===")
+    print("")
+    print("[vision]")
+    print("enabled = true")
+    print('backend = "cyan"')
+    print(f'capture_backend = "{cfg.vision.capture_backend}"')
+    print(f"region = [{x}, {y}, {w}, {h}]")
+    print(f"compass_radius = {r}")
+    print(f"# ring detected at ({cx},{cy}) r={r}; ring detection re-centers live, so a few px of drift is fine.")
+    print("")
+    print("Then do a short run with --engage-keys; the bot will orient to each")
+    print("target before it jumps.")
+    return 0
 
 
 def cmd_doctor(args) -> int:
@@ -315,6 +666,10 @@ def main(argv: list[str] | None = None) -> int:
         "install-binds": cmd_install_binds,
         "restore-binds": cmd_restore_binds,
         "run": cmd_run,
+        "launch": cmd_launch,
+        "setup-frontier-creds": cmd_setup_creds,
+        "calibrate-menu": cmd_calibrate_menu,
+        "calibrate-compass": cmd_calibrate_compass,
     }
     return dispatch[cmd](args)
 
