@@ -82,6 +82,14 @@ class SunAvoidOutcome:
     reason: str   # "cleared" | "timeout" | "max_iters"
 
 
+@dataclass
+class FlyClearOutcome:
+    """Result of a fly_clear run."""
+    elapsed_s: float
+    repitches: int          # times the star re-entered view and we pitched up again
+    final_frac: float
+
+
 def sun_avoid(
     sender: Any,
     capture_center: Callable[[], Any],
@@ -131,6 +139,52 @@ def sun_avoid(
 
 
 # ---------------------------------------------------------------------------
+# fly_clear — put distance between ship and star before turning to target
+# ---------------------------------------------------------------------------
+
+def fly_clear(
+    sender: Any,
+    capture_center: Callable[[], Any],
+    *,
+    throttle: str = "SetSpeed100",
+    bright_thresh: int = 125,
+    reenter_frac: float = 0.20,
+    pitch_hold: float = 0.3,
+    clear_s: float = 8.0,
+    step_s: float = 0.5,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> FlyClearOutcome:
+    """Throttle AWAY from the star to gain separation.
+
+    Precondition: sun_avoid has already pitched the nose off the star, so
+    "forward" now points away from it. We set full throttle and fly for
+    ``clear_s`` seconds. If the star creeps back into the center (brightness
+    rises above ``reenter_frac``) we pitch up again to push it back down —
+    defence against drifting back toward the star.
+
+    This is the step that was MISSING: without flying clear first, aligning to
+    the (behind-star) target re-points the nose at the star and the next
+    throttle drives straight into it.
+    """
+    sender.press(throttle, hold=0.05)
+    start = clock()
+    repitches = 0
+    last_frac = 0.0
+    while clock() - start < clear_s:
+        frac = sun_brightness(capture_center(), bright_thresh)
+        last_frac = frac
+        if frac > reenter_frac:
+            # Star is creeping back into view — pitch further away.
+            sender.press("PitchUpButton", hold=pitch_hold)
+            repitches += 1
+        sleeper(step_s)
+    return FlyClearOutcome(
+        elapsed_s=clock() - start, repitches=repitches, final_frac=last_frac
+    )
+
+
+# ---------------------------------------------------------------------------
 # SensedEscapeOutcome + perform_sensed_escape
 # ---------------------------------------------------------------------------
 
@@ -142,6 +196,7 @@ class SensedEscapeOutcome:
     aligned: Optional[bool]
     star_class: str
     notes: str
+    fly_clear: Optional[FlyClearOutcome] = None
 
 
 def perform_sensed_escape(
@@ -154,7 +209,6 @@ def perform_sensed_escape(
     sun_capture: Optional[Callable[[], Any]] = None,
     cached_star_class: Optional[str] = None,
     align_kwargs: Optional[dict] = None,
-    post_throttle: str = "SetSpeed100",
     sleeper: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     # sun_avoid tunables (forwarded when mode == "brightness")
@@ -164,6 +218,11 @@ def perform_sensed_escape(
     settle_s: float = 0.15,
     max_iters: int = 30,
     timeout_s: float = 8.0,
+    # fly_clear tunables (the step that gains distance from the star)
+    clear_throttle: str = "SetSpeed100",
+    clear_s: float = 8.0,
+    clear_reenter_frac: float = 0.20,
+    clear_step_s: float = 0.5,
 ) -> SensedEscapeOutcome:
     """Execute a sensed post-FSDJump star escape.
 
@@ -190,9 +249,10 @@ def perform_sensed_escape(
         Star class of the arrival star (from StartJump or FSDTarget).
     align_kwargs:
         Extra kwargs forwarded to align_to_target (align_tol, gain, …).
-    post_throttle:
-        Action name for the final throttle press (default "SetSpeed100").
-        In brightness mode this sets cruise speed after the star clears.
+    clear_throttle / clear_s / clear_reenter_frac / clear_step_s:
+        fly_clear tunables. After the star clears center we throttle away from
+        it for ``clear_s`` seconds to gain separation; the ship stays at this
+        throttle through the turn-to-target and into the next jump (no stop).
     sleeper / clock:
         Injected for testability.
 
@@ -216,6 +276,7 @@ def perform_sensed_escape(
                 notes="sun_capture not provided; skipped sun_avoid",
             )
 
+        # 1. Pitch the nose off the star until it clears the center of view.
         avoid_result = sun_avoid(
             sender,
             sun_capture,
@@ -229,7 +290,30 @@ def perform_sensed_escape(
             sleeper=sleeper,
         )
 
-        # Optional first-pass alignment to the next target.
+        # 2. Fly AWAY from the star to gain separation. THIS is the step that
+        #    was missing: the next target sits behind the star, so aligning to
+        #    it immediately would point the nose back at the star and the
+        #    throttle would drive into it. Flying clear first means that when we
+        #    later turn toward the target the star is far away and angularly
+        #    small, so the FSD-charge travel never reaches it.
+        clear_result = fly_clear(
+            sender,
+            sun_capture,
+            throttle=clear_throttle,
+            bright_thresh=bright_thresh,
+            reenter_frac=clear_reenter_frac,
+            pitch_hold=pitch_hold,
+            clear_s=clear_s,
+            step_s=clear_step_s,
+            clock=clock,
+            sleeper=sleeper,
+        )
+
+        # 3. Stay at full throttle and turn toward the next target. In
+        #    supercruise the ship turns while moving, so there's no reason to
+        #    stop first — we hold the speed from fly_clear straight through the
+        #    turn and into the next jump. Alignment is safe now: the star is far
+        #    behind/below after flying clear.
         aligned: Optional[bool] = None
         if compass_reader is not None and compass_capture is not None:
             from .align import align_to_target  # deferred: avoids circular if any
@@ -245,14 +329,9 @@ def perform_sensed_escape(
             )
             aligned = outcome.aligned
 
-        # Set cruise throttle so the ship moves away from the star.
-        try:
-            sender.press(post_throttle, hold=0.05)
-        except KeyError:
-            pass  # Missing bind is non-fatal; the ship will drift at current throttle.
-
         return SensedEscapeOutcome(
             mode=mode,
+            fly_clear=clear_result,
             sun_avoid=avoid_result,
             aligned=aligned,
             star_class=star_class,

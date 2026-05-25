@@ -231,6 +231,14 @@ class EscapeConfig:
     sun_pitch_hold_s: float = 0.3      # PitchUpButton hold duration per iteration
     sun_timeout_s: float = 8.0         # abort after this many seconds
     sun_region: tuple = (0, 0, 0, 0)   # (x,y,w,h); (0,0,0,0) => auto center 40%x38%
+    # Fly-clear phase: after the star clears center, throttle AWAY from it to put
+    # distance between ship and star BEFORE turning toward the (behind-star) target.
+    # Without this, aligning to the target points the nose back at the star and the
+    # throttle drives straight into it.
+    clear_throttle: str = "SetSpeed100"  # throttle action while flying clear (full ahead)
+    clear_s: float = 8.0                 # seconds to fly away from the star
+    clear_reenter_frac: float = 0.20     # if brightness exceeds this mid-clear, pitch up again
+    clear_step_s: float = 0.5            # poll/step interval during the clear phase
 
 
 @dataclass

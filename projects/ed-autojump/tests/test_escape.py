@@ -13,8 +13,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from ed_autojump.executor.escape import (
+    FlyClearOutcome,
     SensedEscapeOutcome,
     SunAvoidOutcome,
+    fly_clear,
     perform_sensed_escape,
     sun_avoid,
     sun_brightness,
@@ -238,7 +240,6 @@ class TestPerformSensedEscapeBrightness:
             sun_capture=_sun_capture,
             cached_star_class="K",
             align_kwargs={},
-            post_throttle="SetSpeed100",
             sleeper=sleeper,
             clock=clock,
             bright_thresh=125,
@@ -247,6 +248,7 @@ class TestPerformSensedEscapeBrightness:
             settle_s=0.0,
             max_iters=30,
             timeout_s=999.0,
+            clear_s=0.0,  # one fly_clear throttle press, no loop iterations
         )
 
         assert isinstance(result, SensedEscapeOutcome)
@@ -255,9 +257,12 @@ class TestPerformSensedEscapeBrightness:
         # sun_avoid ran and cleared
         assert result.sun_avoid is not None
         assert result.sun_avoid.cleared is True
-        # post_throttle was pressed
+        # fly_clear ran and threw full throttle to move away from the star
+        assert result.fly_clear is not None
         assert "SetSpeed100" in sender.actions()
-        # PitchUpButton was pressed (2 bright frames)
+        # We do NOT stop — no zero-throttle step (would just waste time in supercruise).
+        assert "SetSpeedZero" not in sender.actions()
+        # PitchUpButton was pressed (2 bright frames in sun_avoid; clear_s=0 adds none)
         assert sender.actions().count("PitchUpButton") == 2
 
     def test_brightness_mode_no_sun_capture_degrades_gracefully(self):
@@ -268,7 +273,6 @@ class TestPerformSensedEscapeBrightness:
             mode="brightness",
             sun_capture=None,
             cached_star_class="M",
-            post_throttle="SetSpeed100",
         )
         assert result.mode == "brightness"
         assert result.sun_avoid is None
@@ -286,14 +290,52 @@ class TestPerformSensedEscapeBrightness:
             compass_reader=None,
             compass_capture=None,
             sun_capture=capture,
-            post_throttle="SetSpeed100",
             sleeper=lambda _: None,
             clock=_FixedClock(),
+            clear_s=0.0,  # FixedClock never advances; keep fly_clear to one pass
         )
 
         assert result.sun_avoid is not None
         assert result.sun_avoid.cleared is True
         assert result.aligned is None
+
+
+# ---------------------------------------------------------------------------
+# fly_clear — gain distance from the star before turning to target
+# ---------------------------------------------------------------------------
+
+class TestFlyClear:
+    def test_throttles_up_and_runs_for_clear_s(self):
+        """fly_clear sets full throttle and loops until clear_s elapses."""
+        sender = _CountingSender()
+        clock = _FixedClock(start=0.0, step=1.0)  # +1s per call
+        dark = lambda: _make_frame(10, 10, 0)     # star already clear
+        out = fly_clear(
+            sender, dark, throttle="SetSpeed100",
+            reenter_frac=0.20, clear_s=3.0, step_s=0.0,
+            clock=clock, sleeper=lambda _: None,
+        )
+        assert isinstance(out, FlyClearOutcome)
+        # Threw full throttle to move away from the star.
+        assert sender.actions()[0] == "SetSpeed100"
+        # Star stayed clear -> no corrective re-pitch.
+        assert out.repitches == 0
+        assert "PitchUpButton" not in sender.actions()
+
+    def test_repitches_when_star_reenters_view(self):
+        """If brightness exceeds reenter_frac mid-clear, fly_clear pitches up again."""
+        sender = _CountingSender()
+        clock = _FixedClock(start=0.0, step=1.0)
+        # First poll bright (star creeping back) -> repitch; then dark.
+        frames = [_make_frame(10, 10, 255), _make_frame(10, 10, 0), _make_frame(10, 10, 0)]
+        cap = lambda: frames.pop(0) if frames else _make_frame(10, 10, 0)
+        out = fly_clear(
+            sender, cap, throttle="SetSpeed100",
+            reenter_frac=0.20, clear_s=3.0, step_s=0.0,
+            clock=clock, sleeper=lambda _: None,
+        )
+        assert out.repitches >= 1
+        assert "PitchUpButton" in sender.actions()
 
 
 # ---------------------------------------------------------------------------
