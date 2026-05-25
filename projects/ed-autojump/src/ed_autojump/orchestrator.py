@@ -292,17 +292,18 @@ class Orchestrator:
         self._maybe_engage_next_jump(status)
 
     def _maybe_startup_escape(self, status: Status) -> None:
-        """Get into the system on launch, in spec order: detect realspace/SC ->
-        HONK -> look for a star -> escape (only if a star is in the way).
+        """Get into the system on launch: HONK, then get off the arrival star.
 
-        On a fresh load we sit at the arrival star with no arrival event to
-        trigger the normal escape, so without this the engage gate would bob
-        against the star forever. The engage gate is held off (it refuses to
-        jump) until the escape clears `_startup_escape_pending`.
+        ONE routine for both cases (perform_realspace_escape): PITCH the star
+        off-screen FIRST (always — never throttle pointed at the star), THEN
+        supercruise — and the SC engage is SKIPPED when we're already in SC
+        (status.in_supercruise). Pitch-first means the star is dodged regardless
+        of that branch; then we fly clear, re-aim, and the engage gate jumps.
 
-        Skips when docked (nothing to escape) or with no sun probe (can't sense
-        the star). The realspace escape keeps the pending flag set on a bail so a
-        later tick retries; success (or the no-star path) clears it."""
+        On a fresh load we sit at the arrival star with no arrival event, so the
+        engage gate is held off (refuses to jump) until this clears the pending
+        flag. Skips when docked or with no sun probe. Keeps pending set (retry
+        next tick) if the pitch couldn't clear the star or SC entry never logged."""
         if status.docked:
             self._startup_escape_pending = False
             return
@@ -316,63 +317,14 @@ class Orchestrator:
             self._startup_honked = True
 
         e = self.config.escape
-
-        # NORMAL space: if a star is in the way you must ENGAGE supercruise first,
-        # then move clear (its own dedicated procedure, NOT smack recovery).
-        if not status.in_supercruise:
-            self._startup_escape_realspace(e)
-            return
-
-        # ALREADY IN SUPERCRUISE: same maneuver as realspace MINUS the SC engage
-        # (we're in SC already). If a star is in the way: pitch it off-screen,
-        # throttle to FLY AROUND it, then re-aim at the target and let the engage
-        # gate jump. If no star is detected: unobstructed -> just target + orient
-        # (NO blind throttle — that's what ran the ship into the star).
-        #
-        # DIAGNOSTIC (operator-approved): the star-detection that decides
-        # pitch-vs-skip missed a real star once. Log the RAW brightness fraction
-        # and dump the probe frame so we tune the threshold from data, not
-        # guesses.
+        # DIAGNOSTIC (operator-approved): log the RAW sun brightness fraction +
+        # dump the probe frame, so detection is tuned from data, not guesses.
         self._log_sun_probe(e)
-        outcome = perform_realspace_escape(
-            self.sender,
-            self.sun_grab,
-            already_in_supercruise=True,
-            in_supercruise=self._poll_in_supercruise,
-            compass_reader=self.compass_reader,
-            compass_capture=self.frame_grabber,
-            align_kwargs=self._align_kwargs(),
-            bright_thresh=e.sun_bright_thresh,
-            present_frac=e.sun_present_frac,
-            clear_frac=e.sun_clear_frac,
-            pitch_hold=e.sun_pitch_hold_s,
-            timeout_s=e.sun_timeout_s,
-            full_throttle=e.clear_throttle,
-            post_sc_wait_s=e.smack_post_sc_wait_s,
-            sleeper=self.sleeper,
-            clock=self.clock,
-        )
-        self._record_outcome("StartupEscape", {
-            "space": "supercruise",
-            "star_detected": outcome.star_detected,
-            "sun_cleared": outcome.sun_avoid.cleared if outcome.sun_avoid else None,
-            "aligned": outcome.aligned,
-            "notes": outcome.notes,
-        })
-        # SC path is a single shot — clear the pending flag so we don't re-run it
-        # (and so the engage gate is released to jump).
-        self._startup_escape_pending = False
 
-    def _startup_escape_realspace(self, e: Any) -> None:
-        """Get off the star from NORMAL space on launch via the DEDICATED
-        realspace escape: point away (pitch until the top-2/3 goes dark), full
-        throttle, ENGAGE supercruise, full throttle AGAIN (SC throttle is a
-        separate axis), wait for the star to recede, then target the next hop
-        and orient. This is NOT smack recovery — there is no FSD cooldown to
-        wait out because we didn't smack the star."""
         outcome: RealspaceEscapeOutcome = perform_realspace_escape(
             self.sender,
             self.sun_grab,
+            already_in_supercruise=status.in_supercruise,  # skip the engage if in SC
             in_supercruise=self._poll_in_supercruise,
             compass_reader=self.compass_reader,
             compass_capture=self.frame_grabber,
@@ -388,7 +340,7 @@ class Orchestrator:
             clock=self.clock,
         )
         self._record_outcome("StartupEscape", {
-            "space": "normal",
+            "in_supercruise": status.in_supercruise,
             "star_detected": outcome.star_detected,
             "sun_cleared": outcome.sun_avoid.cleared if outcome.sun_avoid else None,
             "engaged_sc": outcome.engaged_sc,
@@ -396,16 +348,14 @@ class Orchestrator:
             "aligned": outcome.aligned,
             "notes": outcome.notes,
         })
-        if outcome.sc_entered is False:
-            # Engage failed — never entered supercruise. The escape bailed
-            # without pitch/throttle/target/orient. KEEP the pending flag set so
-            # the next Status tick retries the whole escape. (Honk already fired
-            # before the escape, so nothing to do there.)
-            self._startup_escape_pending = True
-            return
-        # Done: entered SC and moved clear (star path), or skipped SC because the
-        # route was unobstructed (no-star path). Clear the one-shot flag.
-        self._startup_escape_pending = False
+        # Retry next tick (keep the engage gate closed) if the pitch couldn't
+        # clear the star, or SC entry never logged. Otherwise we're clear.
+        pitch_failed = (
+            outcome.star_detected
+            and outcome.sun_avoid is not None
+            and not outcome.sun_avoid.cleared
+        )
+        self._startup_escape_pending = bool(pitch_failed or outcome.sc_entered is False)
 
     def _maybe_engage_next_jump(self, status: Status) -> None:
         """Press HyperSuperCombination if we have a safe target + Status
