@@ -81,18 +81,27 @@ settle_s = 1.4                 # wait after key release; ship momentum decays ~1
 align_samples = 7              # median of 7 reads robustly rejects transient cyan-UI spikes
 
 [escape]
-# Arrival behaviour after each jump.
-#   "refuel" (DEFAULT) — journal-driven scoop-to-full, then SC-assist peel-off:
-#     approach the star, cut throttle at the FuelScoop rate plateau, fill to
-#     capacity, engage Supercruise Assist via the nav panel, cancel with
-#     TargetNextRouteSystem, full throttle, wait, compass-align. Already-full
-#     arrivals skip straight to the peel-off.
+# Arrival + startup behaviour: how the ship gets off the star.
+#   "compass" (DEFAULT) — target the star (Select Target Ahead), use the nav-
+#     compass to PITCH it under the ship, then fly clear, target the next hop,
+#     and orient. NO brightness; never throttles while the star is ahead (a
+#     failed pitch bails without throttle). Needs [vision] on + a calibrated
+#     compass region (both set above). The jump fires from the engage gate.
 #   "brightness" — vision-sensed: pitch the bright star off the top-2/3 of the
 #     screen, accelerate, then compass-align.
+#   "refuel" (DEPRECATED — WRONG: Supercruise Assist rams the star). Do not use.
 #   "sc_assist" / "blind" — legacy.
-escape_mode = "refuel"
-# refuel knobs. approach_throttle is the ONE live-tune knob — how hard to close
-# on the star before the scoop-rate plateau cuts the throttle.
+escape_mode = "compass"
+# compass-mode knobs (defaults shown). "under us" = the star's compass dot is
+# below the nose (offset_y <= -compass_clear_offset_y) OR hollow (behind us).
+compass_clear_offset_y = 0.6   # how far below centre the star dot must sit to count as "under us"
+compass_pitch_hold_s = 1.0     # PitchUpButton hold per iteration (hard, sustained)
+compass_pitch_settle_s = 1.0   # wait after each pitch for rotational momentum to settle before re-reading
+compass_max_iters = 20         # max pitch presses before bailing (a bail NEVER throttles)
+compass_timeout_s = 30.0       # abort the pitch-under after this many seconds
+compass_fly_clear_s = 7.0      # seconds flying away from the star before targeting the next hop
+# refuel knobs (DEPRECATED mode). approach_throttle is the ONE live-tune knob —
+# how hard to close on the star before the scoop-rate plateau cuts the throttle.
 refuel_approach_throttle = "SetSpeed75"
 refuel_orbit_s = 3.0            # seconds on SC-assist orbit before cancelling it
 refuel_post_depart_wait_s = 7.0  # seconds clear of the star before orienting

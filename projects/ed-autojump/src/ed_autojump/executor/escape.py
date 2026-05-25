@@ -581,6 +581,13 @@ FULL_THROTTLE = "SetSpeed100"
 # Advance the route lock to the next hop once we are clear in supercruise.
 ROUTE_TARGET = "TargetNextRouteSystem"
 
+# "Select Target Ahead" — locks the object in the reticle. On a hyperspace
+# arrival the ship faces the star, so this targets the STAR, which is what puts
+# it on the nav-compass for the pitch-under maneuver. The ED-AFK preset binds
+# this to Key_3 (the in-game default 'T' is taken by LandingGearToggle); the
+# player must re-import the preset for the in-game bind to match.
+SELECT_TARGET = "SelectTarget"
+
 
 def wait_for_supercruise(
     in_supercruise: Optional[Callable[[], bool]],
@@ -818,4 +825,260 @@ def perform_realspace_escape(
         sc_entered=sc_entered,
         aligned=aligned,
         notes=notes,
+    )
+
+
+# ---------------------------------------------------------------------------
+# COMPASS escape (the DEFAULT maneuver) — target the star, use the nav-compass
+# to put it UNDER the ship, fly away, target the next hop, orient, jump.
+#
+# This is the operator's spec, verbatim: "target the star, use the goddamn
+# compass to get it under us, fly the fuck away from it, target next jump,
+# orient, jump." NO brightness anywhere — the compass alone decides when the
+# star is out of the way.
+#
+# WHY THE COMPASS (not brightness): brightness can't tell a star ahead from a
+# star behind, and a single dark capture frame falsely reads "clear". The
+# nav-compass dot is unambiguous: FILLED = target in front, HOLLOW = behind,
+# and its vertical offset says exactly where the star sits relative to the nose.
+# We pitch UP (which drives an ahead-target's dot DOWN — validated mechanic)
+# until the star is well below the nose OR has gone hollow/behind; only THEN do
+# we throttle, so we can never throttle into the star.
+#
+# SELF-VERIFYING + SAFE-FAILING: after targeting we CONFIRM the compass actually
+# shows a dot (the lock took); if it doesn't, or the pitch can't get the star
+# under us within budget, we BAIL WITHOUT THROTTLING and the caller retries. A
+# wrong/missed target can therefore never cause a ram — it just makes no jump.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CompassEscapeOutcome:
+    """Result of a perform_compass_escape run — one field per phase.
+
+    targeted_star: the Select-Target-Ahead press was issued.
+    star_seen:     the compass found a dot after targeting (None if no wiring).
+                   False => the lock did not take; we bailed without throttling.
+    star_under:    the star was confirmed below/behind the nose (None if we
+                   never got that far). False => pitch-under failed; no throttle.
+    pitch_iters:   pitch presses spent driving the star under.
+    engaged_sc:    supercruise was engaged here (False if already in SC / bailed).
+    sc_entered:    log-confirmed SC entry (True/False/None-no-check).
+    flew_clear:    the fly-away throttle was issued.
+    targeted_next: TargetNextRouteSystem was pressed for the next hop.
+    aligned:       align_to_target's .aligned for the next hop (None if not run).
+    notes:         human-readable summary of what ran / why it bailed.
+    """
+    targeted_star: bool
+    star_seen: Optional[bool]
+    star_under: Optional[bool]
+    pitch_iters: int
+    engaged_sc: bool
+    sc_entered: Optional[bool]
+    flew_clear: bool
+    targeted_next: bool
+    aligned: Optional[bool]
+    notes: str
+
+
+def pitch_star_under(
+    reader: Any,
+    sender: Any,
+    *,
+    capture: Callable[[], Any],
+    clear_offset_y: float = 0.6,
+    samples: int = 7,
+    pitch_hold: float = 1.0,
+    settle_s: float = 1.0,
+    max_iters: int = 20,
+    timeout_s: float = 30.0,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> tuple[bool, int, Any]:
+    """Pitch UP HARD until the TARGETED star's compass dot is UNDER the ship.
+
+    "Under us" means flying FORWARD now moves AWAY from the star, which is true
+    when the dot is either:
+      * well below the nose: ``offset_y <= -clear_offset_y`` (the reader reports
+        offset_y > 0 for a dot ABOVE centre, so a strongly NEGATIVE offset_y is a
+        dot near the bottom of the compass), OR
+      * behind us: ``not in_front`` (the dot has gone hollow).
+
+    Pitching up drives an ahead-target's dot monotonically downward and finally
+    hollow, so sustained PitchUp always reaches the gate (or the failsafe trips).
+
+    Returns ``(under, iterations, final_read)``. The ONLY key it presses is
+    PitchUpButton — it NEVER throttles. The caller must NOT throttle on
+    ``under == False`` (the star is still ahead; throttling would ram it).
+
+    Reads are temporal-median-filtered over ``samples`` frames (see align._measure)
+    to reject transient cyan-UI spikes. ``settle_s`` lets rotational momentum
+    decay before each read so we don't measure mid-spin. Failsafe: bail after
+    ``max_iters`` presses or ``timeout_s`` seconds, whichever comes first.
+    """
+    from .align import _measure  # deferred (same package; mirrors _align below)
+    from ..vision.compass import CompassRead
+
+    start = clock()
+    last: Any = CompassRead.not_found()
+    for i in range(max_iters):
+        if clock() - start > timeout_s:
+            return False, i, last
+        read = _measure(reader, capture, samples)
+        last = read
+        if read.found and ((not read.in_front) or (read.offset_y <= -clear_offset_y)):
+            return True, i, read
+        # Not under yet (or the dot isn't visible) -> pitch up hard, then re-check.
+        # No throttle here, ever — pitch is the only authority that moves the star.
+        sender.press("PitchUpButton", hold=pitch_hold)
+        sleeper(settle_s)
+    return False, max_iters, last
+
+
+def perform_compass_escape(
+    sender: Any,
+    *,
+    compass_reader: Optional[Any],
+    compass_capture: Optional[Callable[[], Any]],
+    align_kwargs: Optional[dict] = None,
+    already_in_supercruise: bool = False,
+    in_supercruise: Optional[Callable[[], bool]] = None,
+    sc_entry_timeout_s: float = 30.0,
+    sc_entry_poll_s: float = 0.5,
+    star_target_action: str = SELECT_TARGET,
+    target_settle_s: float = 0.4,
+    clear_offset_y: float = 0.6,
+    samples: int = 7,
+    pitch_hold: float = 1.0,
+    pitch_settle_s: float = 1.0,
+    max_iters: int = 20,
+    timeout_s: float = 30.0,
+    full_throttle: str = FULL_THROTTLE,
+    fly_clear_s: float = 7.0,
+    sleeper: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> CompassEscapeOutcome:
+    """The DEFAULT get-off-star maneuver — compass-driven, no brightness.
+
+    Order of operations (the operator's spec; throttle NEVER precedes a confirmed
+    star-under-us):
+
+      1. TARGET THE STAR (Select Target Ahead) so the nav-compass points at it.
+      2. CONFIRM the compass shows the target dot (the lock took). If not -> BAIL
+         without throttling; the caller retries (a missed lock never rams).
+      3. PITCH the star UNDER us (pitch_star_under, compass-gated). If it can't be
+         confirmed under within budget -> BAIL without throttling.
+      4. Engage supercruise ONLY if not already in it (now the nose is off the
+         star, so the engage throttle flies us AWAY, not in). MONITOR THE LOG for
+         SC entry; bail+retry if it never logs.
+      5. FLY AWAY: full throttle, let the star recede (fly_clear_s).
+      6. TARGET THE NEXT HOP (TargetNextRouteSystem).
+      7. ORIENT toward it (align_to_target). The jump itself fires from the
+         orchestrator's engage gate once aligned.
+
+    Requires compass wiring (reader + capture) — without it the maneuver is
+    impossible, so it no-ops with a clear note and the caller must not throttle.
+    Everything external is injected for testability.
+    """
+    from .align import _measure, align_to_target  # deferred (same package)
+
+    # 0. No compass -> we cannot do a compass maneuver. No-op (never throttle).
+    if compass_reader is None or compass_capture is None:
+        return CompassEscapeOutcome(
+            targeted_star=False, star_seen=None, star_under=None, pitch_iters=0,
+            engaged_sc=False, sc_entered=None, flew_clear=False, targeted_next=False,
+            aligned=None,
+            notes="no compass wiring (reader/capture); compass escape skipped — no action taken",
+        )
+
+    # 1. TARGET THE STAR.
+    try:
+        sender.press(star_target_action, hold=0.05)
+    except KeyError:
+        return CompassEscapeOutcome(
+            targeted_star=False, star_seen=None, star_under=None, pitch_iters=0,
+            engaged_sc=False, sc_entered=None, flew_clear=False, targeted_next=False,
+            aligned=None,
+            notes=(f"target-star action {star_target_action!r} is not bound; cannot "
+                   "target the star — no action (add the bind + re-import the preset)"),
+        )
+    sleeper(target_settle_s)
+
+    # 2. CONFIRM the compass sees the target (self-verify the lock took). A
+    #    missed lock must NOT lead to a throttle — bail and let the caller retry.
+    seen = _measure(compass_reader, compass_capture, samples)
+    if not seen.found:
+        return CompassEscapeOutcome(
+            targeted_star=True, star_seen=False, star_under=None, pitch_iters=0,
+            engaged_sc=False, sc_entered=None, flew_clear=False, targeted_next=False,
+            aligned=None,
+            notes=("targeted the star but the compass shows NO dot; did NOT throttle "
+                   "— the lock may have missed (retry) or the compass region/bind is off"),
+        )
+
+    # 3. PITCH the star UNDER us (compass-gated). Bail (no throttle) if unconfirmed.
+    under, iters, _ = pitch_star_under(
+        compass_reader, sender, capture=compass_capture,
+        clear_offset_y=clear_offset_y, samples=samples,
+        pitch_hold=pitch_hold, settle_s=pitch_settle_s,
+        max_iters=max_iters, timeout_s=timeout_s, clock=clock, sleeper=sleeper,
+    )
+    if not under:
+        return CompassEscapeOutcome(
+            targeted_star=True, star_seen=True, star_under=False, pitch_iters=iters,
+            engaged_sc=False, sc_entered=None, flew_clear=False, targeted_next=False,
+            aligned=None,
+            notes=("could NOT get the star under us within budget; did NOT throttle "
+                   "— retry the pitch (never throttle while the star is ahead)"),
+        )
+
+    # 4. Star is under/behind now. Engage supercruise ONLY if not already in it.
+    if already_in_supercruise:
+        engaged_sc = False
+        sc_entered: Optional[bool] = True
+    else:
+        # The nose is off the star (it's under us), so this throttle flies us
+        # AWAY from the star, not into it — pitch-first, throttle-second.
+        sender.press(full_throttle, hold=0.05)
+        sender.press(SC_ENGAGE, hold=0.05)
+        engaged_sc = True
+        sc_entered = wait_for_supercruise(
+            in_supercruise,
+            timeout_s=sc_entry_timeout_s, poll_s=sc_entry_poll_s,
+            clock=clock, sleeper=sleeper,
+        )
+        if sc_entered is False:
+            return CompassEscapeOutcome(
+                targeted_star=True, star_seen=True, star_under=True, pitch_iters=iters,
+                engaged_sc=True, sc_entered=False, flew_clear=False, targeted_next=False,
+                aligned=None,
+                notes=(f"star under us + engaged FSD but supercruise entry never logged "
+                       f"within {sc_entry_timeout_s:g}s; bailed — retry"),
+            )
+
+    # 5. FLY AWAY: full throttle, let the star recede before turning to the target.
+    sender.press(full_throttle, hold=0.05)
+    sleeper(fly_clear_s)
+
+    # 6. TARGET THE NEXT HOP.
+    targeted_next = True
+    try:
+        sender.press(ROUTE_TARGET, hold=0.05)
+    except KeyError:
+        targeted_next = False
+
+    # 7. ORIENT toward the next hop. align_to_target is validated — we CALL it,
+    #    never reimplement. The jump itself fires from the engage gate.
+    align_outcome = align_to_target(
+        compass_reader, sender, capture=compass_capture,
+        clock=clock, sleeper=sleeper, **(align_kwargs or {}),
+    )
+
+    return CompassEscapeOutcome(
+        targeted_star=True, star_seen=True, star_under=True, pitch_iters=iters,
+        engaged_sc=engaged_sc, sc_entered=sc_entered, flew_clear=True,
+        targeted_next=targeted_next, aligned=align_outcome.aligned,
+        notes=("targeted star -> pitched it under us -> "
+               + ("(already in SC) " if already_in_supercruise else "engaged SC -> ")
+               + "flew clear -> targeted next -> oriented"),
     )

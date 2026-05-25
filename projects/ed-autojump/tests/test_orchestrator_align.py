@@ -65,6 +65,11 @@ def _orch(tmp_path, *, vision_enabled, reader_read):
     cfg = Config()
     cfg.vision.enabled = vision_enabled
     cfg.vision.max_iters = 3        # keep the not-aligned path fast
+    # These tests isolate the ENGAGE GATE's align. Disable the startup get-off-
+    # star maneuver (escape_mode='blind' => _maybe_startup_escape clears pending
+    # and presses nothing) so the default 'compass' startup escape — which would
+    # target+pitch the star and hold the gate — doesn't interfere.
+    cfg.escape.escape_mode = "blind"
     sender = RecordingSender(_binds())
     rec = Recorder(tmp_path / "s.jsonl")
     orch = Orchestrator(
