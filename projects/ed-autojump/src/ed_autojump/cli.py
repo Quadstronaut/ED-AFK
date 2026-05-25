@@ -357,20 +357,21 @@ def cmd_run(args) -> int:
             print(f"vision: alignment OFF ({reason}) — the ship will NOT be "
                   "steered. Run `ed-autojump calibrate-compass` and set "
                   "[vision].enabled = true to enable orientation.")
-        # Sun grabber is ONLY used by the vision-sensed escape modes
-        # (brightness/sc_assist). "refuel" (default) and "blind" don't probe the
-        # sun, so don't build it or print the misleading probe line for them.
+        # Sun grabber feeds the brightness "get off the star" pitch — used by
+        # the brightness/sc_assist escape modes AND by the one-shot startup
+        # escape that runs in EVERY non-blind mode (incl. refuel) when we load in
+        # parked at a star. So build it for anything but "blind".
         escape_mode = cfg.escape.escape_mode
-        if escape_mode in ("brightness", "sc_assist"):
+        if escape_mode != "blind":
             sun_grab = build_sun_grabber(cfg)
-            if sun_grab is not None:
-                print(f"escape: sensed mode={escape_mode!r} (sun region probe active)")
+            if sun_grab is None:
+                print(f"escape: mode={escape_mode!r} but sun grabber unavailable; "
+                      "startup get-off-star pitch disabled (jumps may stall at the star)")
+            elif escape_mode == "refuel":
+                print("escape: mode='refuel' — startup get-off-star pitch + scoop-to-full "
+                      f"on low fuel (compass align {'ON' if compass_reader is not None else 'OFF'})")
             else:
-                print(f"escape: sensed mode={escape_mode!r} requested but sun grabber "
-                      "unavailable; falling back to blind escape")
-        elif escape_mode == "refuel":
-            print("escape: mode='refuel' — scoop-to-full + SC-assist peel-off on arrival "
-                  f"(compass align {'ON' if compass_reader is not None else 'OFF'})")
+                print(f"escape: sensed mode={escape_mode!r} (sun region probe active)")
     orch = Orchestrator(
         sender=sender,
         recorder=recorder,

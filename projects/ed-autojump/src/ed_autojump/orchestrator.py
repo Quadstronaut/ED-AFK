@@ -105,6 +105,11 @@ class Orchestrator:
         self.compass_reader = compass_reader
         self.frame_grabber = frame_grabber
         self.sun_grab = sun_grab
+        # One-shot: on a fresh load we sit in realspace AT the arrival star with
+        # no FSDJump/SupercruiseExit to trigger the normal escape. Without this
+        # the engage gate would try to align-and-jump while stuck on the star.
+        # Cleared after the first flyable Status tick (see _maybe_startup_escape).
+        self._startup_escape_pending = True
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -182,8 +187,61 @@ class Orchestrator:
             })
             self.request_stop()
             return
+        # One-shot get-off-star on launch, BEFORE any jump-engage, so we never
+        # try to align/jump while still stuck on the arrival star.
+        if self._startup_escape_pending:
+            self._maybe_startup_escape(status)
         # Auto-engage next jump if conditions are met.
         self._maybe_engage_next_jump(status)
+
+    def _maybe_startup_escape(self, status: Status) -> None:
+        """Run the get-off-star pitch ONCE on launch (your spec #1: 'script
+        launched -> check for a star -> pitch up until it's gone -> accelerate
+        -> then orient to the next jump'). On a fresh load we sit in realspace at
+        the arrival star with no arrival event to trigger the normal escape, so
+        the engage gate would otherwise bob against the star forever.
+
+        One-shot: the pending flag is cleared whether or not we act. Skips when
+        docked (nothing to escape) or with no sun probe (can't sense the star).
+        Uses brightness sun-avoid regardless of escape_mode — getting clear of
+        the star is a prerequisite for leaving; refuel-to-star only matters once
+        fuel is actually low, which is handled on real arrivals."""
+        self._startup_escape_pending = False
+        if status.docked:
+            return
+        if self.sun_grab is None:
+            return
+        e = self.config.escape
+        sensed: SensedEscapeOutcome = perform_sensed_escape(
+            None,
+            self.sender,
+            mode="brightness",
+            compass_reader=self.compass_reader,
+            compass_capture=self.frame_grabber,
+            sun_capture=self.sun_grab,
+            cached_star_class=self.state.last_star_class,
+            align_kwargs=self._align_kwargs(),
+            sleeper=self.sleeper,
+            clock=self.clock,
+            bright_thresh=e.sun_bright_thresh,
+            present_frac=e.sun_present_frac,
+            clear_frac=e.sun_clear_frac,
+            pitch_hold=e.sun_pitch_hold_s,
+            timeout_s=e.sun_timeout_s,
+            clear_throttle=e.clear_throttle,
+            clear_s=e.clear_s,
+            clear_reenter_frac=e.clear_reenter_frac,
+            clear_step_s=e.clear_step_s,
+        )
+        avoid = sensed.sun_avoid
+        self._record_outcome("StartupEscape", {
+            "in_supercruise": status.in_supercruise,
+            "star_detected": getattr(sensed, "star_detected", None),
+            "sun_cleared": avoid.cleared if avoid is not None else None,
+            "sun_iterations": avoid.iterations if avoid is not None else None,
+            "aligned": sensed.aligned,
+            "notes": sensed.notes,
+        })
 
     def _maybe_engage_next_jump(self, status: Status) -> None:
         """Press HyperSuperCombination if we have a safe target + Status
