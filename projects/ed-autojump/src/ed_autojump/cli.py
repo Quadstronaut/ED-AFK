@@ -265,6 +265,14 @@ def cmd_run(args) -> int:
     else:
         sender = NullSender()
 
+    # Log EVERY keypress to the session so the recording shows exactly what the
+    # bot sent (and when) — not just journal events + outcomes. This is the only
+    # way to tell "the escape never pitched" from "it pitched but the ship didn't
+    # respond". Wrap only when recording.
+    if recorder is not None:
+        from .keys import LoggingSender
+        sender = LoggingSender(sender, recorder)
+
     # Status + NavRoute readers (default on when journal dir exists).
     status_reader = None
     navroute_reader = None

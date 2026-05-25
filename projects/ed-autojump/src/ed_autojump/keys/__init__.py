@@ -2,7 +2,7 @@
 
 from .scancodes import KEY_TO_SCANCODE, scancode_for
 from .binds import BindsFile, parse_binds, Binding
-from .sender import DirectInputSender, NullSender, RecordingSender, Sender
+from .sender import DirectInputSender, LoggingSender, NullSender, RecordingSender, Sender
 
 __all__ = [
     "KEY_TO_SCANCODE",
@@ -14,4 +14,5 @@ __all__ = [
     "NullSender",
     "RecordingSender",
     "DirectInputSender",
+    "LoggingSender",
 ]

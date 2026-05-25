@@ -9,6 +9,7 @@ import pytest
 from ed_autojump.keys import (
     KEY_TO_SCANCODE,
     BindsFile,
+    LoggingSender,
     NullSender,
     RecordingSender,
     parse_binds,
@@ -167,3 +168,38 @@ def test_recording_sender_unknown_action_raises(tmp_path: Path):
     s = RecordingSender(binds)
     with pytest.raises(KeyError):
         s.press("NoSuchAction")
+
+
+class _FakeRecorder:
+    def __init__(self):
+        self.actions: list[tuple] = []
+
+    def record_action(self, action, *, hold_s=0.0, extra=None):
+        self.actions.append((action, hold_s, extra))
+
+
+def test_logging_sender_records_every_press(tmp_path: Path):
+    """LoggingSender forwards the press to the inner sender AND logs it to the
+    recorder — so the session shows exactly what the bot sent."""
+    binds = _make_binds(tmp_path)
+    rec = _FakeRecorder()
+    inner = RecordingSender(binds)
+    s = LoggingSender(inner, rec)
+    ev = s.press("HyperSuperCombination", hold=1.0)
+    s.press("SetSpeedZero", hold=0.05)
+    # Inner sender still ran (real press happened).
+    assert inner.actions() == ["HyperSuperCombination", "SetSpeedZero"]
+    # And every press was logged to the recorder with its hold + scancode.
+    assert [a for a, _, _ in rec.actions] == ["HyperSuperCombination", "SetSpeedZero"]
+    assert rec.actions[0][1] == 1.0
+    assert rec.actions[0][2]["scancode"] == ev.scancode
+    # binds delegate through to the wrapped sender.
+    assert s.binds is inner.binds
+
+
+def test_logging_sender_logs_release_all(tmp_path: Path):
+    binds = _make_binds(tmp_path)
+    rec = _FakeRecorder()
+    s = LoggingSender(RecordingSender(binds), rec)
+    s.release_all()
+    assert ("release_all", 0.0, None) in rec.actions
