@@ -30,6 +30,8 @@ from .executor.jump import (
 from .executor.align import align_to_target
 from .executor.honk import HonkOutcome, perform_honk
 from .executor.scoop import ScoopOutcome, perform_scoop, should_scoop
+from .executor.refuel import RefuelOutcome, perform_refuel_on_star
+from .executor.orbit_escape import OrbitEscapeOutcome, perform_orbit_escape
 from .journal.events import (
     Event,
     FSDJump,
@@ -492,25 +494,29 @@ class Orchestrator:
     def _on_fsd_jump(self, ev: FSDJump, follow_stream: Optional[Iterator[Event]]) -> None:
         self.state.apply_fsd_jump(ev)
         escape_mode = self.config.escape.escape_mode
-        if escape_mode != "blind" and self.sun_grab is not None:
+        align_kwargs = self._align_kwargs()
+        # "refuel" mode only diverts to the star when fuel is actually low on a
+        # scoopable star; otherwise it behaves like the normal escape below.
+        refuel_now = escape_mode == "refuel" and self._should_refuel(ev)
+        handled_scoop = False
+
+        if refuel_now:
+            # Go TO the star and scoop until full, then depart + align. This
+            # replaces both the escape AND the post-jump scoop (refuel scoops).
+            self._do_refuel_escape(ev, follow_stream, align_kwargs)
+            handled_scoop = True
+        elif escape_mode == "orbit":
+            # Timed, vision-free maneuver — orbit, drop assist, fly away, align.
+            self._do_orbit_escape(align_kwargs)
+        elif escape_mode != "blind" and self.sun_grab is not None:
             # Vision-sensed escape: brightness loop + optional compass align.
-            v = self.config.vision
-            align_kwargs: dict = dict(
-                align_tol=v.align_tol,
-                deadzone=v.deadzone,
-                gain=v.gain,
-                min_press=v.min_press_s,
-                max_press=v.max_press_s,
-                search_press=v.search_press_s,
-                settle_s=v.settle_s,
-                max_iters=v.max_iters,
-                timeout_s=v.timeout_s,
-                samples=v.align_samples,
-            )
+            # A "refuel" mode that reached here means fuel was fine, so it runs
+            # the normal brightness sun-avoid (it never needs the star).
+            sensed_mode = "brightness" if escape_mode == "refuel" else escape_mode
             sensed: SensedEscapeOutcome = perform_sensed_escape(
                 ev,
                 self.sender,
-                mode=escape_mode,
+                mode=sensed_mode,
                 compass_reader=self.compass_reader,
                 compass_capture=self.frame_grabber,
                 sun_capture=self.sun_grab,
@@ -519,6 +525,7 @@ class Orchestrator:
                 sleeper=self.sleeper,
                 clock=self.clock,
                 bright_thresh=self.config.escape.sun_bright_thresh,
+                present_frac=self.config.escape.sun_present_frac,
                 clear_frac=self.config.escape.sun_clear_frac,
                 pitch_hold=self.config.escape.sun_pitch_hold_s,
                 timeout_s=self.config.escape.sun_timeout_s,
@@ -555,11 +562,91 @@ class Orchestrator:
         # Plot next route if planner is wired.
         self._maybe_plot_route()
 
-        # Scoop if low fuel + scoopable + has scoop module.
-        self._maybe_scoop(ev, follow_stream)
+        # Scoop if low fuel + scoopable + has scoop module — unless "refuel"
+        # mode already scooped to full at the star (don't double-scoop).
+        if not handled_scoop:
+            self._maybe_scoop(ev, follow_stream)
 
         # Honk if enabled.
         self._maybe_honk(follow_stream)
+
+    def _align_kwargs(self) -> dict:
+        """Build the align_to_target kwargs from VisionConfig — shared by every
+        escape mode that orients toward the next target (brightness/refuel/orbit)."""
+        v = self.config.vision
+        return dict(
+            align_tol=v.align_tol,
+            deadzone=v.deadzone,
+            gain=v.gain,
+            min_press=v.min_press_s,
+            max_press=v.max_press_s,
+            search_press=v.search_press_s,
+            settle_s=v.settle_s,
+            max_iters=v.max_iters,
+            timeout_s=v.timeout_s,
+            samples=v.align_samples,
+        )
+
+    def _should_refuel(self, ev: FSDJump) -> bool:
+        """True when "refuel" mode should divert to the star: scoop module
+        fitted, arrival star is scoopable, and fuel is below the threshold.
+        Reuses should_scoop so the trigger matches the normal scoop trigger."""
+        loadout = self.state.loadout
+        if loadout is None or not loadout.fuel_scoop_present():
+            return False
+        return should_scoop(
+            star_class=self.state.last_star_class or "",
+            current_fuel_t=ev.fuel_level,
+            fuel_capacity_t=loadout.fuel_capacity.main,
+            refuel_threshold=self.config.routing.refuel_threshold,
+        )
+
+    def _do_refuel_escape(
+        self, ev: FSDJump, follow_stream: Optional[Iterator[Event]], align_kwargs: dict
+    ) -> None:
+        """Refuel-on-star: go to the star, scoop to full, depart, align."""
+        loadout = self.state.loadout
+        outcome: RefuelOutcome = perform_refuel_on_star(
+            self.sender,
+            follow_stream if follow_stream is not None else iter([]),
+            fuel_capacity_t=loadout.fuel_capacity.main if loadout is not None else 0.0,
+            initial_fuel_t=ev.fuel_level,
+            compass_reader=self.compass_reader,
+            compass_capture=self.frame_grabber,
+            align_kwargs=align_kwargs,
+            depart_s=self.config.escape.refuel_depart_s,
+            scoop_timeout_s=self.config.escape.refuel_scoop_timeout_s,
+            heat_supplier=self.heat_supplier,
+            sleeper=self.sleeper,
+            clock=self.clock,
+        )
+        self._record_outcome("RefuelOutcome", {
+            "scoop_result": outcome.scoop.result.name,
+            "initial_fuel_t": outcome.scoop.initial_fuel_t,
+            "final_fuel_t": outcome.scoop.final_fuel_t,
+            "departed": outcome.departed,
+            "aligned": outcome.aligned,
+            "notes": outcome.notes,
+        })
+
+    def _do_orbit_escape(self, align_kwargs: dict) -> None:
+        """Opt-in timed orbit escape — no vision, just target/orbit/depart/align."""
+        outcome: OrbitEscapeOutcome = perform_orbit_escape(
+            self.sender,
+            compass_reader=self.compass_reader,
+            compass_capture=self.frame_grabber,
+            align_kwargs=align_kwargs,
+            orbit_s=self.config.escape.orbit_orbit_s,
+            depart_s=self.config.escape.orbit_depart_s,
+            sleeper=self.sleeper,
+            clock=self.clock,
+        )
+        self._record_outcome("OrbitEscape", {
+            "orbited_s": outcome.orbited_s,
+            "departed": outcome.departed,
+            "aligned": outcome.aligned,
+            "notes": outcome.notes,
+        })
 
     def _maybe_scoop(self, ev: FSDJump, follow_stream: Optional[Iterator[Event]]) -> None:
         loadout = self.state.loadout
@@ -606,6 +693,8 @@ class Orchestrator:
             "result": outcome.result.name,
             "held_for_s": outcome.held_for_s,
             "waited_for_s": outcome.waited_for_s,
+            "mode_toggled": outcome.mode_toggled,
+            "retried": outcome.retried,
         })
 
     def _maybe_plot_route(self) -> None:
