@@ -215,16 +215,16 @@ class EscapeConfig:
     """Post-FSDJump star escape configuration.
 
     escape_mode:
-        "brightness" (default) — vision-sensed sun-avoid: CHECK the top-2/3 of
-          the screen (bottom 1/3 is cockpit, excluded), and if a bright star is
-          present pitch up HARD and sustained until it is completely gone, then
-          accelerate (star recedes) and compass-align toward the next target.
-        "refuel" — when fuel is low on a scoopable star, go TO the star and
-          scoop until full (reuses the scoop loop), then depart + align. Falls
-          back to "brightness" when fuel is fine. See refuel_* knobs below.
-        "orbit" — opt-in TIMED maneuver, NO brightness detection: target the
-          star, orbit orbit_s seconds, drop SC-assist by re-targeting the route,
-          fly away orbit_depart_s seconds, then align. The "every star" mode.
+        "refuel" (DEFAULT) — journal-driven scoop-to-full, then a clean peel-off.
+          Approach the arrival star, watch FuelScoop events: cut throttle at the
+          scoop-rate plateau, fill until Total == capacity, then engage Supercruise
+          Assist (nav-panel macro), orbit ~3 s, cancel via TargetNextRouteSystem,
+          full throttle, wait, and compass-align. Already-full arrivals skip the
+          scoop and just peel off. See refuel_* knobs below.
+        "brightness" — vision-sensed sun-avoid: CHECK the top-2/3 of the screen
+          (bottom 1/3 is cockpit, excluded), and if a bright star is present pitch
+          up HARD and sustained until it is completely gone, then accelerate (star
+          recedes) and compass-align toward the next target.
         "sc_assist" — Supercruise-Assist orbital framework (not live-validated;
           requires SC Assist module, throttle-mode setting, Hyperspace Dethrottle).
         "blind" — legacy fixed-pitch macro from perform_star_escape() (fallback).
@@ -234,19 +234,23 @@ class EscapeConfig:
         (full width, y=0..0.667*H) — the bottom 1/3 is cockpit and excluded.
     """
 
-    escape_mode: str = "brightness"    # "brightness" | "refuel" | "orbit" | "sc_assist" | "blind"
+    escape_mode: str = "refuel"        # "refuel" (default) | "brightness" | "sc_assist" | "blind"
     sun_bright_thresh: int = 125       # grayscale pixel value threshold (EDAPGui default)
     sun_present_frac: float = 0.02     # bright fraction above which a star IS present (CHECK)
     sun_clear_frac: float = 0.005      # bright fraction below which the star is "completely gone"
     sun_pitch_hold_s: float = 1.0      # PitchUpButton hold per iteration — HARD sustained pitch
     sun_timeout_s: float = 20.0        # abort the pitch-clear after this many seconds
     sun_region: tuple = (0, 0, 0, 0)   # (x,y,w,h); (0,0,0,0) => auto TOP 2/3 of screen
-    # "orbit" mode (timed, no vision): orbit then depart durations.
-    orbit_orbit_s: float = 10.0        # seconds to orbit the star with SC-assist engaged
-    orbit_depart_s: float = 7.0        # seconds to fly away after dropping SC-assist
-    # "refuel" mode: depart burn after the tank is full, and the scoop budget.
-    refuel_depart_s: float = 5.0       # seconds to fly away after the tank fills
-    refuel_scoop_timeout_s: float = 600.0  # generous fill budget ("don't care how long")
+    # "refuel" mode (default, journal-driven). approach_throttle is the ONE
+    # live-tunable knob — how hard to close on the star before the rate plateau.
+    refuel_approach_throttle: str = "SetSpeed75"  # throttle while closing on the star
+    refuel_orbit_s: float = 3.0        # seconds on SC-assist orbit before cancelling it
+    refuel_post_depart_wait_s: float = 7.0  # seconds clear of the star before orienting
+    refuel_rate_epsilon: float = 0.05  # Scooped-rate plateau tolerance (tonnes)
+    # Smack recovery: emergency drop INTO the star (SupercruiseExit BodyType:Star).
+    smack_recovery: bool = True        # run recovery on a star emergency-drop
+    smack_cooldown_s: float = 50.0     # wait before re-triggering FSD (~45 s cooldown + margin)
+    smack_post_sc_wait_s: float = 7.0  # seconds in supercruise before targeting next hop
     # Fly-clear phase: after the star clears center, throttle AWAY from it to put
     # distance between ship and star BEFORE turning toward the (behind-star) target.
     # Without this, aligning to the target points the nose back at the star and the

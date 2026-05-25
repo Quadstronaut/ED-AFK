@@ -54,6 +54,12 @@ def _orch(tmp_path: Path, sender=None, recorder_path=None) -> tuple[Orchestrator
     rec = Recorder(rec_path, clock=lambda: __import__("datetime").datetime(2026, 5, 22, tzinfo=__import__("datetime").timezone.utc))
     state = GameState()
     cfg = Config()
+    # These orchestrator tests exercise the blind escape macro, the standalone
+    # scoop path, honk-over-the-stream, and drain order — all pre-refuel
+    # mechanics. The default mode is now "refuel" (which drains the follow
+    # stream and replaces the scoop path), so pin "blind" here; refuel itself is
+    # covered in test_refuel.py.
+    cfg.escape.escape_mode = "blind"
     orch = Orchestrator(
         sender=s,
         recorder=rec,

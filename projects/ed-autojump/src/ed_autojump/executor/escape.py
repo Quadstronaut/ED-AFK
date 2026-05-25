@@ -473,10 +473,10 @@ def perform_sensed_escape(
             " + Hyperspace Dethrottle; not yet live-validated"
         ]
 
-        # Step 1: lock the star ahead. `SelectTarget` (target-ahead) does NOT
-        # exist in the ED-AFK 4.2 preset. TargetNextRouteSystem (H) is the
-        # closest available bind — it locks the next route entry, which at
-        # arrival is the star directly ahead.
+        # Step 1: lock a target with TargetNextRouteSystem (H). This legacy
+        # framework uses the route lock; the validated "refuel" flow instead
+        # selects the star in the nav panel and toggles Supercruise Assist there
+        # (see executor/navpanel.py + executor/refuel.py).
         try:
             sender.press("TargetNextRouteSystem", hold=0.05)
         except KeyError:
