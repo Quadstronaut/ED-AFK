@@ -178,31 +178,34 @@ class Orchestrator:
                                  {"action": "ExplorationFSSDiscoveryScan"})
 
     def _log_sun_probe(self, e: Any) -> None:
-        """Record the sun-brightness probe's RAW value + dump the frame.
+        """Record the sun-brightness probe over SEVERAL grabs + dump the brightest.
 
-        Operator-approved diagnostic. The star CHECK (star_present) once returned
-        False with a star dead ahead, so the escape skipped the pitch and threw
-        throttle. We will NOT tune the threshold blind — this logs the computed
-        bright fraction vs the present threshold and saves the probe PNG so a live
-        run gives us the real number."""
+        Sampling exposes a flaky capture: if the fractions swing between a real
+        value and ~0, the screen grab is intermittently returning black — which
+        is what makes the escape's CHECK miss a blazing star and skip the pitch.
+        Detection uses the MAX (same as the escape), so the logged 'detected'
+        matches what the escape decides."""
         if self.sun_grab is None:
             return
+        fracs: list[float] = []
+        frames: list[Any] = []
         try:
-            frame = self.sun_grab()
+            for _ in range(max(1, e.sun_detect_samples)):
+                fr = self.sun_grab()
+                frames.append(fr)
+                fracs.append(sun_brightness(fr, e.sun_bright_thresh))
         except Exception as exc:  # noqa: BLE001
             self._record_outcome("StartupVisionProbeError", {"error": str(exc)})
             return
-        try:
-            frac = sun_brightness(frame, e.sun_bright_thresh)
-        except Exception as exc:  # noqa: BLE001
-            self._record_outcome("StartupVisionProbeError", {"error": str(exc)})
-            return
+        mx = max(fracs) if fracs else 0.0
+        best = frames[fracs.index(mx)] if frames else None
         self._record_outcome("StartupVisionProbe", {
-            "bright_fraction": frac,
+            "bright_fractions": [round(f, 5) for f in fracs],
+            "max_fraction": mx,
             "present_threshold": e.sun_present_frac,
             "bright_thresh": e.sun_bright_thresh,
-            "detected": frac >= e.sun_present_frac,
-            "frame": self._dump_frame(frame, "sun"),
+            "detected": mx >= e.sun_present_frac,
+            "frame": self._dump_frame(best, "sun") if best is not None else None,
         })
 
     def _dump_frame(self, frame: Any, label: str) -> Optional[str]:
@@ -331,6 +334,7 @@ class Orchestrator:
             align_kwargs=self._align_kwargs(),
             bright_thresh=e.sun_bright_thresh,
             present_frac=e.sun_present_frac,
+            detect_samples=e.sun_detect_samples,
             clear_frac=e.sun_clear_frac,
             pitch_hold=e.sun_pitch_hold_s,
             timeout_s=e.sun_timeout_s,

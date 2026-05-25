@@ -237,6 +237,7 @@ class EscapeConfig:
     escape_mode: str = "refuel"        # "refuel" (default) | "brightness" | "sc_assist" | "blind"
     sun_bright_thresh: int = 125       # grayscale pixel value threshold (EDAPGui default)
     sun_present_frac: float = 0.02     # bright fraction above which a star IS present (CHECK)
+    sun_detect_samples: int = 3        # grabs to sample for the CHECK; max-of-N beats a flaky black frame
     sun_clear_frac: float = 0.005      # bright fraction below which the star is "completely gone"
     sun_pitch_hold_s: float = 1.0      # PitchUpButton hold per iteration — HARD sustained pitch
     sun_timeout_s: float = 20.0        # abort the pitch-clear after this many seconds

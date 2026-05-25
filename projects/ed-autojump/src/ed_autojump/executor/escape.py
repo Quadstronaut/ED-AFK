@@ -114,6 +114,30 @@ def star_present(
     return sun_brightness(frame, bright_thresh) >= present_frac
 
 
+def star_present_sampled(
+    sun_capture: Callable[[], Any],
+    *,
+    samples: int = 3,
+    bright_thresh: int = 125,
+    present_frac: float = STAR_PRESENT_FRAC,
+) -> tuple[bool, float, list[float]]:
+    """Robust star CHECK: grab ``samples`` frames and decide on the BRIGHTEST.
+
+    The screen grab intermittently returns a dark/empty/None frame (flaky GDI
+    capture). A single bad frame makes a plain ``star_present`` read False on a
+    blazing star — and a false "no star" makes the escape skip the pitch and
+    throttle straight into it (the exact bug). Taking the MAX bright-fraction
+    over a few grabs means one black frame can't hide a real star.
+
+    Returns ``(present, max_frac, all_fracs)`` — the fracs are kept so the caller
+    can log them and we can SEE if the capture is flaky.
+    """
+    n = max(1, samples)
+    fracs = [sun_brightness(sun_capture(), bright_thresh) for _ in range(n)]
+    mx = max(fracs)
+    return mx >= present_frac, mx, fracs
+
+
 # ---------------------------------------------------------------------------
 # pitch-to-clear outcome + loop
 # ---------------------------------------------------------------------------
@@ -651,6 +675,7 @@ def perform_realspace_escape(
     align_kwargs: Optional[dict] = None,
     bright_thresh: int = 125,
     present_frac: float = STAR_PRESENT_FRAC,
+    detect_samples: int = 1,
     clear_frac: float = STAR_GONE_FRAC,
     pitch_hold: float = HARD_PITCH_HOLD,
     settle_s: float = 0.15,
@@ -681,9 +706,12 @@ def perform_realspace_escape(
     slam) — we bail and the caller retries the pitch. The SC-entry gate is also a
     hard FAIL (bail+retry). Everything is injected for testability.
     """
-    # 1. CHECK: is there actually a star in the top-2/3 region?
-    detected = star_present(
-        sun_capture(),
+    # 1. CHECK: is there actually a star ahead? Sample several grabs and decide
+    #    on the BRIGHTEST — one flaky black frame must not produce a false "no
+    #    star" that skips the pitch and throttles into it.
+    detected, _, _ = star_present_sampled(
+        sun_capture,
+        samples=detect_samples,
         bright_thresh=bright_thresh,
         present_frac=present_frac,
     )
