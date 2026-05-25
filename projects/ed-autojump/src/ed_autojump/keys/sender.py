@@ -102,6 +102,56 @@ class RecordingSender(Sender):
         return [e.action for e in self.events]
 
 
+class LoggingSender(Sender):
+    """Wraps a real Sender and records EVERY press to the Recorder.
+
+    Without this the session log shows journal events + outcomes but NOT what
+    keys the bot actually sent — so you can't tell "the escape never pitched"
+    from "it pitched but the ship didn't respond". Each press emits a
+    `kind:"action"` row (action, hold_s, scancode) with the live timestamp.
+
+    Delegates everything it doesn't override (press_raw, _ever_pressed, binds,
+    …) to the wrapped sender via __getattr__.
+    """
+
+    def __init__(self, inner: Sender, recorder):
+        self._inner = inner
+        self._recorder = recorder
+        self.binds = getattr(inner, "binds", None)
+
+    def _log(self, action: str, hold: float, ev: Optional["KeyEvent"] = None) -> None:
+        try:
+            extra = None
+            if ev is not None:
+                extra = {"scancode": ev.scancode,
+                         "modifier_scancode": ev.modifier_scancode}
+            self._recorder.record_action(action, hold_s=hold, extra=extra)
+        except Exception:
+            # Diagnostics must never break a keypress mid-flight.
+            pass
+
+    def press(self, action: str, *, hold: float = 0.05) -> KeyEvent:
+        ev = self._inner.press(action, hold=hold)
+        self._log(action, hold, ev)
+        return ev
+
+    def press_raw(self, scancode: int, *, extended: bool = False, hold: float = 0.05) -> KeyEvent:
+        ev = self._inner.press_raw(scancode, extended=extended, hold=hold)
+        self._log(f"raw:{scancode:#04x}", hold, ev)
+        return ev
+
+    def hold(self, action: str, *, hold: float) -> KeyEvent:
+        return self.press(action, hold=hold)
+
+    def release_all(self) -> None:
+        self._inner.release_all()
+        self._log("release_all", 0.0)
+
+    def __getattr__(self, name):
+        # Only called on attribute miss, so the explicit methods above win.
+        return getattr(self._inner, name)
+
+
 class DirectInputSender(Sender):
     """
     Real sender. Uses pydirectinput-rgx's scancode_keyDown / scancode_keyUp.
