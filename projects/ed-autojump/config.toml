@@ -81,23 +81,36 @@ settle_s = 1.4                 # wait after key release; ship momentum decays ~1
 align_samples = 7              # median of 7 reads robustly rejects transient cyan-UI spikes
 
 [escape]
-# Post-FSDJump star escape mode.
-#   "brightness" (default) — vision-sensed: pitch up until the bright star
-#     clears the center screen region, then run compass alignment. Mirrors
-#     the EDAPGui sun_avoid technique (validated live 2026-05-24).
-#   "sc_assist" — Supercruise-Assist orbital framework (NOT live-validated;
-#     requires SC Assist module + throttle-mode + Hyperspace Dethrottle).
-#   "blind" — legacy fixed-pitch macro (original behaviour, no vision needed).
-escape_mode = "brightness"
-# Brightness probe tunables (EDAPGui defaults — validated on this machine).
+# Arrival behaviour after each jump.
+#   "refuel" (DEFAULT) — journal-driven scoop-to-full, then SC-assist peel-off:
+#     approach the star, cut throttle at the FuelScoop rate plateau, fill to
+#     capacity, engage Supercruise Assist via the nav panel, cancel with
+#     TargetNextRouteSystem, full throttle, wait, compass-align. Already-full
+#     arrivals skip straight to the peel-off.
+#   "brightness" — vision-sensed: pitch the bright star off the top-2/3 of the
+#     screen, accelerate, then compass-align.
+#   "sc_assist" / "blind" — legacy.
+escape_mode = "refuel"
+# refuel knobs. approach_throttle is the ONE live-tune knob — how hard to close
+# on the star before the scoop-rate plateau cuts the throttle.
+refuel_approach_throttle = "SetSpeed75"
+refuel_orbit_s = 3.0            # seconds on SC-assist orbit before cancelling it
+refuel_post_depart_wait_s = 7.0  # seconds clear of the star before orienting
+refuel_rate_epsilon = 0.05     # Scooped-rate plateau tolerance (tonnes)
+# smack recovery: emergency drop INTO the star (SupercruiseExit BodyType:Star).
+smack_recovery = true
+smack_cooldown_s = 50.0        # wait before re-triggering FSD (~45 s cooldown + margin)
+smack_post_sc_wait_s = 7.0     # seconds in supercruise before targeting the next hop
+# brightness-mode tunables (only used when escape_mode = "brightness").
 sun_bright_thresh = 125     # grayscale pixel value threshold
-sun_clear_frac = 0.05       # bright fraction below which the star is "clear"
-sun_pitch_hold_s = 0.3      # PitchUpButton hold per iteration (seconds)
-sun_timeout_s = 8.0         # abort after this many seconds (~120 deg pitch max)
-# Center screen region to probe for star brightness: (x, y, w, h).
-# (0, 0, 0, 0) = auto-compute center 40%×38% of the primary screen at runtime.
+sun_present_frac = 0.02     # bright fraction above which a star IS present
+sun_clear_frac = 0.005      # bright fraction below which the star is "completely gone"
+sun_pitch_hold_s = 1.0      # PitchUpButton hold per iteration — HARD sustained pitch
+sun_timeout_s = 20.0        # abort the pitch-clear after this many seconds
+# Region to probe for star brightness: (x, y, w, h).
+# (0, 0, 0, 0) = auto-compute the TOP 2/3 of the primary screen at runtime.
 sun_region = [0, 0, 0, 0]
-# Fly-clear phase: after the star clears center, fly AWAY before turning toward target.
+# Fly-clear phase (brightness mode): after the star clears, fly AWAY before turning.
 clear_throttle = "SetSpeed100"  # throttle action while flying clear (full ahead)
 clear_s = 8.0                   # seconds to fly away from the star
 clear_reenter_frac = 0.20       # if brightness exceeds this fraction mid-clear, pitch up again
