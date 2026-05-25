@@ -16,9 +16,11 @@ from ed_autojump.executor.escape import (
     STAR_GONE_FRAC,
     STAR_PRESENT_FRAC,
     FlyClearOutcome,
+    RealspaceEscapeOutcome,
     SensedEscapeOutcome,
     SunAvoidOutcome,
     fly_clear,
+    perform_realspace_escape,
     perform_sensed_escape,
     star_present,
     sun_avoid,
@@ -482,6 +484,100 @@ class TestFlyClear:
         )
         assert out.repitches >= 1
         assert "PitchUpButton" in sender.actions()
+
+
+# ---------------------------------------------------------------------------
+# perform_realspace_escape — the DEDICATED normal-space startup escape.
+# NOT smack recovery: no cooldown wait; throttle->engage->throttle (SC throttle
+# is a separate axis so SetSpeed100 is pressed TWICE around the Supercruise key).
+# ---------------------------------------------------------------------------
+
+class TestPerformRealspaceEscape:
+    def test_star_clears_then_throttle_engage_throttle_target_align(self):
+        """Star present and clears: pitch -> SetSpeed100 -> Supercruise ->
+        SetSpeed100 -> TargetNextRouteSystem, then align. The double throttle is
+        the crux: SC throttle is a separate axis from normal-space throttle."""
+        call_count = [0]
+        bright = _make_frame(10, 10, 200)
+        dark = _make_frame(10, 10, 0)
+
+        def _sun_capture():
+            call_count[0] += 1
+            # call 1: CHECK (bright -> detected); call 2: sun_avoid bright ->
+            # pitch once; call 3+: dark -> cleared.
+            return bright if call_count[0] <= 2 else dark
+
+        sender = _CountingSender()
+        out = perform_realspace_escape(
+            sender,
+            _sun_capture,
+            compass_reader=_FakeCompassReader(),
+            compass_capture=lambda: _make_frame(50, 50, 10),
+            align_kwargs={},
+            bright_thresh=125,
+            clear_frac=0.05,
+            pitch_hold=0.1,
+            settle_s=0.0,
+            max_iters=30,
+            timeout_s=999.0,
+            post_sc_wait_s=0.0,
+            sleeper=lambda _: None,
+            clock=_FixedClock(start=0.0, step=0.0),
+        )
+        assert isinstance(out, RealspaceEscapeOutcome)
+        assert out.star_detected is True
+        assert out.engaged_sc is True
+        assert out.aligned is True
+        actions = sender.actions()
+        # The exact throttle->engage->throttle->target ordering (align presses,
+        # if any, come after and use pitch/yaw, not these four).
+        seq = [a for a in actions
+               if a in ("SetSpeed100", "Supercruise", "TargetNextRouteSystem")]
+        assert seq == ["SetSpeed100", "Supercruise", "SetSpeed100",
+                       "TargetNextRouteSystem"]
+
+    def test_star_never_clears_bails_without_engaging(self):
+        """Star present but pitch never clears it: BAIL. Never press Supercruise
+        (engaging pointed at the star = a smack)."""
+        sender = _CountingSender()
+        out = perform_realspace_escape(
+            sender,
+            lambda: _make_frame(10, 10, 255),  # always bright -> never clears
+            bright_thresh=125,
+            clear_frac=0.05,
+            pitch_hold=0.1,
+            settle_s=0.0,
+            max_iters=3,
+            timeout_s=999.0,
+            sleeper=lambda _: None,
+            clock=_FixedClock(start=0.0, step=0.0),
+        )
+        assert out.star_detected is True
+        assert out.engaged_sc is False
+        assert "Supercruise" not in sender.actions()
+        assert "TargetNextRouteSystem" not in sender.actions()
+
+    def test_no_star_skips_pitch_still_engages(self):
+        """No star detected: skip the pitch, but STILL throttle->engage->throttle
+        and target (we're in realspace and must get into SC to make progress)."""
+        sender = _CountingSender()
+        out = perform_realspace_escape(
+            sender,
+            lambda: _make_frame(10, 10, 0),  # dark -> no star
+            bright_thresh=125,
+            present_frac=0.02,
+            post_sc_wait_s=0.0,
+            sleeper=lambda _: None,
+            clock=_FixedClock(start=0.0, step=0.0),
+        )
+        assert out.star_detected is False
+        assert out.sun_avoid is None
+        assert out.engaged_sc is True
+        assert "PitchUpButton" not in sender.actions()
+        seq = [a for a in sender.actions()
+               if a in ("SetSpeed100", "Supercruise", "TargetNextRouteSystem")]
+        assert seq == ["SetSpeed100", "Supercruise", "SetSpeed100",
+                       "TargetNextRouteSystem"]
 
 
 # ---------------------------------------------------------------------------

@@ -30,8 +30,10 @@ THE AUTHORITATIVE SPEC (the user's exact intent — law):
        COMPLETELY off-screen. Do this right away; do not wait.
     2. The FSD cooldown is ~45 s. WAIT until 50 s have elapsed (5 s safety
        margin), THEN trigger the FSD.
-    3. Triggering the FSD (engage supercruise) spawns a TARGETING BEACON in
-       the compass and puts the ship back into supercruise.
+    3. Trigger the FSD THROTTLING UP TWICE: full throttle to engage from normal
+       space, then full throttle AGAIN once in SC (SC throttle is a separate
+       axis and does not inherit the normal throttle). Engaging spawns a
+       TARGETING BEACON in the compass and puts the ship back into supercruise.
     4. Once in supercruise, WAIT 7 s before targeting the next hop.
     5. Target the next hop (``TargetNextRouteSystem``) and ORIENT toward it
        (the compass aligner).
@@ -93,6 +95,14 @@ DEFAULT_POST_SC_WAIT_S = 7.0
 
 # Engage supercruise (re-enter SC after the cooldown). Bound to Key_K.
 FSD_ENGAGE = "Supercruise"
+
+# Full throttle. Pressed TWICE around the engage (see step 3): once to engage
+# the FSD from normal space, once after entering SC. SC throttle is a SEPARATE
+# axis from normal-space throttle — entering supercruise does NOT carry the
+# normal throttle over, so a second full-throttle press is required to fly
+# clear of the star. The physics is identical to the normal realspace escape;
+# smacking the star did not change it.
+FULL_THROTTLE = "SetSpeed100"
 
 # Pitch the nose up to swing the star off the top of the screen.
 PITCH_AWAY = "PitchUpButton"
@@ -262,11 +272,19 @@ def perform_smack_recovery(
     )
 
     # -----------------------------------------------------------------------
-    # 3. TRIGGER FSD — re-engage supercruise. Spawns the compass beacon.
+    # 3. TRIGGER FSD — re-engage supercruise, THROTTLING UP TWICE. Full throttle
+    #    is needed to ENGAGE the FSD (a zero-throttle engage is a no-op). SC
+    #    throttle is a SEPARATE axis from normal-space throttle: entering SC does
+    #    not carry the normal throttle over, so we throttle up AGAIN to actually
+    #    fly clear of the star. Engaging spawns the compass beacon.
     # -----------------------------------------------------------------------
+    sender.press(FULL_THROTTLE, hold=0.05)   # normal-space throttle, to engage SC
     sender.press(FSD_ENGAGE, hold=0.05)
+    sender.press(FULL_THROTTLE, hold=0.05)   # SC throttle (separate axis), to fly away
     triggered_fsd = True
-    notes_parts.append("engaged supercruise (FSD re-triggered)")
+    notes_parts.append(
+        "throttle->engage->throttle: full throttle, engaged supercruise, full SC throttle"
+    )
 
     # -----------------------------------------------------------------------
     # 4. POST-SC WAIT — let the SC frame + beacon settle before acting.
