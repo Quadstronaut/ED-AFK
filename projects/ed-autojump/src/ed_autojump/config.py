@@ -239,15 +239,19 @@ class VisionConfig:
     # read-time. Set this after calibrating the compass region capture rect.
     compass_radius: float = 0.0
     # Closed-loop tunables (all overridable from config for in-flight tuning).
-    align_tol: float = 0.08
-    deadzone: float = 0.05
-    gain: float = 0.4
-    min_press_s: float = 0.03
-    max_press_s: float = 0.4
+    # Defaults validated live 2026-05-24: dominant-axis + behind-flip law,
+    # long settle for momentum decay, hard drive (high gain + max_press).
+    align_tol: float = 0.15
+    deadzone: float = 0.10
+    gain: float = 2.0
+    min_press_s: float = 0.10
+    max_press_s: float = 0.70
     search_press_s: float = 0.2
-    settle_s: float = 0.12
-    max_iters: int = 60
-    timeout_s: float = 20.0
+    settle_s: float = 1.4
+    max_iters: int = 40
+    timeout_s: float = 45.0
+    # Reads per measurement; >1 enables temporal-median spike rejection.
+    align_samples: int = 7
 
 
 @dataclass
