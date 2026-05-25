@@ -1,11 +1,10 @@
-"""Startup honk-first -> escape wiring.
+"""Startup honk + escape + engage-gate wiring.
 
-Per spec, on a fresh load we: detect realspace/SC -> HONK (it takes a few
-seconds) -> look for a star -> escape (only if a star is in the way). The honk
-must fire BEFORE the escape, but it can't run inside tick_status (it consumes
-the live-loop journal stream). So the first startup tick arms a pending flag and
-returns WITHOUT escaping; run_live fires the honk and sets `_startup_honk_done`;
-a later tick then runs the get-off-star escape.
+The honk is just a key hold (ExplorationFSSDiscoveryScan ~6 s) — independent of
+the ship's motion and the FSD, so it's fired directly, no journal stream, no
+deferral. The critical safety property: the engage gate (_maybe_engage_next_jump)
+must NOT fire the hyperspace jump while the startup get-off-star escape is still
+pending — otherwise the ship hyperspaces straight into the arrival star.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ed_autojump.config import Config
-from ed_autojump.journal.events import Event
+from ed_autojump.journal.events import Event, FSDTarget
 from ed_autojump.keys import RecordingSender, parse_binds
 from ed_autojump.orchestrator import Orchestrator
 from ed_autojump.state import GameState
@@ -57,7 +56,7 @@ class _EntersSupercruiseReader:
 
 
 class _StuckReader:
-    """Never flips to supercruise — the SC-entry wait always times out."""
+    """Never flips to supercruise — the SC-entry wait always times out (bail)."""
 
     def __init__(self, status):
         self.current = status
@@ -79,7 +78,15 @@ def _dark_frame():
     return np.zeros((10, 10, 3), dtype=np.uint8)
 
 
-def _orch(status_reader, sun_grab, *, tick_span=100000, step=1000):
+def _a_target() -> FSDTarget:
+    """A safe next-hop target so the engage gate WOULD fire if not blocked."""
+    return FSDTarget(
+        timestamp="2026-05-25T00:00:00Z", event="FSDTarget",
+        Name="Col 285 Sector ABC", SystemAddress=123, StarClass="M",
+    )
+
+
+def _orch(status_reader, sun_grab, *, tick_span=1000000, step=1000):
     ticks = iter(range(0, tick_span, step))
     return Orchestrator(
         sender=RecordingSender(_binds()),
@@ -93,94 +100,68 @@ def _orch(status_reader, sun_grab, *, tick_span=100000, step=1000):
     )
 
 
-def test_startup_first_tick_arms_honk_not_escape():
-    """Honk-first: the very first startup tick arms the honk and runs NO escape.
-    The escape-pending flag stays set for a later tick."""
+def test_startup_honks_then_escapes():
+    """A star is present: one startup tick honks (key hold) AND runs the escape,
+    which engages SC and flies clear (2x SetSpeed100), clearing the pending flag.
+    The honk key is pressed exactly once."""
     status = _flyable_realspace_status()
     orch = _orch(_EntersSupercruiseReader(status), _bright_frame)
-    assert orch._startup_honk_pending is False
     orch.tick_status()
-    # Honk armed; escape NOT run yet; still pending for the next tick.
-    assert orch._startup_honk_pending is True
-    assert orch._startup_honk_done is False
-    assert orch._startup_escape_pending is True
-    assert "Supercruise" not in orch.sender.actions()
-    assert "SetSpeed100" not in orch.sender.actions()
+    acts = orch.sender.actions()
+    assert acts.count("ExplorationFSSDiscoveryScan") == 1  # honked, once
+    assert "Supercruise" in acts                            # escaped via SC
+    assert acts.count("SetSpeed100") == 2                   # engage + fly-clear
+    assert orch._startup_honked is True
+    assert orch._startup_escape_pending is False            # success: gate released
 
 
-def test_startup_escape_runs_after_honk_done():
-    """Once the honk has fired (honk_done=True), a tick runs the realspace
-    escape: a star is present, so it engages SC and flies clear (2x SetSpeed100),
-    then clears the escape-pending flag."""
-    status = _flyable_realspace_status()
-    orch = _orch(_EntersSupercruiseReader(status), _bright_frame)
-    orch._startup_honk_done = True  # honk already fired
+def test_engage_gate_blocked_while_escape_pending_no_jump_into_star():
+    """The regression: SC entry never logs, so the escape bails and the pending
+    flag stays set. Even with a valid next-hop target, the engage gate must NOT
+    fire the hyperspace jump — that's what flew the ship into the star before.
+    The honk still fires (it's independent)."""
+    status = _flyable_realspace_status()  # stays realspace -> SC never logs
+    orch = _orch(_StuckReader(status), _bright_frame)
+    orch.state.next_target = _a_target()  # a jump WOULD be available
     orch.tick_status()
-    assert "Supercruise" in orch.sender.actions()
-    # Star path throttles up TWICE (engage + fly-clear under SC).
-    assert orch.sender.actions().count("SetSpeed100") == 2
-    assert orch._startup_escape_pending is False  # success: not re-armed
-
-
-def test_startup_escape_failure_keeps_pending_for_retry():
-    """If SC entry never logs, the escape bails: keep escape-pending set so the
-    next tick retries. (Honk already fired before the escape — unaffected.)"""
-    status = _flyable_realspace_status()  # stays realspace -> SC entry never logs
-    orch = _orch(_StuckReader(status), _bright_frame, tick_span=1000000)
-    orch._startup_honk_done = True
-    orch.tick_status()
-    # Bailed: re-armed to retry next tick.
-    assert orch._startup_escape_pending is True
-    # Only the engage throttle fired; no fly-away throttle, no route target.
-    assert orch.sender.actions().count("SetSpeed100") == 1
-    assert "TargetNextRouteSystem" not in orch.sender.actions()
+    assert orch._startup_escape_pending is True             # bailed -> still pending
+    assert "ExplorationFSSDiscoveryScan" in orch.sender.actions()  # honked anyway
+    # The gate held: no hyperspace engage, no jump.
+    assert "HyperSuperCombination" not in orch.sender.actions()
 
 
 def test_startup_no_star_skips_supercruise():
     """No star ahead: the route is unobstructed, so the escape skips supercruise
-    entirely — just targets + orients. No Supercruise, no throttle."""
+    entirely — just targets + orients. Honk still fires; pending clears."""
     status = _flyable_realspace_status()
     orch = _orch(_EntersSupercruiseReader(status), _dark_frame)
-    orch._startup_honk_done = True
     orch.tick_status()
-    assert "Supercruise" not in orch.sender.actions()
-    assert "SetSpeed100" not in orch.sender.actions()
-    assert "TargetNextRouteSystem" in orch.sender.actions()
-    assert orch._startup_escape_pending is False  # one-shot done
+    acts = orch.sender.actions()
+    assert "ExplorationFSSDiscoveryScan" in acts
+    assert "Supercruise" not in acts
+    assert "SetSpeed100" not in acts
+    assert "TargetNextRouteSystem" in acts
+    assert orch._startup_escape_pending is False  # one-shot done, gate released
 
 
-def test_run_live_fires_pending_startup_honk(tmp_path: Path):
-    """With the flag armed, the live loop presses the honk key once and marks
-    the startup honk done (so a later tick may run the escape)."""
+def test_engage_proceeds_once_escape_clears_the_flag():
+    """Sanity: with the escape done (pending cleared) and a target + clear flags,
+    the engage gate fires the jump. Proves the gate only blocks while pending."""
+    status = _flyable_realspace_status()
+    orch = _orch(_EntersSupercruiseReader(status), _dark_frame)  # no-star -> quick clear
+    orch.state.next_target = _a_target()
+    orch.tick_status()
+    assert orch._startup_escape_pending is False
+    # Engage gate ran in the same tick after the escape cleared the flag.
+    assert "HyperSuperCombination" in orch.sender.actions()
 
-    class _OneEventTail:
-        """Yields a single benign event, then nothing (drives loop to deadline)."""
-        def __init__(self):
-            self._served = False
 
-        def step(self) -> list[Event]:
-            if self._served:
-                return []
-            self._served = True
-            # A generic event the dispatcher ignores; just wakes the loop.
-            return [Event(timestamp="2026-05-25T00:00:00Z", event="Music")]
-
-    times = iter([0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 100.0, 100.0, 100.0])
-    cfg = Config()
-    assert cfg.exploration.honk is True  # default; the honk path is enabled
-    orch = Orchestrator(
-        sender=RecordingSender(_binds()),
-        recorder=None,
-        state=GameState(),
-        config=cfg,
-        clock=lambda: next(times, 200.0),
-        sleeper=lambda _t: None,
-    )
-    orch._startup_honk_pending = True
-    orch.run_live(_OneEventTail(), duration_s=50.0, poll_interval_s=0.1)
-    orch.shutdown()
-    # The honk key was pressed (retry_on_timeout fallback may press it twice).
-    assert "ExplorationFSSDiscoveryScan" in orch.sender.actions()
-    # And the flag was consumed (one-shot) + the done-marker set.
-    assert orch._startup_honk_pending is False
-    assert orch._startup_honk_done is True
+def test_honk_fires_once_across_escape_retries():
+    """If the escape bails and retries on a later tick, the honk does NOT fire
+    again — it's a one-shot up front."""
+    status = _flyable_realspace_status()
+    orch = _orch(_StuckReader(status), _bright_frame)
+    orch.tick_status()  # bail #1 (honk fires)
+    orch.tick_status()  # bail #2 (retry, no second honk)
+    assert orch.sender.actions().count("ExplorationFSSDiscoveryScan") == 1
+    assert orch._startup_escape_pending is True
