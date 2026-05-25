@@ -554,7 +554,7 @@ class TestEscapeConfig:
     def test_default_values(self):
         from ed_autojump.config import EscapeConfig
         cfg = EscapeConfig()
-        assert cfg.escape_mode == "brightness"
+        assert cfg.escape_mode == "refuel"
         assert cfg.sun_bright_thresh == 125
         # Hard-pitch defaults: clear only when the star is essentially gone
         # (0.005, near the clear-sky floor), with 1.0 s sustained pitch holds
@@ -625,8 +625,9 @@ class TestOrchestratorBlindFallback:
         sender = RecordingSender(binds)
         rec = Recorder(tmp_path / "s.jsonl")
         cfg = Config()
-        # escape_mode="brightness" but sun_grab=None → must fall back to blind
-        assert cfg.escape.escape_mode == "brightness"
+        # escape_mode="brightness" but sun_grab=None → must fall back to blind.
+        # (Default is now "refuel"; set brightness explicitly to test the fallback.)
+        cfg.escape.escape_mode = "brightness"
 
         orch = Orchestrator(
             sender=sender, recorder=rec, state=GameState(), config=cfg,

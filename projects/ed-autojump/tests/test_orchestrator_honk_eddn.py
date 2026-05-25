@@ -78,6 +78,9 @@ def test_no_honk_when_disabled(tmp_path: Path):
 def test_honk_runs_after_fsd_jump_when_enabled(tmp_path: Path):
     cfg = Config()
     cfg.exploration.honk = True
+    # Default mode "refuel" would drain the follow stream (eating the FSS event);
+    # this test covers honk-over-the-stream, so use the non-consuming blind path.
+    cfg.escape.escape_mode = "blind"
     sender = RecordingSender(_binds())
     orch = Orchestrator(
         sender=sender,

@@ -31,7 +31,7 @@ from .executor.align import align_to_target
 from .executor.honk import HonkOutcome, perform_honk
 from .executor.scoop import ScoopOutcome, perform_scoop, should_scoop
 from .executor.refuel import RefuelOutcome, perform_refuel_on_star
-from .executor.orbit_escape import OrbitEscapeOutcome, perform_orbit_escape
+from .executor.smack_recovery import SmackRecoveryOutcome, perform_smack_recovery
 from .journal.events import (
     Event,
     FSDJump,
@@ -42,6 +42,7 @@ from .journal.events import (
     HullDamage,
     Loadout,
     StartJump,
+    SupercruiseExit,
 )
 from .eddn.publisher import EddnError, EddnPublisher
 from .keys.sender import Sender
@@ -422,6 +423,8 @@ class Orchestrator:
             self._on_start_jump(ev)
         elif isinstance(ev, FSDJump):
             self._on_fsd_jump(ev, follow_stream)
+        elif isinstance(ev, SupercruiseExit):
+            self._on_supercruise_exit(ev)
         elif isinstance(ev, HullDamage):
             self._on_hull_damage(ev)
         elif isinstance(ev, FSSDiscoveryScan):
@@ -495,28 +498,22 @@ class Orchestrator:
         self.state.apply_fsd_jump(ev)
         escape_mode = self.config.escape.escape_mode
         align_kwargs = self._align_kwargs()
-        # "refuel" mode only diverts to the star when fuel is actually low on a
-        # scoopable star; otherwise it behaves like the normal escape below.
-        refuel_now = escape_mode == "refuel" and self._should_refuel(ev)
         handled_scoop = False
 
-        if refuel_now:
-            # Go TO the star and scoop until full, then depart + align. This
-            # replaces both the escape AND the post-jump scoop (refuel scoops).
-            self._do_refuel_escape(ev, follow_stream, align_kwargs)
+        if escape_mode == "refuel":
+            # DEFAULT flow: approach the arrival star, scoop to full (skips
+            # straight to the peel-off when already full), engage Supercruise
+            # Assist, cancel via TargetNextRouteSystem, depart + align. Replaces
+            # both the escape AND the post-jump scoop.
+            self._do_refuel(ev, follow_stream, align_kwargs)
             handled_scoop = True
-        elif escape_mode == "orbit":
-            # Timed, vision-free maneuver — orbit, drop assist, fly away, align.
-            self._do_orbit_escape(align_kwargs)
         elif escape_mode != "blind" and self.sun_grab is not None:
-            # Vision-sensed escape: brightness loop + optional compass align.
-            # A "refuel" mode that reached here means fuel was fine, so it runs
-            # the normal brightness sun-avoid (it never needs the star).
-            sensed_mode = "brightness" if escape_mode == "refuel" else escape_mode
+            # Vision-sensed escape (brightness / sc_assist): pitch the star off,
+            # accelerate, compass-align.
             sensed: SensedEscapeOutcome = perform_sensed_escape(
                 ev,
                 self.sender,
-                mode=sensed_mode,
+                mode=escape_mode,
                 compass_reader=self.compass_reader,
                 compass_capture=self.frame_grabber,
                 sun_capture=self.sun_grab,
@@ -587,25 +584,16 @@ class Orchestrator:
             samples=v.align_samples,
         )
 
-    def _should_refuel(self, ev: FSDJump) -> bool:
-        """True when "refuel" mode should divert to the star: scoop module
-        fitted, arrival star is scoopable, and fuel is below the threshold.
-        Reuses should_scoop so the trigger matches the normal scoop trigger."""
-        loadout = self.state.loadout
-        if loadout is None or not loadout.fuel_scoop_present():
-            return False
-        return should_scoop(
-            star_class=self.state.last_star_class or "",
-            current_fuel_t=ev.fuel_level,
-            fuel_capacity_t=loadout.fuel_capacity.main,
-            refuel_threshold=self.config.routing.refuel_threshold,
-        )
-
-    def _do_refuel_escape(
+    def _do_refuel(
         self, ev: FSDJump, follow_stream: Optional[Iterator[Event]], align_kwargs: dict
     ) -> None:
-        """Refuel-on-star: go to the star, scoop to full, depart, align."""
+        """Default flow: approach the arrival star, scoop to full (journal-driven —
+        cut throttle at the FuelScoop rate plateau, fill to capacity), engage
+        Supercruise Assist via the nav-panel macro, cancel + depart with
+        TargetNextRouteSystem, then orient. An already-full tank skips the scoop
+        and goes straight to the clean peel-off."""
         loadout = self.state.loadout
+        cfg = self.config.escape
         outcome: RefuelOutcome = perform_refuel_on_star(
             self.sender,
             follow_stream if follow_stream is not None else iter([]),
@@ -614,36 +602,48 @@ class Orchestrator:
             compass_reader=self.compass_reader,
             compass_capture=self.frame_grabber,
             align_kwargs=align_kwargs,
-            depart_s=self.config.escape.refuel_depart_s,
-            scoop_timeout_s=self.config.escape.refuel_scoop_timeout_s,
-            heat_supplier=self.heat_supplier,
+            approach_throttle=cfg.refuel_approach_throttle,
+            orbit_s=cfg.refuel_orbit_s,
+            post_depart_wait_s=cfg.refuel_post_depart_wait_s,
+            rate_epsilon=cfg.refuel_rate_epsilon,
             sleeper=self.sleeper,
             clock=self.clock,
         )
         self._record_outcome("RefuelOutcome", {
-            "scoop_result": outcome.scoop.result.name,
-            "initial_fuel_t": outcome.scoop.initial_fuel_t,
-            "final_fuel_t": outcome.scoop.final_fuel_t,
-            "departed": outcome.departed,
+            "initial_fuel_t": outcome.initial_fuel_t,
+            "final_fuel_t": outcome.final_fuel_t,
+            "was_full": outcome.was_full,
+            "throttle_cut": outcome.throttle_cut,
+            "assist_engaged": outcome.assist_engaged,
+            "saw_scoop": outcome.saw_scoop,
             "aligned": outcome.aligned,
             "notes": outcome.notes,
         })
 
-    def _do_orbit_escape(self, align_kwargs: dict) -> None:
-        """Opt-in timed orbit escape — no vision, just target/orbit/depart/align."""
-        outcome: OrbitEscapeOutcome = perform_orbit_escape(
+    def _on_supercruise_exit(self, ev: SupercruiseExit) -> None:
+        """An emergency drop INTO the arrival star (BodyType 'Star') means we
+        smacked it — the FSD is on a ~45 s cooldown. Run smack recovery: orient
+        away immediately, wait out the cooldown, re-engage the FSD, then target
+        the next hop and orient. Gated behind the smack_recovery config flag."""
+        if not self.config.escape.smack_recovery:
+            return
+        if (ev.body_type or "").lower() != "star":
+            return
+        outcome: SmackRecoveryOutcome = perform_smack_recovery(
             self.sender,
             compass_reader=self.compass_reader,
             compass_capture=self.frame_grabber,
-            align_kwargs=align_kwargs,
-            orbit_s=self.config.escape.orbit_orbit_s,
-            depart_s=self.config.escape.orbit_depart_s,
+            align_kwargs=self._align_kwargs(),
+            cooldown_s=self.config.escape.smack_cooldown_s,
+            post_sc_wait_s=self.config.escape.smack_post_sc_wait_s,
             sleeper=self.sleeper,
             clock=self.clock,
         )
-        self._record_outcome("OrbitEscape", {
-            "orbited_s": outcome.orbited_s,
-            "departed": outcome.departed,
+        self._record_outcome("SmackRecovery", {
+            "pitches": outcome.pitches,
+            "star_cleared": outcome.star_cleared,
+            "cooldown_waited_s": outcome.cooldown_waited_s,
+            "triggered_fsd": outcome.triggered_fsd,
             "aligned": outcome.aligned,
             "notes": outcome.notes,
         })
