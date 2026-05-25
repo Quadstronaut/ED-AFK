@@ -506,13 +506,16 @@ class Orchestrator:
                 sun_capture=self.sun_grab,
                 cached_star_class=self.state.last_star_class,
                 align_kwargs=align_kwargs,
-                post_throttle="SetSpeed100",
                 sleeper=self.sleeper,
                 clock=self.clock,
                 bright_thresh=self.config.escape.sun_bright_thresh,
                 clear_frac=self.config.escape.sun_clear_frac,
                 pitch_hold=self.config.escape.sun_pitch_hold_s,
                 timeout_s=self.config.escape.sun_timeout_s,
+                clear_throttle=self.config.escape.clear_throttle,
+                clear_s=self.config.escape.clear_s,
+                clear_reenter_frac=self.config.escape.clear_reenter_frac,
+                clear_step_s=self.config.escape.clear_step_s,
             )
             avoid = sensed.sun_avoid
             self._record_outcome("SensedEscape", {
