@@ -880,8 +880,9 @@ class Orchestrator:
         # Plot next route if planner is wired.
         self._maybe_plot_route()
 
-        # Scoop if low fuel + scoopable + has scoop module — unless "refuel"
-        # mode already scooped to full at the star (don't double-scoop).
+        # Scoop if low fuel + scoopable + has scoop module — unless the escape
+        # mode already handled it: compass flies AWAY from the star (no scoop)
+        # and refuel scooped to full, so both set handled_scoop.
         if not handled_scoop:
             self._maybe_scoop(ev, follow_stream)
 

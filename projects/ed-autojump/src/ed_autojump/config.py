@@ -257,8 +257,8 @@ class EscapeConfig:
     sun_pitch_hold_s: float = 1.0      # PitchUpButton hold per iteration — HARD sustained pitch
     sun_timeout_s: float = 20.0        # abort the pitch-clear after this many seconds
     sun_region: tuple = (0, 0, 0, 0)   # (x,y,w,h); (0,0,0,0) => auto TOP 2/3 of screen
-    # "refuel" mode (default, journal-driven). approach_throttle is the ONE
-    # live-tunable knob — how hard to close on the star before the rate plateau.
+    # "refuel" mode (DEPRECATED — SC Assist rams the star; journal-driven).
+    # approach_throttle is the ONE live-tunable knob if you ever use it.
     refuel_approach_throttle: str = "SetSpeed75"  # throttle while closing on the star
     refuel_orbit_s: float = 3.0        # seconds on SC-assist orbit before cancelling it
     refuel_post_depart_wait_s: float = 7.0  # seconds clear of the star before orienting
