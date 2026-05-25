@@ -212,6 +212,16 @@ class Orchestrator:
         if self.sun_grab is None:
             return
         e = self.config.escape
+
+        # Realspace and supercruise need DIFFERENT clearing. In NORMAL space full
+        # throttle barely moves you relative to the star — you must point away,
+        # ENGAGE supercruise, wait for it to recede, THEN orient. Delegate that to
+        # the smack-recovery body (with no FSD cooldown). In supercruise the
+        # brightness fly-clear below already works.
+        if not status.in_supercruise:
+            self._startup_escape_realspace(e)
+            return
+
         sensed: SensedEscapeOutcome = perform_sensed_escape(
             None,
             self.sender,
@@ -241,6 +251,40 @@ class Orchestrator:
             "sun_iterations": avoid.iterations if avoid is not None else None,
             "aligned": sensed.aligned,
             "notes": sensed.notes,
+        })
+
+    def _startup_escape_realspace(self, e: Any) -> None:
+        """Get off the star from NORMAL space on launch: point away (pitch until
+        the top-2/3 of the screen goes dark), ENGAGE supercruise, wait for the
+        star to recede, then target the next hop and orient. This is the smack
+        recovery body with cooldown_s=0 — same maneuver, but there's no FSD
+        cooldown to wait out because we didn't smack the star."""
+        from .executor.escape import sun_brightness
+
+        def _star_clear() -> bool:
+            # Star is "off-screen" once the top-2/3 probe falls under the clear
+            # threshold (same gate the brightness escape uses).
+            return sun_brightness(self.sun_grab(), e.sun_bright_thresh) < e.sun_clear_frac
+
+        outcome: SmackRecoveryOutcome = perform_smack_recovery(
+            self.sender,
+            is_star_clear=_star_clear,
+            compass_reader=self.compass_reader,
+            compass_capture=self.frame_grabber,
+            align_kwargs=self._align_kwargs(),
+            cooldown_s=0.0,
+            pitch_hold=e.sun_pitch_hold_s,
+            post_sc_wait_s=e.smack_post_sc_wait_s,
+            sleeper=self.sleeper,
+            clock=self.clock,
+        )
+        self._record_outcome("StartupEscape", {
+            "space": "normal",
+            "pitches": outcome.pitches,
+            "star_cleared": outcome.star_cleared,
+            "triggered_fsd": outcome.triggered_fsd,
+            "aligned": outcome.aligned,
+            "notes": outcome.notes,
         })
 
     def _maybe_engage_next_jump(self, status: Status) -> None:
