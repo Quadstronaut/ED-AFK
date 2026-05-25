@@ -176,3 +176,65 @@ def test_auto_engage_disabled_never_presses(tmp_path: Path):
     orch.tick_status()
     rec.close()
     assert "HyperSuperCombination" not in sender.actions()
+
+
+# --- S2: engagement timeout (self-heal when StartJump never arrives) -----
+
+
+def test_engagement_force_clears_after_timeout(tmp_path: Path):
+    """If StartJump never arrives within engagement_debounce_timeout_s
+    after we press HSC, the engagement flag must self-clear so the bot
+    isn't permanently stuck waiting. Otherwise a single missed StartJump
+    bricks the entire overnight session."""
+    reader = _CannedStatusReader([
+        _status(flags=int(StatusFlags.Supercruise)),
+        _status(flags=int(StatusFlags.Supercruise)),
+    ])
+    clock_t = [0.0]
+    binds = _binds()
+    sender = RecordingSender(binds)
+    rec = Recorder(tmp_path / "s.jsonl")
+    cfg = Config()
+    cfg.safety.engagement_debounce_timeout_s = 30.0
+    orch = Orchestrator(
+        sender=sender, recorder=rec, state=GameState(), config=cfg,
+        clock=lambda: clock_t[0], sleeper=lambda _t: None,
+        status_reader=reader,
+    )
+    orch.handle_event(_target("K"))
+    orch.tick_status()  # press 1 at t=0
+    # Simulate ED never writing StartJump (slow disk, lag, journal flush stall).
+    clock_t[0] = 31.0  # past the 30s timeout
+    orch.tick_status()  # should clear engagement, record timeout, re-press
+    rec.close()
+    rows = _read_rows(tmp_path / "s.jsonl")
+    timeouts = [r for r in rows if r.get("outcome_type") == "EngagementTimeout"]
+    assert len(timeouts) == 1
+    # And the bot should have re-pressed HSC after the self-clear.
+    assert sender.actions().count("HyperSuperCombination") == 2
+
+
+def test_engagement_does_not_clear_before_timeout(tmp_path: Path):
+    """Within the timeout window, engagement stays sticky (the normal
+    debounce behavior must not regress)."""
+    reader = _CannedStatusReader([
+        _status(flags=int(StatusFlags.Supercruise)),
+        _status(flags=int(StatusFlags.Supercruise)),
+    ])
+    clock_t = [0.0]
+    binds = _binds()
+    sender = RecordingSender(binds)
+    rec = Recorder(tmp_path / "s.jsonl")
+    cfg = Config()
+    cfg.safety.engagement_debounce_timeout_s = 30.0
+    orch = Orchestrator(
+        sender=sender, recorder=rec, state=GameState(), config=cfg,
+        clock=lambda: clock_t[0], sleeper=lambda _t: None,
+        status_reader=reader,
+    )
+    orch.handle_event(_target("K"))
+    orch.tick_status()  # press 1 at t=0
+    clock_t[0] = 15.0  # within window
+    orch.tick_status()  # must NOT re-press
+    rec.close()
+    assert sender.actions().count("HyperSuperCombination") == 1

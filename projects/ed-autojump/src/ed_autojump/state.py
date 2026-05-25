@@ -67,6 +67,11 @@ class GameState:
     # arrival (or timeout). Prevents double-pressing the engage key
     # while we wait for the FSD to confirm.
     engagement_in_progress: bool = False
+    # Monotonic timestamp of the engage press. The orchestrator force-clears
+    # the debounce flag if StartJump hasn't arrived within
+    # config.safety.engagement_debounce_timeout_s — otherwise a single
+    # missed journal write would brick the entire overnight session.
+    engagement_started_at: Optional[float] = None
 
     # Per-system FSS / DSS bookkeeping.
     bodies_in_current_system: dict[int, dict] = field(default_factory=dict)

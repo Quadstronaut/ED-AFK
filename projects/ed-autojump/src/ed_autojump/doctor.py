@@ -125,14 +125,26 @@ def check_status_files(journal_dir: Path) -> CheckResult:
 
 
 def check_pydirectinput() -> CheckResult:
+    """Verify the rgx fork is installed (upstream pydirectinput crashes us).
+
+    FAIL — not WARN — when the wrong package is installed: with the upstream
+    `pydirectinput` the bot will crash on the first key press, which is much
+    worse than refusing to start.
+    """
     try:
-        import pydirectinput  # noqa: F401
-        return _pass("pydirectinput", "import OK (key dispatch available)")
+        import pydirectinput
     except ImportError as exc:
         return _warn(
             "pydirectinput",
             f"not importable: {exc} — bot can record but cannot --engage-keys",
         )
+    if not hasattr(pydirectinput, "scancode_keyDown"):
+        return _fail(
+            "pydirectinput",
+            "upstream `pydirectinput` detected — bot needs `pydirectinput-rgx>=2.0`; "
+            "run `pip uninstall pydirectinput && pip install pydirectinput-rgx`",
+        )
+    return _pass("pydirectinput", "pydirectinput-rgx OK (scancode_keyDown available)")
 
 
 def check_panic_hotkey() -> CheckResult:

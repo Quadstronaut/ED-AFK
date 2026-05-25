@@ -4,14 +4,25 @@ version = "0.2.0"
 description = "Autonomous exploration bot for Elite Dangerous: Odyssey"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "Quadstronaut" }]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
 
 dependencies = [
     "pydantic>=2.0",
     "watchdog>=4.0",
     "requests>=2.31",
-    'pydirectinput>=1.0; sys_platform == "win32"',
+    # Use the rgx fork specifically: upstream `pydirectinput` 1.x lacks the
+    # scancode_keyDown/scancode_keyUp functions we need. Sending Frontier-
+    # accepted scancodes via the upstream lib's `keyDown(key, scancode=...)`
+    # raises TypeError — the upstream signature has no scancode kwarg.
+    'pydirectinput-rgx>=2.0; sys_platform == "win32"',
+    # Per-process WASAPI audio session monitor — the canonical "ED is
+    # ready for input" signal is its audio meter going non-zero, not
+    # an arbitrary delay after a journal event.
+    'pycaw>=20251023; sys_platform == "win32"',
     "tomli>=2.0;python_version<'3.11'",
 ]
 
@@ -21,6 +32,21 @@ cv = [
     "numpy>=1.26",
     "dxcam-cpp",
     "pytesseract>=0.3.10",
+]
+# Nav-compass alignment. Default (light) path: onnxruntime runs the
+# vendored compass.onnx. opencv/dxcam do capture + the colour-free
+# fallback reader. No PyTorch here — this is the "just works" tier.
+vision = [
+    "onnxruntime>=1.17",
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "dxcam-cpp",
+]
+# Opt-in heavy backend. Only needed if the onnxruntime path misbehaves
+# in-game and you want to fall back to the full ultralytics runtime on
+# the same vendored weights (compass.pt). Pulls in torch (~hundreds of MB).
+vision-heavy = [
+    "ultralytics>=8.3",
 ]
 hotkey = [
     # Enables the global Ctrl+Alt+P panic hotkey listener. Without this
@@ -44,7 +70,10 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ed_autojump = ["data/*.json", "schemas/*.json", "binds/*.binds", "edhm-presets/*.json"]
+ed_autojump = [
+    "data/*.json", "schemas/*.json", "binds/*.binds", "edhm-presets/*.json",
+    "vision/model/*.onnx", "vision/model/*.pt", "vision/model/*.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

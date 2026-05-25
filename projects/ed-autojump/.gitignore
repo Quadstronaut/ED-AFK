@@ -15,3 +15,9 @@ calibration/profile.json
 
 # Test fixtures — anonymized journal samples required by pytest; override repo-root *.log ignore.
 !tests/fixtures/journals/*.log
+
+# Scratch dev/calibration tools + captured frames (root-anchored so package
+# files like __init__.py are unaffected). Frames are regenerable via _grab.py.
+/_*.py
+/_*.png
+/_compass_frames/
