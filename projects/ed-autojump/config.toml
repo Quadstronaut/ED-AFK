@@ -79,6 +79,24 @@ timeout_s = 45.0               # give up aligning after this; then skip the jump
 settle_s = 1.4                 # wait after key release; ship momentum decays ~1-1.5 s; 1.4s safe margin
 align_samples = 7              # median of 7 reads robustly rejects transient cyan-UI spikes
 
+[escape]
+# Post-FSDJump star escape mode.
+#   "brightness" (default) — vision-sensed: pitch up until the bright star
+#     clears the center screen region, then run compass alignment. Mirrors
+#     the EDAPGui sun_avoid technique (validated live 2026-05-24).
+#   "sc_assist" — Supercruise-Assist orbital framework (NOT live-validated;
+#     requires SC Assist module + throttle-mode + Hyperspace Dethrottle).
+#   "blind" — legacy fixed-pitch macro (original behaviour, no vision needed).
+escape_mode = "brightness"
+# Brightness probe tunables (EDAPGui defaults — validated on this machine).
+sun_bright_thresh = 125     # grayscale pixel value threshold
+sun_clear_frac = 0.05       # bright fraction below which the star is "clear"
+sun_pitch_hold_s = 0.3      # PitchUpButton hold per iteration (seconds)
+sun_timeout_s = 8.0         # abort after this many seconds (~120 deg pitch max)
+# Center screen region to probe for star brightness: (x, y, w, h).
+# (0, 0, 0, 0) = auto-compute center 40%×38% of the primary screen at runtime.
+sun_region = [0, 0, 0, 0]
+
 [nav]
 # Press TargetNextRouteSystem (H) before each engage so the next route star
 # is locked without nav-panel scrolling -- also gives the compass a target

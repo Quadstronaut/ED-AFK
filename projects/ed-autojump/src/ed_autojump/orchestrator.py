@@ -19,6 +19,7 @@ import time
 from typing import Any, Callable, Iterable, Iterator, Optional
 
 from .config import Config
+from .executor.escape import SensedEscapeOutcome, perform_sensed_escape
 from .executor.jump import (
     ChargeOutcome,
     ChargeResult,
@@ -84,6 +85,7 @@ class Orchestrator:
         auto_engage: bool = True,
         compass_reader: Optional[object] = None,
         frame_grabber: Optional[Callable[[], object]] = None,
+        sun_grab: Optional[Callable[[], object]] = None,
     ):
         self.sender = sender
         self.recorder = recorder
@@ -99,6 +101,7 @@ class Orchestrator:
         self.auto_engage = auto_engage
         self.compass_reader = compass_reader
         self.frame_grabber = frame_grabber
+        self.sun_grab = sun_grab
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -478,17 +481,63 @@ class Orchestrator:
 
     def _on_fsd_jump(self, ev: FSDJump, follow_stream: Optional[Iterator[Event]]) -> None:
         self.state.apply_fsd_jump(ev)
-        escape = perform_star_escape(
-            ev, self.sender,
-            cached_star_class=self.state.last_star_class,
-            class_pitch_s=self.config.input.class_pitch_overrides,
-            sleeper=self.sleeper,
-        )
-        self._record_outcome("EscapeOutcome", {
-            "star_class": escape.star_class,
-            "pitch_held_s": escape.pitch_held_s,
-            "throttle_action": escape.throttle_action,
-        })
+        escape_mode = self.config.escape.escape_mode
+        if escape_mode != "blind" and self.sun_grab is not None:
+            # Vision-sensed escape: brightness loop + optional compass align.
+            v = self.config.vision
+            align_kwargs: dict = dict(
+                align_tol=v.align_tol,
+                deadzone=v.deadzone,
+                gain=v.gain,
+                min_press=v.min_press_s,
+                max_press=v.max_press_s,
+                search_press=v.search_press_s,
+                settle_s=v.settle_s,
+                max_iters=v.max_iters,
+                timeout_s=v.timeout_s,
+                samples=v.align_samples,
+            )
+            sensed: SensedEscapeOutcome = perform_sensed_escape(
+                ev,
+                self.sender,
+                mode=escape_mode,
+                compass_reader=self.compass_reader,
+                compass_capture=self.frame_grabber,
+                sun_capture=self.sun_grab,
+                cached_star_class=self.state.last_star_class,
+                align_kwargs=align_kwargs,
+                post_throttle="SetSpeed100",
+                sleeper=self.sleeper,
+                clock=self.clock,
+                bright_thresh=self.config.escape.sun_bright_thresh,
+                clear_frac=self.config.escape.sun_clear_frac,
+                pitch_hold=self.config.escape.sun_pitch_hold_s,
+                timeout_s=self.config.escape.sun_timeout_s,
+            )
+            avoid = sensed.sun_avoid
+            self._record_outcome("SensedEscape", {
+                "mode": sensed.mode,
+                "star_class": sensed.star_class,
+                "sun_cleared": avoid.cleared if avoid is not None else None,
+                "sun_iterations": avoid.iterations if avoid is not None else None,
+                "sun_reason": avoid.reason if avoid is not None else None,
+                "aligned": sensed.aligned,
+                "notes": sensed.notes,
+            })
+        else:
+            # Blind fallback: fixed-duration pitch (legacy behaviour, used when
+            # sun_grab is not wired or escape_mode == "blind").
+            escape = perform_star_escape(
+                ev, self.sender,
+                cached_star_class=self.state.last_star_class,
+                class_pitch_s=self.config.input.class_pitch_overrides,
+                sleeper=self.sleeper,
+            )
+            self._record_outcome("EscapeOutcome", {
+                "star_class": escape.star_class,
+                "pitch_held_s": escape.pitch_held_s,
+                "throttle_action": escape.throttle_action,
+            })
 
         # Plot next route if planner is wired.
         self._maybe_plot_route()

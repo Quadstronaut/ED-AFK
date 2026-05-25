@@ -343,9 +343,9 @@ def cmd_run(args) -> int:
     # Wire nav-compass alignment when engaging keys. build_vision returns
     # (None, None) unless [vision] is enabled AND a region is calibrated, so
     # this is a no-op for everyone who hasn't run calibrate-compass.
-    compass_reader = frame_grabber = None
+    compass_reader = frame_grabber = sun_grab = None
     if args.engage_keys:
-        from .vision.capture import build_vision
+        from .vision.capture import build_sun_grabber, build_vision
         compass_reader, frame_grabber = build_vision(cfg)
         if compass_reader is not None:
             print(f"vision: alignment ON (backend={cfg.vision.backend}, "
@@ -357,6 +357,15 @@ def cmd_run(args) -> int:
             print(f"vision: alignment OFF ({reason}) — the ship will NOT be "
                   "steered. Run `ed-autojump calibrate-compass` and set "
                   "[vision].enabled = true to enable orientation.")
+        # Sun grabber for vision-sensed star escape (non-fatal if unavailable).
+        escape_mode = cfg.escape.escape_mode
+        if escape_mode != "blind":
+            sun_grab = build_sun_grabber(cfg)
+            if sun_grab is not None:
+                print(f"escape: sensed mode={escape_mode!r} (sun region probe active)")
+            else:
+                print(f"escape: sensed mode={escape_mode!r} requested but sun grabber "
+                      "unavailable; falling back to blind escape")
     orch = Orchestrator(
         sender=sender,
         recorder=recorder,
@@ -369,6 +378,7 @@ def cmd_run(args) -> int:
         route_planner=route_planner,
         compass_reader=compass_reader,
         frame_grabber=frame_grabber,
+        sun_grab=sun_grab,
     )
 
     try:

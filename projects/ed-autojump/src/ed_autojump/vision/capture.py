@@ -254,6 +254,41 @@ def build_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[], Any]]]:
 
 
 # ---------------------------------------------------------------------------
+# Sun-region grabber factory
+# ---------------------------------------------------------------------------
+
+def build_sun_grabber(cfg: Any) -> Optional[Callable[[], Any]]:
+    """Return a .grab callable for the center-screen sun-brightness probe.
+
+    If cfg.escape.sun_region != (0,0,0,0), uses it directly.  Otherwise
+    computes the center 40%×38% of the primary monitor using GetSystemMetrics
+    (same ctypes approach as GdiGrabber.grab()).
+
+    Returns None if the capture backend or any dependency fails — the
+    orchestrator degrades to blind escape in that case.
+    """
+    try:
+        escape_region = tuple(getattr(cfg, "escape", None) and cfg.escape.sun_region
+                              or (0, 0, 0, 0))
+        if escape_region == (0, 0, 0, 0):
+            user32 = ctypes.windll.user32
+            user32.SetProcessDPIAware()
+            W = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+            H = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+            x = int(0.30 * W)
+            y = int(0.30 * H)
+            w = int(0.40 * W)
+            h = int(0.38 * H)
+            escape_region = (x, y, w, h)
+        capture_backend = getattr(cfg.vision, "capture_backend", "gdi")
+        grabber = ScreenGrabber(escape_region, backend=capture_backend)
+        return grabber.grab
+    except Exception as e:  # noqa: BLE001
+        log.warning("sun grabber unavailable (%s); escape falls back to blind", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Orange-ring compass locator (HoughCircles — no YOLO model needed)
 # ---------------------------------------------------------------------------
 
