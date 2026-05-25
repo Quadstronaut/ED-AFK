@@ -115,6 +115,10 @@ class Orchestrator:
         # the engage gate would try to align-and-jump while stuck on the star.
         # Cleared after the first flyable Status tick (see _maybe_startup_escape).
         self._startup_escape_pending = True
+        # Honk the system we load into, same as every jump arrival. Set by the
+        # startup escape, fired ONCE from the live loop (where the journal
+        # stream is safe to consume — tick_status can't, it IS inside it).
+        self._startup_honk_pending = False
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -236,6 +240,11 @@ class Orchestrator:
         if self.sun_grab is None:
             return
         e = self.config.escape
+
+        # Honk the system we loaded into, just like a jump arrival. The actual
+        # honk fires from the live loop (see run_live) because it consumes the
+        # journal stream, which tick_status — where we are now — cannot.
+        self._startup_honk_pending = True
 
         # Realspace and supercruise need DIFFERENT clearing. In NORMAL space full
         # throttle barely moves you relative to the star — you must point away,
@@ -520,6 +529,14 @@ class Orchestrator:
             except StopIteration:
                 break
             self._dispatch(ev, recording_it)
+            # The startup escape (run inside tick_status, above) can't consume
+            # the journal stream to honk. Fire it here, once, with the SAME live
+            # stream + combat-mode fallback every jump arrival uses. Dispatched
+            # AFTER ev so the event that woke us (e.g. the route's FSDTarget) is
+            # applied to state before the honk watches the stream.
+            if self._startup_honk_pending:
+                self._startup_honk_pending = False
+                self._maybe_honk(recording_it)
 
     # --- internals ----------------------------------------------------------
 
