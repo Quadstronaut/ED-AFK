@@ -33,7 +33,7 @@ from .executor.jump import (
     should_refuse_target,
 )
 from .executor.align import align_to_target
-from .executor.honk import HonkOutcome, perform_honk
+from .executor.honk import HONK_HOLD_S, HonkOutcome, perform_honk
 from .executor.scoop import ScoopOutcome, perform_scoop, should_scoop
 from .executor.refuel import RefuelOutcome, perform_refuel_on_star
 from .executor.smack_recovery import SmackRecoveryOutcome, perform_smack_recovery
@@ -115,15 +115,12 @@ class Orchestrator:
         # the engage gate would try to align-and-jump while stuck on the star.
         # Cleared after the first flyable Status tick (see _maybe_startup_escape).
         self._startup_escape_pending = True
-        # Honk the system we load into, same as every jump arrival. Per spec the
-        # honk fires FIRST — right after we detect realspace/SC, BEFORE the star
-        # search/escape. The honk can't run inside tick_status (it consumes the
-        # live journal stream — tick_status IS inside that generator), so the
-        # first startup tick arms `_startup_honk_pending`, run_live fires the
-        # honk and sets `_startup_honk_done`, and only THEN does a later tick run
-        # the get-off-star escape.
-        self._startup_honk_pending = False
-        self._startup_honk_done = False
+        # Honk the system we load into on launch, same as every jump arrival.
+        # Honking is JUST a key hold (ExplorationFSSDiscoveryScan ~6 s) and is
+        # independent of the ship's motion and the FSD — so it needs no journal
+        # stream, no deferral, no confirmation gating (that entanglement is what
+        # broke startup). Fired once, up front, in _maybe_startup_escape.
+        self._startup_honked = False
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -160,6 +157,24 @@ class Orchestrator:
         if self.state.status is not None:
             return self.state.status.heat
         return None
+
+    def _startup_honk(self) -> None:
+        """Honk the system on launch — a plain key hold, nothing more.
+
+        Honking is just ExplorationFSSDiscoveryScan held ~6 s; the game lets you
+        hold it while the ship moves and even while the FSD charges, so it's
+        independent of everything else. It deliberately does NOT consume the
+        journal stream or do confirmation/combat-mode gating (that entanglement
+        is what wedged startup). The FSSDiscoveryScan event still flows through
+        normal dispatch and is recorded."""
+        if not self.config.exploration.honk:
+            return
+        try:
+            self.sender.press("ExplorationFSSDiscoveryScan", hold=HONK_HOLD_S)
+            self._record_outcome("StartupHonk", {"held_for_s": HONK_HOLD_S})
+        except KeyError:
+            self._record_outcome("HonkBindMissing",
+                                 {"action": "ExplorationFSSDiscoveryScan"})
 
     def _poll_in_supercruise(self) -> bool:
         """Log-backed 'are we in supercruise yet?' check for the escape's second
@@ -233,14 +248,12 @@ class Orchestrator:
 
         On a fresh load we sit at the arrival star with no arrival event to
         trigger the normal escape, so without this the engage gate would bob
-        against the star forever.
+        against the star forever. The engage gate is held off (it refuses to
+        jump) until the escape clears `_startup_escape_pending`.
 
-        The honk fires FIRST (spec): the first call here arms the honk and
-        RETURNS without escaping; run_live fires the honk and sets
-        `_startup_honk_done`; a later call then runs the escape. The pending flag
-        stays set until a terminal escape outcome clears it (realspace bail keeps
-        it set to retry). Skips when docked (nothing to escape) or with no sun
-        probe (can't sense the star)."""
+        Skips when docked (nothing to escape) or with no sun probe (can't sense
+        the star). The realspace escape keeps the pending flag set on a bail so a
+        later tick retries; success (or the no-star path) clears it."""
         if status.docked:
             self._startup_escape_pending = False
             return
@@ -248,12 +261,10 @@ class Orchestrator:
             self._startup_escape_pending = False
             return
 
-        # HONK FIRST. Until the startup honk has actually fired, do NOT escape —
-        # arm the honk and bail this tick. run_live fires it (it owns the live
-        # stream) and sets _startup_honk_done; the next tick runs the escape.
-        if not self._startup_honk_done:
-            self._startup_honk_pending = True
-            return
+        # HONK FIRST — a plain key hold (see _startup_honk). Once, up front.
+        if not self._startup_honked:
+            self._startup_honk()
+            self._startup_honked = True
 
         e = self.config.escape
 
@@ -296,8 +307,8 @@ class Orchestrator:
             "aligned": sensed.aligned,
             "notes": sensed.notes,
         })
-        # Honk already fired before this escape (honk-first); this SC path is a
-        # single shot — clear the pending flag so we don't re-run it.
+        # SC path is a single shot — clear the pending flag so we don't re-run it
+        # (and so the engage gate is released to jump).
         self._startup_escape_pending = False
 
     def _startup_escape_realspace(self, e: Any) -> None:
@@ -348,6 +359,14 @@ class Orchestrator:
         """Press HyperSuperCombination if we have a safe target + Status
         flags are all clear + we're not already mid-engagement."""
         if not self.auto_engage:
+            return
+        # HARD GATE: never fire the hyperspace jump while the startup get-off-star
+        # escape is still pending. On a fresh load we sit AT the arrival star; if
+        # we engage before the escape has put us into supercruise and clear, the
+        # ship charges/jumps pointed at the star and flies into it (net 0 jumps).
+        # The escape clears this flag once we're in SC and clear, or skips SC and
+        # clears it when the route target is unobstructed.
+        if self._startup_escape_pending:
             return
         target = self.state.next_target
         if target is None:
@@ -553,17 +572,6 @@ class Orchestrator:
             except StopIteration:
                 break
             self._dispatch(ev, recording_it)
-            # Honk-first: the startup tick (in tick_status) arms this BEFORE
-            # running any escape, because the honk must consume the live journal
-            # stream — which tick_status can't (it IS inside that generator).
-            # Fire it here once, with the SAME live stream + combat-mode fallback
-            # every jump arrival uses, then mark it done so the next tick lets
-            # the get-off-star escape run. Dispatched AFTER ev so the event that
-            # woke us (e.g. the route's FSDTarget) is applied to state first.
-            if self._startup_honk_pending:
-                self._startup_honk_pending = False
-                self._maybe_honk(recording_it)
-                self._startup_honk_done = True
 
     # --- internals ----------------------------------------------------------
 
