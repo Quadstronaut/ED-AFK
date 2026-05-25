@@ -357,15 +357,20 @@ def cmd_run(args) -> int:
             print(f"vision: alignment OFF ({reason}) — the ship will NOT be "
                   "steered. Run `ed-autojump calibrate-compass` and set "
                   "[vision].enabled = true to enable orientation.")
-        # Sun grabber for vision-sensed star escape (non-fatal if unavailable).
+        # Sun grabber is ONLY used by the vision-sensed escape modes
+        # (brightness/sc_assist). "refuel" (default) and "blind" don't probe the
+        # sun, so don't build it or print the misleading probe line for them.
         escape_mode = cfg.escape.escape_mode
-        if escape_mode != "blind":
+        if escape_mode in ("brightness", "sc_assist"):
             sun_grab = build_sun_grabber(cfg)
             if sun_grab is not None:
                 print(f"escape: sensed mode={escape_mode!r} (sun region probe active)")
             else:
                 print(f"escape: sensed mode={escape_mode!r} requested but sun grabber "
                       "unavailable; falling back to blind escape")
+        elif escape_mode == "refuel":
+            print("escape: mode='refuel' — scoop-to-full + SC-assist peel-off on arrival "
+                  f"(compass align {'ON' if compass_reader is not None else 'OFF'})")
     orch = Orchestrator(
         sender=sender,
         recorder=recorder,
@@ -380,6 +385,34 @@ def cmd_run(args) -> int:
         frame_grabber=frame_grabber,
         sun_grab=sun_grab,
     )
+
+    # Startup route check. The jump loop only engages when a route is plotted;
+    # with none the bot sits idle and the ship never moves (this surprised a
+    # user). Read NavRoute.json directly so we don't disturb the orchestrator's
+    # NavRouteReader dedup state.
+    _nav_path = journal_dir / "NavRoute.json"
+    _plotted = []
+    try:
+        from .status.navroute import parse_navroute
+        _raw = _nav_path.read_text(encoding="utf-8").strip()
+        if _raw:
+            _plotted = parse_navroute(_raw).route
+    except (FileNotFoundError, OSError, ValueError):
+        _plotted = []
+    if _plotted:
+        print(f"route: {len(_plotted)} systems plotted (next hop "
+              f"{_plotted[0].star_system!r}).")
+    elif args.route_plot:
+        print(f"route: NONE plotted — auto-plot is ON, will plot to "
+              f"{cfg.routing.destination!r} when able.")
+    else:
+        print("=" * 64)
+        print("  WARNING: NO ROUTE PLOTTED.")
+        print("  The bot jumps along your in-game route. With none plotted it")
+        print("  will sit idle and the ship will NOT move.")
+        print("  Fix: plot a route in the Galaxy Map (or relaunch with")
+        print("  --route-plot / the launcher's 'Auto-plot route' option).")
+        print("=" * 64)
 
     try:
         tail = JournalTail(journal_dir)
