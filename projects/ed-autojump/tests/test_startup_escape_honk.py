@@ -156,6 +156,28 @@ def test_engage_proceeds_once_escape_clears_the_flag():
     assert "HyperSuperCombination" in orch.sender.actions()
 
 
+def _sc_status():
+    s = _flyable_realspace_status()
+    s.in_supercruise = True
+    return s
+
+
+def test_startup_in_supercruise_orients_without_accelerating():
+    """Already in supercruise at startup: honk + orient ONLY. No pitch, no
+    SetSpeed100 fly-clear — that accelerate is what ran the ship straight at the
+    star. In SC you leave by pointing at the next system and jumping; the engage
+    gate does that. (No next_target here, so the gate stays idle.)"""
+    status = _sc_status()
+    orch = _orch(_StuckReader(status), _bright_frame)  # bright = star dead ahead
+    orch.tick_status()
+    acts = orch.sender.actions()
+    assert "ExplorationFSSDiscoveryScan" in acts  # honked
+    assert "SetSpeed100" not in acts              # did NOT accelerate
+    assert "Supercruise" not in acts              # already in SC, no re-engage
+    assert "PitchUpButton" not in acts            # no pitch into/around the star
+    assert orch._startup_escape_pending is False  # one-shot done
+
+
 def test_honk_fires_once_across_escape_retries():
     """If the escape bails and retries on a later tick, the honk does NOT fire
     again — it's a one-shot up front."""
