@@ -78,9 +78,11 @@ def _dark_frame():
 
 
 def _clearing_sun_grab():
-    """A sun grab that reads bright for the first few calls (so star_present sees
-    a star and sun_avoid pitches), then dark (so the pitch CLEARS). Accounts for
-    the one extra grab _log_sun_probe takes before the escape."""
+    """A sun grab that reads bright for the first several calls — enough to cover
+    the probe's sampling (sun_detect_samples grabs) AND the escape's CHECK
+    sampling AND a couple of sun_avoid pitches — then dark, so the pitch CLEARS.
+    With Config().escape.sun_detect_samples=3 that's 3 (probe) + 3 (check) = 6
+    grabs before sun_avoid starts, so stay bright through ~8."""
     import numpy as np
     bright = np.full((10, 10, 3), 255, dtype=np.uint8)
     dark = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -88,7 +90,7 @@ def _clearing_sun_grab():
 
     def _grab():
         n[0] += 1
-        return bright if n[0] <= 3 else dark
+        return bright if n[0] <= 8 else dark
 
     return _grab
 

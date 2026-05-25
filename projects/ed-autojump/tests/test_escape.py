@@ -23,6 +23,7 @@ from ed_autojump.executor.escape import (
     perform_realspace_escape,
     perform_sensed_escape,
     star_present,
+    star_present_sampled,
     sun_avoid,
     sun_brightness,
 )
@@ -491,6 +492,36 @@ class TestFlyClear:
 # NOT smack recovery: no cooldown wait; throttle->engage->throttle (SC throttle
 # is a separate axis so SetSpeed100 is pressed TWICE around the Supercruise key).
 # ---------------------------------------------------------------------------
+
+class TestStarPresentSampled:
+    def test_one_black_frame_among_bright_still_detects(self):
+        """The flaky-capture guard: a single dark/empty grab must NOT hide a real
+        star. With one black frame among bright ones, max-of-N still detects."""
+        frames = iter([
+            _make_frame(10, 10, 0),    # flaky black grab
+            _make_frame(10, 10, 200),  # the real star
+            _make_frame(10, 10, 0),    # another black grab
+        ])
+        present, mx, fracs = star_present_sampled(
+            lambda: next(frames), samples=3, bright_thresh=125, present_frac=0.02,
+        )
+        assert present is True          # the bright frame wins
+        assert mx > 0.02
+        assert fracs[0] == 0.0 and fracs[1] > 0.02  # we kept the per-grab values
+
+    def test_all_dark_is_not_present(self):
+        present, mx, _ = star_present_sampled(
+            lambda: _make_frame(10, 10, 0), samples=3, present_frac=0.02,
+        )
+        assert present is False
+        assert mx == 0.0
+
+    def test_none_frame_does_not_crash(self):
+        """A None grab (capture returned nothing) counts as dark, not a crash."""
+        frames = iter([None, _make_frame(10, 10, 200)])
+        present, mx, _ = star_present_sampled(lambda: next(frames), samples=2)
+        assert present is True
+
 
 class TestPerformRealspaceEscape:
     def test_star_pitches_FIRST_then_engages_throttle_target_align(self):
