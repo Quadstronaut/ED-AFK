@@ -167,20 +167,32 @@ def fly_clear(
     the (behind-star) target re-points the nose at the star and the next
     throttle drives straight into it.
     """
+    # Guard: if step_s > clear_s the first sleep would overshoot the deadline.
+    # Clamp so each sleep is at most the total window.
+    effective_step = min(step_s, clear_s) if clear_s > 0 else step_s
+
     sender.press(throttle, hold=0.05)
     start = clock()
     repitches = 0
     last_frac = 0.0
-    while clock() - start < clear_s:
+    elapsed_s = 0.0
+    while True:
+        elapsed_s = clock() - start
+        if elapsed_s >= clear_s:
+            break
         frac = sun_brightness(capture_center(), bright_thresh)
         last_frac = frac
         if frac > reenter_frac:
             # Star is creeping back into view — pitch further away.
             sender.press("PitchUpButton", hold=pitch_hold)
             repitches += 1
-        sleeper(step_s)
+        # Skip trailing sleep when the deadline has already passed.
+        remaining = clear_s - (clock() - start)
+        if remaining <= 0:
+            break
+        sleeper(min(effective_step, remaining))
     return FlyClearOutcome(
-        elapsed_s=clock() - start, repitches=repitches, final_frac=last_frac
+        elapsed_s=elapsed_s, repitches=repitches, final_frac=last_frac
     )
 
 

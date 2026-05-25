@@ -59,8 +59,9 @@ def _measure(reader: Any, capture: Callable[[], Any], samples: int) -> CompassRe
     reads = [reader.read(capture()) for _ in range(samples)]
     found_reads = [r for r in reads if r.found]
 
-    # Require a majority to be found; otherwise we can't trust any measurement.
-    if len(found_reads) < samples / 2:
+    # Require a STRICT majority to be found; ties count as not_found.
+    # `<= samples // 2` rejects ties for even sample counts (e.g. 3-of-6 fails).
+    if len(found_reads) <= samples // 2:
         return CompassRead.not_found()
 
     return CompassRead(
