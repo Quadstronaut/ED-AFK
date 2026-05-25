@@ -211,6 +211,29 @@ class NavConfig:
 
 
 @dataclass
+class EscapeConfig:
+    """Post-FSDJump star escape configuration.
+
+    escape_mode:
+        "brightness" (default) — vision-sensed sun-avoid: pitch up until the
+          bright star clears the center screen region, then compass-align.
+        "sc_assist" — Supercruise-Assist orbital framework (not live-validated;
+          requires SC Assist module, throttle-mode setting, Hyperspace Dethrottle).
+        "blind" — legacy fixed-pitch macro from perform_star_escape() (fallback).
+
+    sun_region: (x, y, w, h) of the center-screen capture region.
+        (0,0,0,0) => compute center 40%×38% of the primary screen at runtime.
+    """
+
+    escape_mode: str = "brightness"    # "brightness" | "sc_assist" | "blind"
+    sun_bright_thresh: int = 125       # grayscale pixel value threshold (EDAPGui default)
+    sun_clear_frac: float = 0.05       # bright fraction below which the star is "clear"
+    sun_pitch_hold_s: float = 0.3      # PitchUpButton hold duration per iteration
+    sun_timeout_s: float = 8.0         # abort after this many seconds
+    sun_region: tuple = (0, 0, 0, 0)   # (x,y,w,h); (0,0,0,0) => auto center 40%x38%
+
+
+@dataclass
 class VisionConfig:
     """Nav-compass alignment (orient the ship toward the next target).
 
@@ -284,6 +307,7 @@ class Config:
     menu_nav: MenuNavConfig = field(default_factory=MenuNavConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     nav: NavConfig = field(default_factory=NavConfig)
+    escape: EscapeConfig = field(default_factory=EscapeConfig)
 
 
 def _merge(section_obj: object, table: dict) -> None:
@@ -311,7 +335,7 @@ def load_config(path: str | Path | None = None) -> Config:
     for section_name in (
         "ship", "routing", "exploration", "safety", "input",
         "binds", "hud", "cv", "eddn", "paths", "launcher", "menu_nav",
-        "vision", "nav",
+        "vision", "nav", "escape",
     ):
         if section_name in raw:
             _merge(getattr(cfg, section_name), raw[section_name])
