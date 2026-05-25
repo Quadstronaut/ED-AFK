@@ -162,6 +162,150 @@ def test_honk_not_bound_returns_not_bound(tmp_path: Path):
     assert outcome.result == HonkResult.NOT_BOUND
 
 
+def test_honk_combat_fallback_toggles_then_retries_ok():
+    """The headline case: first watch sees NO FSSDiscoveryScan (ship is in
+    combat mode, so the honk was a silent no-op), so we tap
+    PlayerHUDModeToggle and re-fire; the retry's stream delivers the event.
+
+    The events iterator is single-pass: the empty marker burns the first
+    watch's deadline, and the FSS event only appears afterward — proving
+    the retry resumes from the SAME iterator rather than rewinding it.
+    """
+    binds = _binds()
+    sender = RecordingSender(binds)
+
+    fss = parse_event(
+        '{"timestamp":"2026-01-10T01:00:02Z","event":"FSSDiscoveryScan",'
+        '"Progress":1.0,"BodyCount":7,"NonBodyCount":2,'
+        '"SystemName":"Combat","SystemAddress":9}'
+    )
+    assert isinstance(fss, FSSDiscoveryScan)
+
+    # A non-FSS event the first watch consumes, then the clock jumps past
+    # the first deadline so that watch returns None. The fss event is
+    # delivered only on the second watch.
+    filler = parse_event(
+        '{"timestamp":"2026-01-10T01:00:00Z","event":"Music","MusicTrack":"NoTrack"}'
+    )
+
+    # _fake_clock consumes values[0] on construction, so the first clock()
+    # call returns values[1]. Sequence by call site (each call advances):
+    #  start=clock() -> 0.0; _fire start -> 0.0; _fire end -> 0.0
+    #  1st deadline_at = clock()(0.0)+1.0 = 1.0
+    #  loop: filler not FSS; deadline check clock()=100 >= 1.0 -> break
+    #        (fss NOT yet consumed -> stays available for the retry)
+    #  retry start -> 100; retry _fire start -> 100; retry _fire end -> 100
+    #  2nd deadline_at = clock()(100)+1.0 = 101.0; fss matches first -> OK
+    clock = _fake_clock([0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 100.0, 100.0, 100.0])
+    outcome = perform_honk(
+        sender,
+        events=iter([filler, fss]),
+        hold_s=0.0,
+        timeout_s=1.0,
+        clock=clock,
+        sleeper=lambda s: None,
+    )
+
+    assert outcome.result == HonkResult.OK
+    assert outcome.fss_event is fss
+    assert outcome.mode_toggled is True
+    assert outcome.mode_toggle_ok is True
+    assert outcome.retried is True
+    # Two honk presses bracket one mode toggle.
+    assert sender.actions() == [
+        "ExplorationFSSDiscoveryScan",
+        "PlayerHUDModeToggle",
+        "ExplorationFSSDiscoveryScan",
+    ]
+
+
+def test_honk_retry_disabled_times_out_without_toggle():
+    """retry_on_timeout=False restores single-shot behaviour: no toggle."""
+    binds = _binds()
+    sender = RecordingSender(binds)
+
+    clock = _fake_clock([0.0, 0.1, 100.0])
+    outcome = perform_honk(
+        sender,
+        events=iter([]),
+        hold_s=0.0,
+        timeout_s=1.0,
+        retry_on_timeout=False,
+        clock=clock,
+        sleeper=lambda s: None,
+    )
+    assert outcome.result == HonkResult.TIMEOUT
+    assert outcome.mode_toggled is False
+    assert outcome.retried is False
+    assert sender.actions() == ["ExplorationFSSDiscoveryScan"]
+
+
+def test_honk_retry_also_times_out_returns_timeout():
+    """Toggle + retry, but still no event: report TIMEOUT with the toggle
+    recorded so the caller knows we tried to correct the mode."""
+    binds = _binds()
+    sender = RecordingSender(binds)
+
+    # Empty stream: each watch's for-loop body never runs, so both return
+    # None with zero deadline checks. The clock value is irrelevant here.
+    clock = _fake_clock([0.0])
+    outcome = perform_honk(
+        sender,
+        events=iter([]),
+        hold_s=0.0,
+        timeout_s=1.0,
+        clock=clock,
+        sleeper=lambda s: None,
+    )
+    assert outcome.result == HonkResult.TIMEOUT
+    assert outcome.mode_toggled is True
+    assert outcome.mode_toggle_ok is True
+    assert outcome.retried is True
+    assert sender.actions() == [
+        "ExplorationFSSDiscoveryScan",
+        "PlayerHUDModeToggle",
+        "ExplorationFSSDiscoveryScan",
+    ]
+
+
+def test_honk_missing_toggle_bind_degrades_gracefully(tmp_path: Path):
+    """If PlayerHUDModeToggle isn't bound, we can't correct the mode — so
+    don't crash and don't re-fire: TIMEOUT with mode_toggle_ok=False.
+
+    We bind ExplorationFSSDiscoveryScan (so the honk itself fires) but NOT
+    PlayerHUDModeToggle (so the toggle press raises KeyError)."""
+    f = tmp_path / "honk_only.binds"
+    f.write_text(
+        '<?xml version="1.0" encoding="UTF-8" ?>\n'
+        '<Root PresetName="ED-AFK" MajorVersion="4" MinorVersion="2">\n'
+        "<KeyboardLayout>en-US</KeyboardLayout>\n"
+        '<ExplorationFSSDiscoveryScan>\n'
+        '  <Primary Device="Keyboard" Key="Key_H" />\n'
+        '  <Secondary Device="{NoDevice}" Key="" />\n'
+        "</ExplorationFSSDiscoveryScan>\n"
+        "</Root>",
+        encoding="utf-8",
+    )
+    binds = parse_binds(f)
+    sender = RecordingSender(binds)
+
+    clock = _fake_clock([0.0, 0.0, 100.0, 100.0])
+    outcome = perform_honk(
+        sender,
+        events=iter([]),
+        hold_s=0.0,
+        timeout_s=1.0,
+        clock=clock,
+        sleeper=lambda s: None,
+    )
+    assert outcome.result == HonkResult.TIMEOUT
+    assert outcome.mode_toggled is True
+    assert outcome.mode_toggle_ok is False
+    assert outcome.retried is False
+    # Only the original honk fired; the toggle press raised KeyError.
+    assert sender.actions() == ["ExplorationFSSDiscoveryScan"]
+
+
 def test_honk_against_fixture_replay(sample_journal: Path):
     """Replay a journal fixture through perform_honk; pull the FSS event."""
     from ed_autojump.journal import JournalTail

@@ -13,11 +13,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from ed_autojump.executor.escape import (
+    STAR_GONE_FRAC,
+    STAR_PRESENT_FRAC,
     FlyClearOutcome,
     SensedEscapeOutcome,
     SunAvoidOutcome,
     fly_clear,
     perform_sensed_escape,
+    star_present,
     sun_avoid,
     sun_brightness,
 )
@@ -99,6 +102,42 @@ class TestSunBrightness:
         assert sun_brightness(frame, thresh=125) == 0.0
         # 100 > 50 — all bright
         assert sun_brightness(frame, thresh=50) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# star_present — the CHECK: make no assumption, look for a star first
+# ---------------------------------------------------------------------------
+
+class TestStarPresent:
+    def test_clear_sky_is_not_present(self):
+        """A near-dark frame (clear sky, ~0.005 bright) reports NO star."""
+        import numpy as np
+        # 0.5% of pixels bright — at the clear-sky floor, below present_frac=0.02
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        frame[:5, :5, :] = 255  # 25/10000 = 0.0025 bright fraction
+        assert star_present(frame) is False
+
+    def test_bright_disc_is_present(self):
+        """A frame with a large bright region reports a star present."""
+        frame = _make_frame(10, 10, 200)  # 100% bright, well above 0.02
+        assert star_present(frame) is True
+
+    def test_threshold_boundary(self):
+        """present_frac gate: just-above present is True, just-below is False."""
+        import numpy as np
+        # 3% bright -> present (>= 0.02)
+        present = np.zeros((100, 100, 3), dtype=np.uint8)
+        present[:3, :, :] = 255  # 300/10000 = 0.03
+        assert star_present(present) is True
+        # 1% bright -> not present (< 0.02)
+        absent = np.zeros((100, 100, 3), dtype=np.uint8)
+        absent[:1, :, :] = 255  # 100/10000 = 0.01
+        assert star_present(absent) is False
+
+    def test_constants_sane(self):
+        """Present gate sits above the gone gate; gone gate ~clear-sky floor."""
+        assert STAR_PRESENT_FRAC > STAR_GONE_FRAC
+        assert STAR_GONE_FRAC == pytest.approx(0.005)
 
 
 # ---------------------------------------------------------------------------
@@ -213,14 +252,21 @@ class _FakeCompassReader:
 
 
 class TestPerformSensedEscapeBrightness:
-    def test_brightness_mode_runs_sun_avoid_align_and_throttle(self):
-        """Full brightness-mode path: bright→dark capture, fake compass reader."""
+    def test_brightness_mode_checks_pitches_accelerates_aligns(self):
+        """Full path with a star present: CHECK→hard pitch→accelerate→align.
+
+        Capture sequence: the CHECK consumes one frame (bright -> star
+        detected), then sun_avoid sees 1 bright frame (pitch once) then dark
+        (cleared). fly_clear (clear_s=0) just presses throttle.
+        """
         call_count = [0]
         bright_frame = _make_frame(10, 10, 200)
         dark_frame = _make_frame(10, 10, 0)
 
         def _sun_capture():
             call_count[0] += 1
+            # call 1: CHECK (bright), call 2: sun_avoid bright -> pitch,
+            # call 3+: dark -> cleared.
             return bright_frame if call_count[0] <= 2 else dark_frame
 
         # Compass capture always returns a dark frame (compass reader always finds)
@@ -254,16 +300,80 @@ class TestPerformSensedEscapeBrightness:
         assert isinstance(result, SensedEscapeOutcome)
         assert result.mode == "brightness"
         assert result.star_class == "K"
-        # sun_avoid ran and cleared
+        # CHECK detected a star.
+        assert result.star_detected is True
+        # sun_avoid ran and cleared.
         assert result.sun_avoid is not None
         assert result.sun_avoid.cleared is True
-        # fly_clear ran and threw full throttle to move away from the star
+        # accelerated: SetSpeed100 pressed to move the star away.
+        assert result.accelerated is True
         assert result.fly_clear is not None
         assert "SetSpeed100" in sender.actions()
-        # We do NOT stop — no zero-throttle step (would just waste time in supercruise).
+        # We do NOT stop — no zero-throttle step (would waste time in supercruise).
         assert "SetSpeedZero" not in sender.actions()
-        # PitchUpButton was pressed (2 bright frames in sun_avoid; clear_s=0 adds none)
-        assert sender.actions().count("PitchUpButton") == 2
+        # Exactly one pitch (CHECK frame is not counted; one bright frame in sun_avoid).
+        assert sender.actions().count("PitchUpButton") == 1
+
+    def test_brightness_mode_no_star_skips_pitch_still_accelerates_aligns(self):
+        """No star ahead: skip the pitch, go straight to accelerate + align."""
+        dark_frame = _make_frame(10, 10, 0)  # clear sky -> star_present False
+        sun_capture = lambda: dark_frame
+        compass_capture = lambda: _make_frame(50, 50, 10)
+        sender = _CountingSender()
+
+        result = perform_sensed_escape(
+            object(),
+            sender,
+            mode="brightness",
+            compass_reader=_FakeCompassReader(),
+            compass_capture=compass_capture,
+            sun_capture=sun_capture,
+            cached_star_class="K",
+            align_kwargs={},
+            sleeper=lambda _: None,
+            clock=_FixedClock(),
+            clear_s=0.0,
+        )
+
+        # No star detected -> no pitch-to-clear, sun_avoid stays None.
+        assert result.star_detected is False
+        assert result.sun_avoid is None
+        # But we STILL accelerate and align.
+        assert result.accelerated is True
+        assert "SetSpeed100" in sender.actions()
+        assert result.aligned is True
+        # No pitch was pressed during the (skipped) escape; align uses a
+        # centred reader so it also issues no pitch.
+        assert "PitchUpButton" not in sender.actions()
+
+    def test_brightness_mode_star_not_cleared_does_not_accelerate(self):
+        """Star present but pitch can't clear it -> bail before accelerating."""
+        bright_frame = _make_frame(10, 10, 255)  # always bright
+        sender = _CountingSender()
+
+        result = perform_sensed_escape(
+            object(),
+            sender,
+            mode="brightness",
+            compass_reader=_FakeCompassReader(),
+            compass_capture=lambda: _make_frame(50, 50, 10),
+            sun_capture=lambda: bright_frame,
+            cached_star_class="O",
+            sleeper=lambda _: None,
+            clock=_FixedClock(),
+            pitch_hold=0.1,
+            settle_s=0.0,
+            max_iters=3,
+            timeout_s=999.0,
+        )
+
+        assert result.star_detected is True
+        assert result.sun_avoid is not None
+        assert result.sun_avoid.cleared is False
+        # Must NOT throttle into a star still dead ahead.
+        assert result.accelerated is False
+        assert "SetSpeed100" not in sender.actions()
+        assert result.aligned is None
 
     def test_brightness_mode_no_sun_capture_degrades_gracefully(self):
         """If sun_capture is None, we get a SensedEscapeOutcome with a note, no crash."""
@@ -279,9 +389,16 @@ class TestPerformSensedEscapeBrightness:
         assert "skipped" in result.notes.lower() or "not provided" in result.notes.lower()
 
     def test_brightness_mode_without_compass_reader(self):
-        """brightness mode with no compass_reader: sun_avoid runs, aligned is None."""
+        """brightness mode, star present, no compass_reader: pitch+accelerate, aligned None."""
+        call_count = [0]
+        bright_frame = _make_frame(10, 10, 200)
         dark_frame = _make_frame(10, 10, 0)
-        capture = lambda: dark_frame
+
+        def capture():
+            call_count[0] += 1
+            # CHECK bright (detected), sun_avoid bright -> pitch, then dark -> cleared.
+            return bright_frame if call_count[0] <= 2 else dark_frame
+
         sender = _CountingSender()
 
         result = perform_sensed_escape(
@@ -292,11 +409,18 @@ class TestPerformSensedEscapeBrightness:
             sun_capture=capture,
             sleeper=lambda _: None,
             clock=_FixedClock(),
+            pitch_hold=0.1,
+            settle_s=0.0,
+            clear_frac=0.05,
+            timeout_s=999.0,
             clear_s=0.0,  # FixedClock never advances; keep fly_clear to one pass
         )
 
+        assert result.star_detected is True
         assert result.sun_avoid is not None
         assert result.sun_avoid.cleared is True
+        assert result.accelerated is True
+        # No compass wiring -> alignment skipped.
         assert result.aligned is None
 
 
@@ -432,9 +556,13 @@ class TestEscapeConfig:
         cfg = EscapeConfig()
         assert cfg.escape_mode == "brightness"
         assert cfg.sun_bright_thresh == 125
-        assert cfg.sun_clear_frac == pytest.approx(0.05)
-        assert cfg.sun_pitch_hold_s == pytest.approx(0.3)
-        assert cfg.sun_timeout_s == pytest.approx(8.0)
+        # Hard-pitch defaults: clear only when the star is essentially gone
+        # (0.005, near the clear-sky floor), with 1.0 s sustained pitch holds
+        # and a 20 s budget — "pitch up like you don't want to die".
+        assert cfg.sun_present_frac == pytest.approx(0.02)
+        assert cfg.sun_clear_frac == pytest.approx(0.005)
+        assert cfg.sun_pitch_hold_s == pytest.approx(1.0)
+        assert cfg.sun_timeout_s == pytest.approx(20.0)
         assert cfg.sun_region == (0, 0, 0, 0)
 
     def test_config_has_escape_section(self):
@@ -568,13 +696,29 @@ class TestOrchestratorBlindFallback:
         rec = Recorder(tmp_path / "s.jsonl")
         cfg = Config()
         cfg.escape.escape_mode = "brightness"
+        # Keep the fly-clear window tiny so the (real-time-deadline) clear loop
+        # exits at once under the stepping clock below.
+        cfg.escape.clear_s = 0.0
 
+        # Star ahead: CHECK frame bright (detected), then dark (sun_avoid clears).
+        call_count = [0]
+        bright_frame = _make_frame(10, 10, 200)
         dark_frame = _make_frame(10, 10, 0)
-        fake_sun_grab = lambda: dark_frame  # always clear immediately
+
+        def fake_sun_grab():
+            call_count[0] += 1
+            return bright_frame if call_count[0] <= 1 else dark_frame
+
+        # Stepping clock so any time-based loop makes progress (no constant 0.0).
+        t = [0.0]
+
+        def clock():
+            t[0] += 0.01
+            return t[0]
 
         orch = Orchestrator(
             sender=sender, recorder=rec, state=GameState(), config=cfg,
-            clock=lambda: 0.0, sleeper=lambda _: None,
+            clock=clock, sleeper=lambda _: None,
             sun_grab=fake_sun_grab,
             compass_reader=None, frame_grabber=None,
         )
@@ -587,4 +731,5 @@ class TestOrchestratorBlindFallback:
         sensed_rows = [r for r in rows if r.get("outcome_type") == "SensedEscape"]
         assert len(sensed_rows) == 1
         assert sensed_rows[0]["payload"]["mode"] == "brightness"
+        # A star was detected and pitched fully clear.
         assert sensed_rows[0]["payload"]["sun_cleared"] is True

@@ -265,11 +265,16 @@ def build_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[], Any]]]:
 # ---------------------------------------------------------------------------
 
 def build_sun_grabber(cfg: Any) -> Optional[Callable[[], Any]]:
-    """Return a .grab callable for the center-screen sun-brightness probe.
+    """Return a .grab callable for the sun-brightness probe (TOP 2/3 of screen).
 
-    If cfg.escape.sun_region != (0,0,0,0), uses it directly.  Otherwise
-    computes the center 40%×38% of the primary monitor using GetSystemMetrics
-    (same ctypes approach as GdiGrabber.grab()).
+    If cfg.escape.sun_region != (0,0,0,0), uses it directly.  Otherwise captures
+    the TOP 2/3 of the primary monitor: full width, from y=0 down to y≈0.667·H.
+
+    WHY the top 2/3: the BOTTOM 1/3 of the screen is the cockpit dashboard,
+    which glows regardless of what's outside. Including it would let HUD glow
+    masquerade as a star (or hide a faint star behind a bright dash). The escape
+    star-check must look ONLY at the sky, so we exclude the cockpit band and
+    probe the full top-2/3 region — the whole area a star could occupy ahead.
 
     Returns None if the capture backend or any dependency fails — the
     orchestrator degrades to blind escape in that case.
@@ -283,10 +288,12 @@ def build_sun_grabber(cfg: Any) -> Optional[Callable[[], Any]]:
             user32.SetProcessDPIAware()
             W = user32.GetSystemMetrics(0)  # SM_CXSCREEN
             H = user32.GetSystemMetrics(1)  # SM_CYSCREEN
-            x = int(0.30 * W)
-            y = int(0.30 * H)
-            w = int(0.40 * W)
-            h = int(0.38 * H)
+            # Top 2/3: full width, from the very top down to ~0.667·H. The
+            # bottom 1/3 (cockpit) is deliberately excluded.
+            x = 0
+            y = 0
+            w = W
+            h = int((2.0 / 3.0) * H)
             escape_region = (x, y, w, h)
         capture_backend = getattr(cfg.vision, "capture_backend", "gdi")
         grabber = ScreenGrabber(escape_region, backend=capture_backend)

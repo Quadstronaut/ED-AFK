@@ -1,42 +1,69 @@
 """
 Vision-sensed star escape — replaces the blind fixed-pitch macro on arrival.
 
-On hyperspace arrival the ship faces the star (heat danger) and the next
-route target is obscured near/behind it. The blind `perform_star_escape`
-(in jump.py) pitches up for a fixed class-dependent time. This module
-replaces that with a brightness-sensed loop: pitch up until the bright star
-clears the center of the frame, mirroring the EDAPGui `sun_avoid` technique.
+On hyperspace arrival (and at script startup) the ship may be facing the
+arrival star: a heat danger, and the next route target is obscured near/behind
+it. We make NO assumption about being in front of a star — we CHECK first, and
+only pitch if something bright is actually there.
 
-Validated defaults (live, 2026-05-24):
-- Center region: 30-70% horizontal, 30-68% vertical of the primary screen.
-- Binary brightness threshold: pixel value 125 (grayscale channel mean).
-- "Clear" fraction: < 5% of region pixels above threshold.
-- Failsafe: abort after 8 s / 30 iterations (whichever comes first).
-- Clear-sky bright-fraction on this machine is ~0.005 — deep margin under 0.05.
+THE ORDER OF OPERATIONS (the spec, in code):
+  1. CHECK the TOP 2/3 of the screen for a bright star. The BOTTOM 1/3 is the
+     cockpit and is excluded by the sun grabber's region (see
+     `build_sun_grabber` in vision/capture.py), so anything bright here is sky,
+     not dashboard glow.
+  2. If nothing bright is up there → no pitch needed. Go straight to step 4.
+  3. If a star IS detected → pitch UP (PitchUpButton) HARD and SUSTAINED until
+     it is COMPLETELY gone from the top-2/3 region. This is "pitch like you
+     don't want to die": long holds, repeated until the frame is essentially
+     dark — NOT weak 0.3 s taps gated at a 5 % brightness fraction.
+  4. ACCELERATE — press "SetSpeed100" so the star starts moving away from the
+     ship and the FSD-charge travel never drifts back into it.
+  5. Orient toward the next jump target via `align_to_target` (already
+     implemented and validated in executor/align.py — we CALL it, never
+     reimplement it).
+
+Brightness thresholds (live, clear-sky bright fraction on this machine ≈ 0.005):
+- STAR_PRESENT_FRAC = 0.02 — a star is "present" if >2 % of the top-2/3 region
+  is brighter than `bright_thresh`. 4x the clear-sky floor (0.005), so cockpit
+  HUD glints or a faint distant star don't trip a needless 90° pitch, but the
+  arrival star (which fills a large bright disc) clears it easily.
+- STAR_GONE_FRAC = 0.005 — the star is "completely gone" only when the bright
+  fraction drops to the clear-sky floor. This is MUCH tighter than the old 5 %
+  gate: 5 % left a bright crescent of star still in view. We pitch until the
+  sky overhead is genuinely dark.
+
+Pitch timing: HARD_PITCH_HOLD = 1.0 s per press (vs the old 0.3 s taps). At
+ED's pitch rate a 1 s sustained press sweeps a large arc; repeated under the
+"gone" gate this drives the nose ~90° up off the star in a few presses rather
+than nibbling a couple degrees at a time. Failsafe: stop after `max_iters`
+presses or `timeout_s` seconds so a huge/close star can never hang the bot.
 
 Supercruise-Assist orbit mode (`sc_assist`) is provided as a documented
-FRAMEWORK. The intended orbital sequence is:
-  1. Lock the arrival star ahead with `TargetNextRouteSystem` (only present
-     bind for targeting — `SelectTarget` does NOT exist in the ED-AFK 4.2
-     preset, so we use `TargetNextRouteSystem` to advance the lock forward
-     to the next route entry, which at arrival is the star dead ahead).
-  2. Throttle into the blue zone via `SetSpeed75` (the Supercruise-Assist
-     engage speed when the in-game option is set to throttle-mode).
-  3. Wait a bounded period for the orbit to stabilise.
-  4. Press `TargetNextRouteSystem` again to advance to the next route star.
-NOTE: this sequence CANNOT be fully validated without a live arrival. It
-requires:
-  - Supercruise Assist module fitted.
-  - In-game option "Supercruise Assist" = engage on throttle into blue zone.
-  - Hyperspace Dethrottle module (keeps SC throttle from spiking to 100%).
-The mode is intentionally gated behind `escape_mode = "sc_assist"` in config.
+FRAMEWORK below; it is not live-validated and is gated behind config.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
+
+
+# ---------------------------------------------------------------------------
+# Tuned constants (documented in the module docstring above)
+# ---------------------------------------------------------------------------
+
+# A star is "present" in the top-2/3 region when the bright fraction exceeds
+# this. 4x the ~0.005 clear-sky floor — high enough to ignore HUD glints, low
+# enough that any real star disc trips it.
+STAR_PRESENT_FRAC = 0.02
+
+# The star is "completely gone" when the bright fraction falls to (≈) clear-sky.
+# Far tighter than the old 0.05 gate, which left a bright crescent in view.
+STAR_GONE_FRAC = 0.005
+
+# Per-press pitch hold. HARD and SUSTAINED — "like you don't want to die".
+HARD_PITCH_HOLD = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -69,17 +96,35 @@ def sun_brightness(frame: Any, thresh: int = 125) -> float:
     return float(bright) / gray.size
 
 
+def star_present(
+    frame: Any,
+    *,
+    bright_thresh: int = 125,
+    present_frac: float = STAR_PRESENT_FRAC,
+) -> bool:
+    """Return True if a bright star is present in ``frame`` (the top-2/3 region).
+
+    ``frame`` MUST already be the top-2/3 capture (cockpit excluded by the sun
+    grabber), so a True here means "there is a star in the sky ahead", not
+    "the dashboard is lit". We compare the bright-pixel fraction against
+    ``present_frac`` (default 0.02 — 4x the ~0.005 clear-sky floor on this
+    machine). This is the CHECK that lets us make no assumption about facing a
+    star: clear sky returns False and the caller skips the pitch entirely.
+    """
+    return sun_brightness(frame, bright_thresh) >= present_frac
+
+
 # ---------------------------------------------------------------------------
-# sun_avoid outcome + loop
+# pitch-to-clear outcome + loop
 # ---------------------------------------------------------------------------
 
 @dataclass
 class SunAvoidOutcome:
-    """Result of a sun_avoid run."""
+    """Result of a sun_avoid (pitch-to-clear) run."""
     cleared: bool
     iterations: int
     final_frac: float
-    reason: str   # "cleared" | "timeout" | "max_iters"
+    reason: str   # "cleared" | "timeout" | "max_iters" | "not_present"
 
 
 @dataclass
@@ -92,27 +137,36 @@ class FlyClearOutcome:
 
 def sun_avoid(
     sender: Any,
-    capture_center: Callable[[], Any],
+    capture_top: Callable[[], Any],
     *,
     bright_thresh: int = 125,
-    clear_frac: float = 0.05,
-    pitch_hold: float = 0.3,
+    clear_frac: float = STAR_GONE_FRAC,
+    pitch_hold: float = HARD_PITCH_HOLD,
     settle_s: float = 0.15,
     max_iters: int = 30,
-    timeout_s: float = 8.0,
+    timeout_s: float = 20.0,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> SunAvoidOutcome:
-    """Pitch up until the bright star clears the center of the screen.
+    """Pitch UP HARD until the bright star is COMPLETELY gone from the frame.
 
-    Algorithm (EDAPGui-derived):
-    1. Grab the center screen region.
+    ``capture_top`` returns the TOP 2/3 of the screen (cockpit excluded). The
+    loop is deliberately aggressive — "pitch like you don't want to die":
+
+    1. Grab the top-2/3 region.
     2. Measure the bright-pixel fraction.
-    3. If fraction < clear_frac → done (star has cleared).
-    4. Else press PitchUpButton for pitch_hold seconds, wait settle_s, repeat.
-    5. Abort on timeout_s elapsed or after max_iters — whichever comes first.
+    3. If fraction < clear_frac (default STAR_GONE_FRAC = 0.005, i.e. the sky is
+       essentially dark) → done, the star has fully cleared.
+    4. Else press PitchUpButton for ``pitch_hold`` seconds (default 1.0 s — a
+       long, sustained press that sweeps a large arc), wait ``settle_s``, repeat.
+    5. Failsafe: abort on ``timeout_s`` elapsed or after ``max_iters`` presses,
+       whichever comes first, so a huge/close star can never hang the bot.
 
-    Everything is injected (sender, capture_center, clock, sleeper) for full
+    The old behaviour used 0.3 s taps and a 0.05 clear gate — that nibbled a
+    couple degrees and called a still-bright frame "clear". The hard hold + the
+    tight 0.005 gate is what actually drives the star ~90° out of view.
+
+    Everything is injected (sender, capture_top, clock, sleeper) for full
     unit-test coverage with no real game or real sleep.
     """
     start = clock()
@@ -123,13 +177,14 @@ def sun_avoid(
             return SunAvoidOutcome(
                 cleared=False, iterations=i, final_frac=last_frac, reason="timeout"
             )
-        frame = capture_center()
+        frame = capture_top()
         frac = sun_brightness(frame, bright_thresh)
         last_frac = frac
         if frac < clear_frac:
             return SunAvoidOutcome(
                 cleared=True, iterations=i, final_frac=frac, reason="cleared"
             )
+        # HARD, SUSTAINED pitch — drive the star out, don't nibble at it.
         sender.press("PitchUpButton", hold=pitch_hold)
         sleeper(settle_s)
 
@@ -144,28 +199,28 @@ def sun_avoid(
 
 def fly_clear(
     sender: Any,
-    capture_center: Callable[[], Any],
+    capture_top: Callable[[], Any],
     *,
     throttle: str = "SetSpeed100",
     bright_thresh: int = 125,
     reenter_frac: float = 0.20,
-    pitch_hold: float = 0.3,
+    pitch_hold: float = HARD_PITCH_HOLD,
     clear_s: float = 8.0,
     step_s: float = 0.5,
+    max_iters: int = 1000,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> FlyClearOutcome:
     """Throttle AWAY from the star to gain separation.
 
-    Precondition: sun_avoid has already pitched the nose off the star, so
-    "forward" now points away from it. We set full throttle and fly for
-    ``clear_s`` seconds. If the star creeps back into the center (brightness
-    rises above ``reenter_frac``) we pitch up again to push it back down —
-    defence against drifting back toward the star.
+    Precondition: the pitch-to-clear has already swept the nose off the star,
+    so "forward" now points away from it. We set full throttle and fly for
+    ``clear_s`` seconds. If the star creeps back into the top-2/3 region
+    (brightness rises above ``reenter_frac``) we pitch up again to push it back
+    down — defence against drifting back toward the star.
 
-    This is the step that was MISSING: without flying clear first, aligning to
-    the (behind-star) target re-points the nose at the star and the next
-    throttle drives straight into it.
+    Without this step, aligning to the (behind-star) target re-points the nose
+    at the star and the next throttle drives straight into it.
     """
     # Guard: if step_s > clear_s the first sleep would overshoot the deadline.
     # Clamp so each sleep is at most the total window.
@@ -176,11 +231,14 @@ def fly_clear(
     repitches = 0
     last_frac = 0.0
     elapsed_s = 0.0
-    while True:
+    # ``max_iters`` is a failsafe: with an injected non-advancing clock (unit
+    # tests) the time-based deadline never trips, so cap the loop count too.
+    # On real hardware the time deadline fires long before this cap.
+    for _ in range(max_iters):
         elapsed_s = clock() - start
         if elapsed_s >= clear_s:
             break
-        frac = sun_brightness(capture_center(), bright_thresh)
+        frac = sun_brightness(capture_top(), bright_thresh)
         last_frac = frac
         if frac > reenter_frac:
             # Star is creeping back into view — pitch further away.
@@ -202,20 +260,29 @@ def fly_clear(
 
 @dataclass
 class SensedEscapeOutcome:
-    """Result of a perform_sensed_escape run."""
+    """Result of a perform_sensed_escape run — one field per phase.
+
+    star_detected: result of the CHECK (None if no capture was available).
+    sun_avoid:     the pitch-to-clear outcome (None if no star was present, so
+                   no pitch was needed). The orchestrator records this.
+    accelerated:   True once "SetSpeed100" was pressed to move away from the star.
+    aligned:       align_to_target's .aligned (None if no compass wiring).
+    """
     mode: str
     sun_avoid: Optional[SunAvoidOutcome]
     aligned: Optional[bool]
     star_class: str
     notes: str
+    star_detected: Optional[bool] = None
+    accelerated: bool = False
     fly_clear: Optional[FlyClearOutcome] = None
 
 
 def perform_sensed_escape(
-    fsd_jump: Any,
-    sender: Any,
+    fsd_jump: Any = None,
+    sender: Any = None,
     *,
-    mode: str,
+    mode: str = "brightness",
     compass_reader: Optional[Any] = None,
     compass_capture: Optional[Callable[[], Any]] = None,
     sun_capture: Optional[Callable[[], Any]] = None,
@@ -223,111 +290,133 @@ def perform_sensed_escape(
     align_kwargs: Optional[dict] = None,
     sleeper: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-    # sun_avoid tunables (forwarded when mode == "brightness")
+    # pitch-to-clear tunables (forwarded when mode == "brightness")
     bright_thresh: int = 125,
-    clear_frac: float = 0.05,
-    pitch_hold: float = 0.3,
+    present_frac: float = STAR_PRESENT_FRAC,
+    clear_frac: float = STAR_GONE_FRAC,
+    pitch_hold: float = HARD_PITCH_HOLD,
     settle_s: float = 0.15,
     max_iters: int = 30,
-    timeout_s: float = 8.0,
-    # fly_clear tunables (the step that gains distance from the star)
+    timeout_s: float = 20.0,
+    # acceleration / fly-clear tunables
     clear_throttle: str = "SetSpeed100",
     clear_s: float = 8.0,
     clear_reenter_frac: float = 0.20,
     clear_step_s: float = 0.5,
 ) -> SensedEscapeOutcome:
-    """Execute a sensed post-FSDJump star escape.
+    """Execute a sensed star escape — at arrival OR at startup.
+
+    Order of operations (the spec):
+      1. CHECK the top-2/3 region for a bright star (``star_present``).
+      2. If a star IS present → pitch UP HARD and SUSTAINED until it is
+         COMPLETELY gone (``sun_avoid`` with the tight STAR_GONE_FRAC gate).
+         If no star → skip the pitch entirely.
+      3. ACCELERATE: press ``clear_throttle`` ("SetSpeed100") so the star moves
+         away. ``fly_clear`` issues the throttle and (optionally) holds it for
+         ``clear_s`` seconds, re-pitching if the star creeps back into view.
+      4. Orient toward the target via ``align_to_target`` (from align.py).
+
+    This makes NO assumption about facing a star, so it is safe to run at
+    STARTUP as well as post-jump. ``fsd_jump`` is accepted for call-site
+    compatibility but is NOT inspected — it may be None.
 
     Parameters
     ----------
     fsd_jump:
-        The FSDJump event (used only for context — not inspected here).
+        Optional FSDJump event. Ignored — kept so the orchestrator's call site
+        is unchanged and so the escape can run at startup with no event.
     sender:
         Key dispatcher. Must support .press(action, hold=...).
     mode:
-        "brightness" — sensed sun-avoid loop (default, validated).
-        "sc_assist" — Supercruise-Assist orbital framework (not live-validated;
-                       see module docstring for prerequisites).
-    compass_reader:
-        CompassReader instance. When provided (and mode == "brightness"), an
-        align_to_target pass is run after sun_avoid to orient the ship toward
-        the next jump target — a first-pass alignment before the engage-gate
-        alignment in the orchestrator.
-    compass_capture:
-        Callable returning a BGR frame of the compass region.
+        "brightness" — sensed check + hard pitch + accelerate + align (default).
+        "sc_assist"  — Supercruise-Assist orbital framework (not live-validated).
+    compass_reader / compass_capture:
+        When both are provided (mode "brightness"), align_to_target is run after
+        acceleration to orient the ship toward the next jump target.
     sun_capture:
-        Callable returning a BGR frame of the center screen region (sun probe).
+        Callable returning the TOP-2/3 screen frame (cockpit excluded) used for
+        both the presence CHECK and the pitch-to-clear loop.
     cached_star_class:
-        Star class of the arrival star (from StartJump or FSDTarget).
+        Star class of the arrival star (context only; reported in the outcome).
     align_kwargs:
         Extra kwargs forwarded to align_to_target (align_tol, gain, …).
+    present_frac / clear_frac / bright_thresh / pitch_hold / settle_s /
+    max_iters / timeout_s:
+        Pitch-to-clear tunables (see module docstring for chosen values).
     clear_throttle / clear_s / clear_reenter_frac / clear_step_s:
-        fly_clear tunables. After the star clears center we throttle away from
-        it for ``clear_s`` seconds to gain separation; the ship stays at this
-        throttle through the turn-to-target and into the next jump (no stop).
+        Acceleration / fly-clear tunables. ``clear_throttle`` is the accelerate
+        key; after pressing it the ship holds that speed through the turn and
+        into the next jump (no stop).
     sleeper / clock:
         Injected for testability.
 
     Returns
     -------
-    SensedEscapeOutcome describing what happened.
+    SensedEscapeOutcome describing each phase.
     """
     star_class = cached_star_class or "K"
 
     # -----------------------------------------------------------------------
-    # mode == "brightness": sensed sun-avoid + optional compass align
+    # mode == "brightness": CHECK → (hard pitch if star) → accelerate → align
     # -----------------------------------------------------------------------
     if mode == "brightness":
         if sun_capture is None:
-            # Degrade gracefully — no capture available.
+            # Degrade gracefully — no capture means we cannot CHECK; do nothing
+            # rather than blindly pitch (which is the bug we are fixing).
             return SensedEscapeOutcome(
                 mode=mode,
                 sun_avoid=None,
                 aligned=None,
                 star_class=star_class,
-                notes="sun_capture not provided; skipped sun_avoid",
+                star_detected=None,
+                accelerated=False,
+                notes="sun_capture not provided; skipped check/pitch/escape",
             )
 
-        # 1. Pitch the nose off the star until it clears the center of view.
-        avoid_result = sun_avoid(
-            sender,
-            sun_capture,
+        # 1. CHECK: is there actually a star in the top-2/3 region?
+        detected = star_present(
+            sun_capture(),
             bright_thresh=bright_thresh,
-            clear_frac=clear_frac,
-            pitch_hold=pitch_hold,
-            settle_s=settle_s,
-            max_iters=max_iters,
-            timeout_s=timeout_s,
-            clock=clock,
-            sleeper=sleeper,
+            present_frac=present_frac,
         )
 
-        # 2. Fly AWAY from the star to gain separation. THIS is the step that
-        #    was missing: the next target sits behind the star, so aligning to
-        #    it immediately would point the nose back at the star and the
-        #    throttle would drive into it. Flying clear first means that when we
-        #    later turn toward the target the star is far away and angularly
-        #    small, so the FSD-charge travel never reaches it.
-        #
-        #    GUARD: only fly clear if the star actually left the center. If
-        #    sun_avoid timed out (huge/close star, weak pitch authority), the
-        #    nose is still ON the star — throttling forward now is the original
-        #    slam bug. Bail out instead, leaving throttle untouched (0 from the
-        #    arrival dethrottle), and report it so the run can be inspected.
-        if not avoid_result.cleared:
-            return SensedEscapeOutcome(
-                mode=mode,
-                fly_clear=None,
-                sun_avoid=avoid_result,
-                aligned=None,
-                star_class=star_class,
-                notes=(
-                    "sun NOT cleared (reason="
-                    f"{avoid_result.reason}); skipped fly_clear+align to avoid "
-                    "throttling into the star"
-                ),
+        # 2. If present, pitch UP HARD until it is COMPLETELY gone. If the loop
+        #    fails to clear it (huge/close star, weak pitch authority), bail
+        #    BEFORE accelerating — throttling into a star still dead ahead is
+        #    the original slam bug.
+        avoid_result: Optional[SunAvoidOutcome] = None
+        if detected:
+            avoid_result = sun_avoid(
+                sender,
+                sun_capture,
+                bright_thresh=bright_thresh,
+                clear_frac=clear_frac,
+                pitch_hold=pitch_hold,
+                settle_s=settle_s,
+                max_iters=max_iters,
+                timeout_s=timeout_s,
+                clock=clock,
+                sleeper=sleeper,
             )
+            if not avoid_result.cleared:
+                return SensedEscapeOutcome(
+                    mode=mode,
+                    sun_avoid=avoid_result,
+                    aligned=None,
+                    star_class=star_class,
+                    star_detected=True,
+                    accelerated=False,
+                    fly_clear=None,
+                    notes=(
+                        "star detected but NOT cleared (reason="
+                        f"{avoid_result.reason}); skipped accelerate+align to "
+                        "avoid throttling into the star"
+                    ),
+                )
 
+        # 3. ACCELERATE: press SetSpeed100 so the star moves away. fly_clear
+        #    issues the throttle and (if clear_s > 0) holds it, re-pitching if
+        #    the star drifts back into view.
         clear_result = fly_clear(
             sender,
             sun_capture,
@@ -341,11 +430,9 @@ def perform_sensed_escape(
             sleeper=sleeper,
         )
 
-        # 3. Stay at full throttle and turn toward the next target. In
-        #    supercruise the ship turns while moving, so there's no reason to
-        #    stop first — we hold the speed from fly_clear straight through the
-        #    turn and into the next jump. Alignment is safe now: the star is far
-        #    behind/below after flying clear.
+        # 4. Orient toward the next jump target. align_to_target is validated;
+        #    we call it, we do NOT reimplement it. Safe now: the star is far
+        #    behind/below after the pitch + acceleration.
         aligned: Optional[bool] = None
         if compass_reader is not None and compass_capture is not None:
             from .align import align_to_target  # deferred: avoids circular if any
@@ -361,16 +448,20 @@ def perform_sensed_escape(
             )
             aligned = outcome.aligned
 
+        if detected:
+            notes = "star detected; pitched clear, accelerated, then aligned"
+        else:
+            notes = "no star detected; skipped pitch, accelerated, then aligned"
+
         return SensedEscapeOutcome(
             mode=mode,
-            fly_clear=clear_result,
             sun_avoid=avoid_result,
             aligned=aligned,
             star_class=star_class,
-            notes="brightness sensed escape" + (
-                "" if avoid_result.cleared
-                else f"; sun NOT cleared (reason={avoid_result.reason})"
-            ),
+            star_detected=detected,
+            accelerated=True,
+            fly_clear=clear_result,
+            notes=notes,
         )
 
     # -----------------------------------------------------------------------
