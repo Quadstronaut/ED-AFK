@@ -1273,38 +1273,38 @@ Spec order (law — confirmed verbally by the developer):
 1. Game boots → we're in normal space (every time).
 2. User plots the course and runs `launch.ps1`.
 3. Detect realspace vs. supercruise (`Status.Flags` bit 4).
-4. **Honk first** — fire `ExplorationFSSDiscoveryScan`. It takes a few seconds;
-   start it before anything else. (Wiring: the honk consumes the live journal
-   stream, which `tick_status` cannot — so the first startup tick *arms* the
-   honk and returns without escaping; `run_live` fires it and marks it done; a
-   later tick runs the escape. Same combat-mode fallback as a jump arrival.)
+4. **Honk first** — fire `ExplorationFSSDiscoveryScan` as a plain ~6 s key hold.
+   Honking is independent of the ship's motion and the FSD (you can hold it while
+   moving and while charging), so it is NOT wired into the journal stream or any
+   confirmation gating — it is just a keypress, fired once up front. The
+   `FSSDiscoveryScan` event still flows through normal dispatch and is recorded.
 5. **Look for a star** — brightness CHECK of the top-2/3 region (`star_present`).
 6. **No star (route unobstructed):** supercruise is **not** required. Target the
    next hop (`TargetNextRouteSystem`) and orient (compass aligner). The FSD
    accepts the jump straight from normal space; the jump itself fires from the
    engage gate (§9.1). Done.
-7. **Star in the way:** supercruise is **REQUIRED** — in normal space full
-   throttle barely moves you relative to the star, so it never recedes ("the
-   star won't move otherwise"). This is non-negotiable game physics, not a
-   best-effort step:
-   1. `SetSpeed100` (normal-space throttle) to engage the FSD; no-delay engage.
-   2. `Supercruise` (engage).
-   3. **MONITOR THE LOGS** for SC entry (`Status` supercruise flag, polled). If
-      it never logs, the engage **FAILED** — we're still in normal space:
-      **bail** without pitch/throttle/target/orient and **retry** the whole
-      escape on the next tick. No proceeding best-effort.
-   4. **Now in SC:** pitch UP HARD until the star is off-screen (`sun_avoid`).
-      Vision is the **one** tolerated best-effort here — proceed even if it only
-      partly clears.
-   5. `SetSpeed100` **again** — SC throttle is a **separate axis** from
-      normal-space throttle, so this is what actually flies the ship clear.
-   6. Wait ~7 s for the star to recede.
-   7. Target the next hop, then orient.
+7. **Star in the way:** PITCH IT OFF-SCREEN **FIRST** — always. You never throttle
+   while pointed at the star (that flies you into it). Then deal with supercruise:
+   1. **Pitch UP HARD** until the star is off the top-2/3 region (`sun_avoid`).
+      If the pitch can't clear it, **BAIL** — do **not** throttle (the slam) — and
+      retry the pitch next tick. (Vision is the one tolerated best-effort, but a
+      not-cleared result still blocks the throttle.)
+   2. **THEN supercruise** — but **only if not already in SC**:
+      - *In normal space:* `SetSpeed100` (the nose is now off the star, so this
+        flies you AWAY) → `Supercruise` (engage) → **MONITOR THE LOGS** for SC
+        entry; if it never logs the engage **FAILED** → bail + retry.
+      - *Already in supercruise:* skip the engage entirely — you don't try to
+        enter SC when you're already in it.
+   3. `SetSpeed100` to fly clear (SC throttle is a separate axis), wait ~7 s for
+      the star to recede.
+   4. Target the next hop, then orient.
 8. Loop back to "look for a star" (next arrival, via §9.1/§9.2).
 
-> **Note:** the supercruise-startup case (loaded already in SC) uses the §9.2
-> brightness escape (`perform_sensed_escape`) instead — pitch off, accelerate,
-> align. Tonight's validated target is the **realspace** path above.
+> **One routine, both cases** (`perform_realspace_escape`, `already_in_supercruise`
+> flag): pitch-first means the star is dodged whether the bot reads realspace or
+> supercruise; the only difference is whether it has to engage SC. The engage gate
+> (§9.1) is held shut until this clears, so the bot never jumps while still on the
+> star.
 
 ### 9.3 Req 2 — Refuel on KGBFOAM
 
