@@ -1260,6 +1260,52 @@ exceeds 1.0 we deploy heatsink immediately and trigger a wider escape
 (boost + re-pitch). Every escape's `Heat_max` is logged so we can refine
 the per-class pitch table from real data.
 
+### 9.2.5 Startup escape (realspace) — get off the star on launch
+
+A **fresh game load** has no `FSDJump`/`SupercruiseExit` to trigger §9.2, yet
+the ship sits in normal space at the arrival star. This is its **own
+procedure** (`executor/escape.py::perform_realspace_escape`), driven once from
+the first flyable `Status` tick — it is **not** smack recovery (§9.8) and waits
+no FSD cooldown. It runs **only after the system honk has fired** (below).
+
+Spec order (law — confirmed verbally by the developer):
+
+1. Game boots → we're in normal space (every time).
+2. User plots the course and runs `launch.ps1`.
+3. Detect realspace vs. supercruise (`Status.Flags` bit 4).
+4. **Honk first** — fire `ExplorationFSSDiscoveryScan`. It takes a few seconds;
+   start it before anything else. (Wiring: the honk consumes the live journal
+   stream, which `tick_status` cannot — so the first startup tick *arms* the
+   honk and returns without escaping; `run_live` fires it and marks it done; a
+   later tick runs the escape. Same combat-mode fallback as a jump arrival.)
+5. **Look for a star** — brightness CHECK of the top-2/3 region (`star_present`).
+6. **No star (route unobstructed):** supercruise is **not** required. Target the
+   next hop (`TargetNextRouteSystem`) and orient (compass aligner). The FSD
+   accepts the jump straight from normal space; the jump itself fires from the
+   engage gate (§9.1). Done.
+7. **Star in the way:** supercruise is **REQUIRED** — in normal space full
+   throttle barely moves you relative to the star, so it never recedes ("the
+   star won't move otherwise"). This is non-negotiable game physics, not a
+   best-effort step:
+   1. `SetSpeed100` (normal-space throttle) to engage the FSD; no-delay engage.
+   2. `Supercruise` (engage).
+   3. **MONITOR THE LOGS** for SC entry (`Status` supercruise flag, polled). If
+      it never logs, the engage **FAILED** — we're still in normal space:
+      **bail** without pitch/throttle/target/orient and **retry** the whole
+      escape on the next tick. No proceeding best-effort.
+   4. **Now in SC:** pitch UP HARD until the star is off-screen (`sun_avoid`).
+      Vision is the **one** tolerated best-effort here — proceed even if it only
+      partly clears.
+   5. `SetSpeed100` **again** — SC throttle is a **separate axis** from
+      normal-space throttle, so this is what actually flies the ship clear.
+   6. Wait ~7 s for the star to recede.
+   7. Target the next hop, then orient.
+8. Loop back to "look for a star" (next arrival, via §9.1/§9.2).
+
+> **Note:** the supercruise-startup case (loaded already in SC) uses the §9.2
+> brightness escape (`perform_sensed_escape`) instead — pitch off, accelerate,
+> align. Tonight's validated target is the **realspace** path above.
+
 ### 9.3 Req 2 — Refuel on KGBFOAM
 
 #### 9.3.1 Trigger
