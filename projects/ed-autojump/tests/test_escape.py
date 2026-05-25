@@ -557,6 +557,57 @@ class TestPerformRealspaceEscape:
         assert "Supercruise" not in sender.actions()
         assert "TargetNextRouteSystem" not in sender.actions()
 
+    def test_second_throttle_waits_for_logged_sc_entry(self):
+        """The crux: the SECOND SetSpeed100 must come only AFTER the log-backed
+        in_supercruise check flips True. We engage, the check is False for two
+        polls then True; the second throttle must land after that, and the
+        Supercruise engage must precede the SC-entry poll resolving."""
+        # in_supercruise: False, False, True (entered on the 3rd check).
+        sc_states = iter([False, False, True])
+        last = [False]
+
+        def _in_sc():
+            try:
+                last[0] = next(sc_states)
+            except StopIteration:
+                pass
+            return last[0]
+
+        sender = _CountingSender()
+        out = perform_realspace_escape(
+            sender,
+            lambda: _make_frame(10, 10, 0),  # no star -> straight to engage
+            in_supercruise=_in_sc,
+            sc_entry_timeout_s=100.0,
+            sc_entry_poll_s=0.1,
+            post_sc_wait_s=0.0,
+            sleeper=lambda _: None,
+            clock=_FixedClock(start=0.0, step=0.0),
+        )
+        assert out.sc_entered is True
+        # Two SetSpeed100 presses (engage throttle + fly-away throttle).
+        assert sender.actions().count("SetSpeed100") == 2
+        # Engage precedes the second throttle.
+        acts = sender.actions()
+        assert acts.index("Supercruise") < len(acts) - 1 - acts[::-1].index("SetSpeed100")
+
+    def test_sc_entry_timeout_still_proceeds_best_effort(self):
+        """If SC entry never logs within the window, we still press the second
+        throttle (best-effort) and record sc_entered=False — visible failure."""
+        sender = _CountingSender()
+        out = perform_realspace_escape(
+            sender,
+            lambda: _make_frame(10, 10, 0),
+            in_supercruise=lambda: False,  # never enters SC
+            sc_entry_timeout_s=0.3,
+            sc_entry_poll_s=0.1,
+            post_sc_wait_s=0.0,
+            sleeper=lambda _: None,
+            clock=_FixedClock(start=0.0, step=0.1),  # advances past the timeout
+        )
+        assert out.sc_entered is False
+        assert sender.actions().count("SetSpeed100") == 2
+
     def test_no_star_skips_pitch_still_engages(self):
         """No star detected: skip the pitch, but STILL throttle->engage->throttle
         and target (we're in realspace and must get into SC to make progress)."""

@@ -553,6 +553,37 @@ FULL_THROTTLE = "SetSpeed100"
 ROUTE_TARGET = "TargetNextRouteSystem"
 
 
+def wait_for_supercruise(
+    in_supercruise: Optional[Callable[[], bool]],
+    *,
+    timeout_s: float = 30.0,
+    poll_s: float = 0.5,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> Optional[bool]:
+    """Poll the injected, log-backed supercruise check until True or timeout.
+
+    This is the crux of the double-throttle: after pressing the FSD engage you
+    must NOT throttle up again on a fixed timer — that races the transition. You
+    MONITOR THE LOGS (Status.json's supercruise flag) and only throttle up once
+    the ship has actually ENTERED supercruise, because SC throttle is a separate
+    axis from normal-space throttle.
+
+    Returns True once entered, False on timeout, or None when no check is wired
+    (degraded — the caller cannot sense SC entry and proceeds best-effort).
+    """
+    if in_supercruise is None:
+        return None
+    if in_supercruise():
+        return True
+    deadline = clock() + timeout_s
+    while clock() < deadline:
+        sleeper(poll_s)
+        if in_supercruise():
+            return True
+    return False
+
+
 @dataclass
 class RealspaceEscapeOutcome:
     """Result of a perform_realspace_escape run — one field per phase.
@@ -560,12 +591,15 @@ class RealspaceEscapeOutcome:
     star_detected: result of the CHECK (None if no capture was available).
     sun_avoid:     pitch-to-clear outcome (None if no star was present).
     engaged_sc:    True once supercruise was engaged (throttle->engage->throttle).
+    sc_entered:    log-confirmed SC entry between the two throttle presses
+                   (True entered, False timed out, None no check wired).
     aligned:       align_to_target's .aligned (None if no compass wiring).
     notes:         human-readable summary of what ran / was skipped.
     """
     star_detected: Optional[bool]
     sun_avoid: Optional[SunAvoidOutcome]
     engaged_sc: bool
+    sc_entered: Optional[bool]
     aligned: Optional[bool]
     notes: str
 
@@ -574,6 +608,9 @@ def perform_realspace_escape(
     sender: Any,
     sun_capture: Callable[[], Any],
     *,
+    in_supercruise: Optional[Callable[[], bool]] = None,
+    sc_entry_timeout_s: float = 30.0,
+    sc_entry_poll_s: float = 0.5,
     compass_reader: Optional[Any] = None,
     compass_capture: Optional[Callable[[], Any]] = None,
     align_kwargs: Optional[dict] = None,
@@ -592,7 +629,12 @@ def perform_realspace_escape(
     """Get off the star from NORMAL space at startup (see the section header).
 
     Order: CHECK star -> pitch clear (if present) -> full throttle -> engage SC
-    -> full throttle AGAIN -> wait post_sc_wait_s -> target next -> orient.
+    -> MONITOR LOGS for SC entry -> full throttle AGAIN -> wait post_sc_wait_s
+    -> target next -> orient.
+
+    The second throttle is gated on ``in_supercruise`` (the log-backed SC-entry
+    check), NOT a fixed timer: SC throttle is a separate axis, so throttling up
+    only flies us clear once the ship has actually entered supercruise.
 
     If a star is detected but the pitch loop fails to clear it, we BAIL before
     engaging — engaging supercruise with the star still dead ahead drives the
@@ -626,6 +668,7 @@ def perform_realspace_escape(
                 star_detected=True,
                 sun_avoid=avoid_result,
                 engaged_sc=False,
+                sc_entered=None,
                 aligned=None,
                 notes=(
                     "star detected but NOT cleared (reason="
@@ -633,13 +676,25 @@ def perform_realspace_escape(
                 ),
             )
 
-    # 3-4. Full throttle, engage supercruise, full throttle AGAIN. The second
-    #      throttle is what flies us clear — SC throttle is a separate axis.
+    # 3. Full throttle to ENGAGE, then engage SC. NO delay between these two —
+    #    you can fire the FSD immediately after speeding up.
     sender.press(full_throttle, hold=0.05)   # normal-space throttle, to engage SC
     sender.press(SC_ENGAGE, hold=0.05)
-    sender.press(full_throttle, hold=0.05)   # SC throttle (separate axis), to fly away
 
-    # 5. Let the star recede.
+    # 4. MONITOR THE LOGS for supercruise entry. Do NOT throttle up again on a
+    #    fixed timer — that races the transition. SC throttle is a separate axis,
+    #    so only once the ship has ENTERED supercruise does a throttle-up fly us
+    #    clear of the star.
+    sc_entered = wait_for_supercruise(
+        in_supercruise,
+        timeout_s=sc_entry_timeout_s,
+        poll_s=sc_entry_poll_s,
+        clock=clock,
+        sleeper=sleeper,
+    )
+    sender.press(full_throttle, hold=0.05)   # SC throttle (separate axis), fly away
+
+    # 5. Let the star recede before turning.
     sleeper(post_sc_wait_s)
 
     # 6. Target the next hop, then orient toward it (validated aligner; called,
@@ -663,11 +718,15 @@ def perform_realspace_escape(
     notes = (
         "star detected; pitched clear, " if detected
         else "no star detected; "
-    ) + "full throttle -> engaged SC -> full SC throttle -> waited, targeted, aligned"
+    ) + (
+        "full throttle -> engaged SC -> waited for SC entry "
+        f"(entered={sc_entered}) -> full SC throttle -> waited, targeted, aligned"
+    )
     return RealspaceEscapeOutcome(
         star_detected=detected,
         sun_avoid=avoid_result,
         engaged_sc=True,
+        sc_entered=sc_entered,
         aligned=aligned,
         notes=notes,
     )

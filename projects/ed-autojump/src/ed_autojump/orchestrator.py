@@ -152,6 +152,25 @@ class Orchestrator:
             return self.state.status.heat
         return None
 
+    def _poll_in_supercruise(self) -> bool:
+        """Log-backed 'are we in supercruise yet?' check for the escape's second
+        throttle. The escape blocks the live loop, so the per-tick Status poll is
+        NOT running — we must re-poll Status.json HERE to see the SC-entry flag
+        flip. poll() is mtime-gated (returns None when unchanged) and caches the
+        last value on the reader, so we poll to refresh then read `.current`."""
+        if self.status_reader is not None:
+            try:
+                fresh = self.status_reader.poll()
+            except Exception:  # noqa: BLE001 — never let a read error wedge the escape
+                fresh = None
+            if fresh is not None:
+                self.state.apply_status(fresh)
+            cur = getattr(self.status_reader, "current", None)
+            if cur is not None:
+                return cur.in_supercruise
+        cur = self.state.status
+        return bool(cur is not None and cur.in_supercruise)
+
     def tick_navroute(self) -> None:
         """Pull NavRoute.json once and apply to state. No-op without reader."""
         if self.navroute_reader is None:
@@ -268,6 +287,7 @@ class Orchestrator:
         outcome: RealspaceEscapeOutcome = perform_realspace_escape(
             self.sender,
             self.sun_grab,
+            in_supercruise=self._poll_in_supercruise,
             compass_reader=self.compass_reader,
             compass_capture=self.frame_grabber,
             align_kwargs=self._align_kwargs(),
@@ -286,6 +306,7 @@ class Orchestrator:
             "star_detected": outcome.star_detected,
             "sun_cleared": outcome.sun_avoid.cleared if outcome.sun_avoid else None,
             "engaged_sc": outcome.engaged_sc,
+            "sc_entered": outcome.sc_entered,
             "aligned": outcome.aligned,
             "notes": outcome.notes,
         })
@@ -736,6 +757,7 @@ class Orchestrator:
             return
         outcome: SmackRecoveryOutcome = perform_smack_recovery(
             self.sender,
+            in_supercruise=self._poll_in_supercruise,
             compass_reader=self.compass_reader,
             compass_capture=self.frame_grabber,
             align_kwargs=self._align_kwargs(),
@@ -749,6 +771,7 @@ class Orchestrator:
             "star_cleared": outcome.star_cleared,
             "cooldown_waited_s": outcome.cooldown_waited_s,
             "triggered_fsd": outcome.triggered_fsd,
+            "sc_entered": outcome.sc_entered,
             "aligned": outcome.aligned,
             "notes": outcome.notes,
         })
