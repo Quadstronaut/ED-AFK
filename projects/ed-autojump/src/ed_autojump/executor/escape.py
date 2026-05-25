@@ -296,6 +296,26 @@ def perform_sensed_escape(
         #    throttle would drive into it. Flying clear first means that when we
         #    later turn toward the target the star is far away and angularly
         #    small, so the FSD-charge travel never reaches it.
+        #
+        #    GUARD: only fly clear if the star actually left the center. If
+        #    sun_avoid timed out (huge/close star, weak pitch authority), the
+        #    nose is still ON the star — throttling forward now is the original
+        #    slam bug. Bail out instead, leaving throttle untouched (0 from the
+        #    arrival dethrottle), and report it so the run can be inspected.
+        if not avoid_result.cleared:
+            return SensedEscapeOutcome(
+                mode=mode,
+                fly_clear=None,
+                sun_avoid=avoid_result,
+                aligned=None,
+                star_class=star_class,
+                notes=(
+                    "sun NOT cleared (reason="
+                    f"{avoid_result.reason}); skipped fly_clear+align to avoid "
+                    "throttling into the star"
+                ),
+            )
+
         clear_result = fly_clear(
             sender,
             sun_capture,

@@ -135,33 +135,40 @@ class GdiGrabber:
 
         hdesktop = user32.GetDesktopWindow()
         hwnd_dc  = user32.GetWindowDC(hdesktop)
-        mfc_dc   = gdi32.CreateCompatibleDC(hwnd_dc)
-        bmp      = gdi32.CreateCompatibleBitmap(hwnd_dc, w, h)
-        gdi32.SelectObject(mfc_dc, bmp)
-        gdi32.BitBlt(mfc_dc, 0, 0, w, h, hwnd_dc, src_x, src_y, _SRCCOPY)
+        mfc_dc   = None
+        bmp      = None
+        # try/finally so a raise mid-capture (numpy, GetDIBits) can never leak
+        # GDI handles — at ~1 Hz for hours that would exhaust the per-process
+        # GDI object limit and silently corrupt subsequent grabs.
+        try:
+            mfc_dc = gdi32.CreateCompatibleDC(hwnd_dc)
+            bmp    = gdi32.CreateCompatibleBitmap(hwnd_dc, w, h)
+            gdi32.SelectObject(mfc_dc, bmp)
+            gdi32.BitBlt(mfc_dc, 0, 0, w, h, hwnd_dc, src_x, src_y, _SRCCOPY)
 
-        bmi = _BMIH()
-        bmi.biSize     = ctypes.sizeof(_BMIH)
-        bmi.biWidth    = w
-        bmi.biHeight   = -h   # negative = top-down scanline order
-        bmi.biPlanes   = 1
-        bmi.biBitCount = 32   # BGRA (32-bit aligned)
+            bmi = _BMIH()
+            bmi.biSize     = ctypes.sizeof(_BMIH)
+            bmi.biWidth    = w
+            bmi.biHeight   = -h   # negative = top-down scanline order
+            bmi.biPlanes   = 1
+            bmi.biBitCount = 32   # BGRA (32-bit aligned)
 
-        buf = (ctypes.c_byte * (w * h * 4))()
-        gdi32.GetDIBits(mfc_dc, bmp, 0, h, buf, ctypes.byref(bmi), 0)
+            buf = (ctypes.c_byte * (w * h * 4))()
+            gdi32.GetDIBits(mfc_dc, bmp, 0, h, buf, ctypes.byref(bmi), 0)
 
-        # Release GDI resources before array construction.
-        gdi32.DeleteObject(bmp)
-        gdi32.DeleteDC(mfc_dc)
-        user32.ReleaseDC(hdesktop, hwnd_dc)
-
-        # BGRA -> BGR; copy() ensures the array owns its buffer.
-        img = (
-            np.frombuffer(bytes(bytearray(buf)), dtype=np.uint8)
-            .reshape(h, w, 4)[:, :, :3]
-            .copy()
-        )
-        return img
+            # BGRA -> BGR; copy() ensures the array owns its buffer.
+            img = (
+                np.frombuffer(bytes(bytearray(buf)), dtype=np.uint8)
+                .reshape(h, w, 4)[:, :, :3]
+                .copy()
+            )
+            return img
+        finally:
+            if bmp is not None:
+                gdi32.DeleteObject(bmp)
+            if mfc_dc is not None:
+                gdi32.DeleteDC(mfc_dc)
+            user32.ReleaseDC(hdesktop, hwnd_dc)
 
 
 # ---------------------------------------------------------------------------

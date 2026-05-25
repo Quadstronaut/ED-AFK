@@ -196,7 +196,10 @@ class Orchestrator:
         if self.state.engagement_in_progress:
             started = self.state.engagement_started_at
             timeout = self.config.safety.engagement_debounce_timeout_s
-            if started is None or (self.clock() - started) < timeout:
+            # Still within the debounce window -> wait. A missing start time is
+            # a broken state (flag set, timestamp lost): treat it as expired and
+            # fall through to force-clear below, rather than waiting forever.
+            if started is not None and (self.clock() - started) < timeout:
                 return
             self._record_outcome("EngagementTimeout", {
                 "target_system": target.name,
@@ -230,6 +233,13 @@ class Orchestrator:
         # the star / off-target. The next status tick retries.
         if not self._aligned_for_engage():
             return
+        # Full throttle is REQUIRED for the FSD to charge and jump — pressing
+        # HyperSuperCombination at zero throttle does nothing and we sit at
+        # jump 0 forever. Throttle up first, then engage.
+        try:
+            self.sender.press("SetSpeed100", hold=0.05)
+        except KeyError:
+            self._record_outcome("ThrottleBindMissing", {"action": "SetSpeed100"})
         try:
             self.sender.press("HyperSuperCombination", hold=0.05)
         except KeyError:
