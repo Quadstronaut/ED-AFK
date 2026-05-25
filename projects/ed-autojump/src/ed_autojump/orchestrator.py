@@ -122,6 +122,11 @@ class Orchestrator:
         # stream, no deferral, no confirmation gating (that entanglement is what
         # broke startup). Fired once, up front, in _maybe_startup_escape.
         self._startup_honked = False
+        # Journal replay gate: on first attach the tail hands us the ENTIRE
+        # journal (historical jumps/arrivals). We apply their STATE but must NOT
+        # execute their actions (re-running the last arrival's refuel/escape rams
+        # the star). Flips True once we've drained the backlog to EOF (run_live).
+        self._caught_up = False
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -560,6 +565,10 @@ class Orchestrator:
                     self._record_outcome("TailError", {"error": str(exc)})
                     chunk = []
                 if not chunk:
+                    # First empty read = we've drained the journal backlog and
+                    # caught up to EOF. Everything BEFORE this was historical
+                    # replay (state only); everything after is LIVE (act on it).
+                    self._caught_up = True
                     self.tick_status()
                     self.tick_navroute()
                     if self.stop_requested:
@@ -577,7 +586,15 @@ class Orchestrator:
                 ev = next(recording_it)
             except StopIteration:
                 break
-            self._dispatch(ev, recording_it)
+            # REPLAY vs LIVE. On first attach the tail returns the whole journal
+            # in one batch — historical jumps/arrivals. Executing those would
+            # re-run the last arrival's flow (refuel/escape) and ram the star.
+            # Until we've caught up to EOF, apply STATE ONLY (no actions); after,
+            # dispatch normally.
+            if self._caught_up:
+                self._dispatch(ev, recording_it)
+            else:
+                self._apply_state_only(ev)
 
     # --- internals ----------------------------------------------------------
 
@@ -595,6 +612,25 @@ class Orchestrator:
     def _record_outcome(self, outcome_type: str, payload: Any) -> None:
         if self.recorder is not None:
             self.recorder.record_outcome(outcome_type, payload)
+
+    def _apply_state_only(self, ev: Event) -> None:
+        """Apply an event's STATE to GameState WITHOUT firing any executor.
+
+        Used to replay the journal backlog on first attach so we recover state
+        (loadout, route target, current system) without re-executing historical
+        jumps — which would re-run the last arrival's refuel/escape and ram the
+        star. Mirrors the state-apply parts of the handlers, minus the actions."""
+        if isinstance(ev, Loadout):
+            self.state.apply_loadout(ev)
+        elif isinstance(ev, FSDTarget):
+            self.state.apply_fsd_target(ev)
+        elif isinstance(ev, StartJump):
+            self.state.apply_start_jump(ev)
+        elif isinstance(ev, FSDJump):
+            self.state.apply_fsd_jump(ev)
+            # Arrival ends any in-flight engage (consistent with _on_fsd_jump).
+            self.state.engagement_in_progress = False
+            self.state.engagement_started_at = None
 
     def _dispatch(self, ev: Event, follow_stream: Optional[Iterator[Event]]) -> None:
         """Type-dispatch to the right handler. Already-recorded by the
