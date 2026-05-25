@@ -264,6 +264,7 @@ class Orchestrator:
             timeout_s=v.timeout_s,
             clock=self.clock,
             sleeper=self.sleeper,
+            samples=v.align_samples,
         )
         self._record_outcome("Align", {
             "aligned": outcome.aligned,

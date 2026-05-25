@@ -20,4 +20,5 @@ calibration/profile.json
 # files like __init__.py are unaffected). Frames are regenerable via _grab.py.
 /_*.py
 /_*.png
+/_*.csv
 /_compass_frames/

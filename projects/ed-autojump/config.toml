@@ -73,9 +73,11 @@ capture_backend = "gdi"
 # primary; generous box centred on the compass (~746,860) to allow drift.
 region = [676, 790, 140, 140]
 compass_radius = 25.0          # fallback radius; ring detection overrides it live
-align_tol = 0.2                # dot within 20% of centre = aligned (NOT pixel-tight)
-deadzone = 0.12                # ignore tiny offsets -- don't chase sub-dot precision
-timeout_s = 20.0               # give up aligning after this; then skip the jump
+align_tol = 0.15               # dot within 15% of centre = aligned (validated 2026-05-24)
+deadzone = 0.10                # ignore sub-10% offsets -- don't chase sub-dot noise
+timeout_s = 45.0               # give up aligning after this; then skip the jump
+settle_s = 1.4                 # wait after key release; ship momentum decays ~1-1.5 s; 1.4s safe margin
+align_samples = 7              # median of 7 reads robustly rejects transient cyan-UI spikes
 
 [nav]
 # Press TargetNextRouteSystem (H) before each engage so the next route star
