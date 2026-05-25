@@ -115,10 +115,15 @@ class Orchestrator:
         # the engage gate would try to align-and-jump while stuck on the star.
         # Cleared after the first flyable Status tick (see _maybe_startup_escape).
         self._startup_escape_pending = True
-        # Honk the system we load into, same as every jump arrival. Set by the
-        # startup escape, fired ONCE from the live loop (where the journal
-        # stream is safe to consume — tick_status can't, it IS inside it).
+        # Honk the system we load into, same as every jump arrival. Per spec the
+        # honk fires FIRST — right after we detect realspace/SC, BEFORE the star
+        # search/escape. The honk can't run inside tick_status (it consumes the
+        # live journal stream — tick_status IS inside that generator), so the
+        # first startup tick arms `_startup_honk_pending`, run_live fires the
+        # honk and sets `_startup_honk_done`, and only THEN does a later tick run
+        # the get-off-star escape.
         self._startup_honk_pending = False
+        self._startup_honk_done = False
         self.stop_requested = False
         self._shutdown_done = False
         self._panic_handled = False
@@ -223,32 +228,40 @@ class Orchestrator:
         self._maybe_engage_next_jump(status)
 
     def _maybe_startup_escape(self, status: Status) -> None:
-        """Run the get-off-star pitch ONCE on launch (your spec #1: 'script
-        launched -> check for a star -> pitch up until it's gone -> accelerate
-        -> then orient to the next jump'). On a fresh load we sit in realspace at
-        the arrival star with no arrival event to trigger the normal escape, so
-        the engage gate would otherwise bob against the star forever.
+        """Get into the system on launch, in spec order: detect realspace/SC ->
+        HONK -> look for a star -> escape (only if a star is in the way).
 
-        One-shot: the pending flag is cleared whether or not we act. Skips when
-        docked (nothing to escape) or with no sun probe (can't sense the star).
-        Uses brightness sun-avoid regardless of escape_mode — getting clear of
-        the star is a prerequisite for leaving; refuel-to-star only matters once
-        fuel is actually low, which is handled on real arrivals."""
-        self._startup_escape_pending = False
+        On a fresh load we sit at the arrival star with no arrival event to
+        trigger the normal escape, so without this the engage gate would bob
+        against the star forever.
+
+        The honk fires FIRST (spec): the first call here arms the honk and
+        RETURNS without escaping; run_live fires the honk and sets
+        `_startup_honk_done`; a later call then runs the escape. The pending flag
+        stays set until a terminal escape outcome clears it (realspace bail keeps
+        it set to retry). Skips when docked (nothing to escape) or with no sun
+        probe (can't sense the star)."""
         if status.docked:
+            self._startup_escape_pending = False
             return
         if self.sun_grab is None:
+            self._startup_escape_pending = False
             return
+
+        # HONK FIRST. Until the startup honk has actually fired, do NOT escape —
+        # arm the honk and bail this tick. run_live fires it (it owns the live
+        # stream) and sets _startup_honk_done; the next tick runs the escape.
+        if not self._startup_honk_done:
+            self._startup_honk_pending = True
+            return
+
         e = self.config.escape
 
-        # NB: the system honk is armed only on SUCCESS (see below / the realspace
-        # path) — never before we know we actually got into supercruise.
-
-        # Realspace and supercruise need DIFFERENT clearing. In NORMAL space full
-        # throttle barely moves you relative to the star — you must point away,
-        # ENGAGE supercruise, wait for it to recede, THEN orient. That is its own
-        # dedicated procedure (perform_realspace_escape) — NOT smack recovery. In
-        # supercruise the brightness fly-clear below already works.
+        # Realspace and supercruise need DIFFERENT handling. In NORMAL space full
+        # throttle barely moves you relative to the star — if a star is in the
+        # way you must ENGAGE supercruise first, then move clear (its own
+        # dedicated procedure, NOT smack recovery). In supercruise the brightness
+        # fly-clear below already works.
         if not status.in_supercruise:
             self._startup_escape_realspace(e)
             return
@@ -283,9 +296,9 @@ class Orchestrator:
             "aligned": sensed.aligned,
             "notes": sensed.notes,
         })
-        # Already in supercruise and the star is cleared — honk the system, same
-        # as a jump arrival (fired from the live loop; see run_live).
-        self._startup_honk_pending = True
+        # Honk already fired before this escape (honk-first); this SC path is a
+        # single shot — clear the pending flag so we don't re-run it.
+        self._startup_escape_pending = False
 
     def _startup_escape_realspace(self, e: Any) -> None:
         """Get off the star from NORMAL space on launch via the DEDICATED
@@ -322,13 +335,14 @@ class Orchestrator:
         })
         if outcome.sc_entered is False:
             # Engage failed — never entered supercruise. The escape bailed
-            # without throttling/targeting/orienting. RE-ARM so the next Status
-            # tick retries the whole escape, and do NOT honk: we're not in the
-            # system proper yet, we're still stuck by the star.
+            # without pitch/throttle/target/orient. KEEP the pending flag set so
+            # the next Status tick retries the whole escape. (Honk already fired
+            # before the escape, so nothing to do there.)
             self._startup_escape_pending = True
             return
-        # In supercruise and clear — honk the system, same as a jump arrival.
-        self._startup_honk_pending = True
+        # Done: entered SC and moved clear (star path), or skipped SC because the
+        # route was unobstructed (no-star path). Clear the one-shot flag.
+        self._startup_escape_pending = False
 
     def _maybe_engage_next_jump(self, status: Status) -> None:
         """Press HyperSuperCombination if we have a safe target + Status
@@ -539,14 +553,17 @@ class Orchestrator:
             except StopIteration:
                 break
             self._dispatch(ev, recording_it)
-            # The startup escape (run inside tick_status, above) can't consume
-            # the journal stream to honk. Fire it here, once, with the SAME live
-            # stream + combat-mode fallback every jump arrival uses. Dispatched
-            # AFTER ev so the event that woke us (e.g. the route's FSDTarget) is
-            # applied to state before the honk watches the stream.
+            # Honk-first: the startup tick (in tick_status) arms this BEFORE
+            # running any escape, because the honk must consume the live journal
+            # stream — which tick_status can't (it IS inside that generator).
+            # Fire it here once, with the SAME live stream + combat-mode fallback
+            # every jump arrival uses, then mark it done so the next tick lets
+            # the get-off-star escape run. Dispatched AFTER ev so the event that
+            # woke us (e.g. the route's FSDTarget) is applied to state first.
             if self._startup_honk_pending:
                 self._startup_honk_pending = False
                 self._maybe_honk(recording_it)
+                self._startup_honk_done = True
 
     # --- internals ----------------------------------------------------------
 
