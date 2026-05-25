@@ -132,6 +132,9 @@ class SmackRecoveryOutcome:
         already outlasted the cooldown window.
     triggered_fsd:
         True once the ``Supercruise`` engage press was issued.
+    sc_entered:
+        Log-confirmed supercruise entry between the two throttle presses
+        (True entered, False timed out, None when no SC-entry check was wired).
     aligned:
         ``align_to_target``'s ``.aligned`` result, or None when no compass
         wiring was provided (the orient step was skipped).
@@ -142,6 +145,7 @@ class SmackRecoveryOutcome:
     star_cleared: Optional[bool]
     cooldown_waited_s: float
     triggered_fsd: bool
+    sc_entered: Optional[bool]
     aligned: Optional[bool]
     notes: str
 
@@ -154,6 +158,9 @@ def perform_smack_recovery(
     sender: Any,
     *,
     is_star_clear: Optional[Callable[[], bool]] = None,
+    in_supercruise: Optional[Callable[[], bool]] = None,
+    sc_entry_timeout_s: float = 30.0,
+    sc_entry_poll_s: float = 0.5,
     compass_reader: Optional[Any] = None,
     compass_capture: Optional[Callable[[], Any]] = None,
     align_kwargs: Optional[dict] = None,
@@ -280,10 +287,23 @@ def perform_smack_recovery(
     # -----------------------------------------------------------------------
     sender.press(FULL_THROTTLE, hold=0.05)   # normal-space throttle, to engage SC
     sender.press(FSD_ENGAGE, hold=0.05)
-    sender.press(FULL_THROTTLE, hold=0.05)   # SC throttle (separate axis), to fly away
     triggered_fsd = True
+    # MONITOR THE LOGS for SC entry before the second throttle — a fixed timer
+    # would race the transition. SC throttle is a separate axis, so throttling
+    # up flies us clear only once we have actually entered supercruise.
+    from .escape import wait_for_supercruise  # deferred: avoids import cycle
+
+    sc_entered = wait_for_supercruise(
+        in_supercruise,
+        timeout_s=sc_entry_timeout_s,
+        poll_s=sc_entry_poll_s,
+        clock=clock,
+        sleeper=sleeper,
+    )
+    sender.press(FULL_THROTTLE, hold=0.05)   # SC throttle (separate axis), to fly away
     notes_parts.append(
-        "throttle->engage->throttle: full throttle, engaged supercruise, full SC throttle"
+        "throttle->engage->[wait SC entry="
+        f"{sc_entered}]->throttle: full throttle, engaged supercruise, full SC throttle"
     )
 
     # -----------------------------------------------------------------------
@@ -327,6 +347,7 @@ def perform_smack_recovery(
         star_cleared=star_cleared,
         cooldown_waited_s=remaining,
         triggered_fsd=triggered_fsd,
+        sc_entered=sc_entered,
         aligned=aligned,
         notes="; ".join(notes_parts),
     )
