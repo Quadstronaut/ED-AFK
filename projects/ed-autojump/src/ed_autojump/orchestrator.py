@@ -657,9 +657,12 @@ class Orchestrator:
 
     def _on_start_jump(self, ev: StartJump) -> None:
         self.state.apply_start_jump(ev)
-        # Clear the engagement debounce — FSD acknowledged our press.
-        self.state.engagement_in_progress = False
-        self.state.engagement_started_at = None
+        # NOTE: do NOT clear the engagement flag here. StartJump fires for BOTH
+        # hyperspace AND supercruise — and our startup escape engages supercruise
+        # itself, so a StartJump(Supercruise) arrives that has nothing to do with
+        # the jump we pressed. Clearing on it re-opened the gate and fired the
+        # jump key a second time, cancelling the charge. The flag now means one
+        # thing: "we pressed jump, waiting to arrive" — cleared only on FSDJump.
         result: ChargeResult = handle_start_jump(
             ev,
             self.sender,
@@ -674,6 +677,11 @@ class Orchestrator:
 
     def _on_fsd_jump(self, ev: FSDJump, follow_stream: Optional[Iterator[Event]]) -> None:
         self.state.apply_fsd_jump(ev)
+        # We arrived — the jump we engaged is done. Clear the engage flag here
+        # (and ONLY here, besides the safety timeout): this is the single event
+        # that means "we made it", so the gate can engage the next hop.
+        self.state.engagement_in_progress = False
+        self.state.engagement_started_at = None
         escape_mode = self.config.escape.escape_mode
         align_kwargs = self._align_kwargs()
         handled_scoop = False

@@ -145,23 +145,43 @@ def test_engage_not_fired_twice_in_same_window(tmp_path: Path):
     assert sender.actions().count("HyperSuperCombination") == 1
 
 
-def test_engagement_flag_resets_after_start_jump(tmp_path: Path):
-    """Once StartJump arrives, the engagement is done; the next FSDTarget
-    can re-engage."""
+def test_engagement_flag_resets_on_arrival_not_start_jump(tmp_path: Path):
+    """The engage flag clears on ARRIVAL (FSDJump), NOT on StartJump.
+
+    StartJump fires for supercruise too — and our own startup escape engages
+    supercruise — so a StartJump(Supercruise) must NOT reset the debounce. If it
+    did, the gate would re-press the jump key mid-charge and cancel the jump
+    (the real bug). The flag means one thing: 'pressed jump, waiting to arrive'."""
     reader = _CannedStatusReader([
+        _status(flags=int(StatusFlags.Supercruise)),
         _status(flags=int(StatusFlags.Supercruise)),
         _status(flags=int(StatusFlags.Supercruise)),
     ])
     orch, sender, rec = _orch(tmp_path, reader=reader)
+    orch.config.escape.escape_mode = "blind"  # keep arrival handling minimal
     orch.handle_event(_target("K"))
     orch.tick_status()  # press 1
-    sj = parse_event(
+
+    # A supercruise StartJump (like our escape emits) must NOT clear the flag,
+    # even if a new target is already known.
+    sj_sc = parse_event(
         '{"timestamp":"2026-05-22T12:00:05Z","event":"StartJump",'
-        '"JumpType":"Hyperspace","StarSystem":"X","StarClass":"K"}'
+        '"JumpType":"Supercruise","Taxi":false}'
     )
-    orch.handle_event(sj)  # clears engagement_in_progress
-    orch.handle_event(_target("K"))  # NEW target
-    orch.tick_status()  # press 2 should fire
+    orch.handle_event(sj_sc)
+    orch.handle_event(_target("K"))
+    orch.tick_status()  # still mid-jump -> must NOT press again
+    assert sender.actions().count("HyperSuperCombination") == 1
+
+    # Actually arriving clears the flag -> the next engage fires.
+    fsdjump = parse_event(
+        '{"timestamp":"2026-05-22T12:00:20Z","event":"FSDJump","StarSystem":"Y",'
+        '"SystemAddress":99,"StarPos":[1.0,2.0,3.0],"Body":"Y A","BodyID":1,'
+        '"BodyType":"Star","JumpDist":10.0,"FuelUsed":1.0,"FuelLevel":30.0}'
+    )
+    orch.handle_event(fsdjump)
+    orch.handle_event(_target("K"))
+    orch.tick_status()  # press 2
     rec.close()
     assert sender.actions().count("HyperSuperCombination") == 2
 
