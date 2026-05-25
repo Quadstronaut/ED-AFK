@@ -300,6 +300,25 @@ def perform_smack_recovery(
         clock=clock,
         sleeper=sleeper,
     )
+    if sc_entered is False:
+        # Timed out: the FSD re-engage failed — we never re-entered supercruise
+        # and are still in normal space by the star we smacked. Throttling up,
+        # targeting, and orienting would all act on a ship that never left.
+        # Bail with none of that. (None = no SC check wired, unit tests only:
+        # fall through and proceed.)
+        notes_parts.append(
+            "throttle->engage->[SC entry NEVER logged within "
+            f"{sc_entry_timeout_s:g}s]: bailed without 2nd throttle/target/orient"
+        )
+        return SmackRecoveryOutcome(
+            pitches=pitches,
+            star_cleared=star_cleared,
+            cooldown_waited_s=remaining,
+            triggered_fsd=triggered_fsd,
+            sc_entered=False,
+            aligned=None,
+            notes="; ".join(notes_parts),
+        )
     sender.press(FULL_THROTTLE, hold=0.05)   # SC throttle (separate axis), to fly away
     notes_parts.append(
         "throttle->engage->[wait SC entry="

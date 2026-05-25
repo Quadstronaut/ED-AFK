@@ -36,18 +36,21 @@ def _flyable_realspace_status():
     )
 
 
-class _OneShotStatusReader:
-    """poll() yields the status once (then None, mtime-stable); .current caches it."""
+class _EntersSupercruiseReader:
+    """Realspace at the first poll (so tick_status takes the realspace branch),
+    then flips in_supercruise=True on later polls so the escape's SC-entry wait
+    succeeds — mimicking the ship actually entering supercruise."""
 
-    def __init__(self, status):
+    def __init__(self, status, *, flip_after: int = 1):
         self._status = status
         self.current = status
-        self._served = False
+        self._n = 0
+        self._flip_after = flip_after
 
     def poll(self):
-        if self._served:
-            return None
-        self._served = True
+        self._n += 1
+        if self._n > self._flip_after:
+            self._status.in_supercruise = True
         return self._status
 
 
@@ -57,10 +60,8 @@ def _dark_frame():
 
 
 def test_startup_escape_sets_honk_pending(tmp_path: Path):
-    """Running the realspace startup escape arms the system honk."""
+    """Realspace startup escape that successfully enters SC arms the system honk."""
     status = _flyable_realspace_status()
-    # Clock advances fast so wait_for_supercruise (30 s default) times out at
-    # once rather than really polling; the escape proceeds best-effort.
     ticks = iter(range(0, 100000, 1000))
     orch = Orchestrator(
         sender=RecordingSender(_binds()),
@@ -69,16 +70,49 @@ def test_startup_escape_sets_honk_pending(tmp_path: Path):
         config=Config(),
         clock=lambda: float(next(ticks, 100000)),
         sleeper=lambda _t: None,
-        status_reader=_OneShotStatusReader(status),
+        status_reader=_EntersSupercruiseReader(status),
         sun_grab=_dark_frame,
     )
     assert orch._startup_honk_pending is False
     orch.tick_status()
-    # Escape ran (engaged SC) and armed the honk.
+    # Escape entered SC and armed the honk.
     assert orch._startup_honk_pending is True
+    assert orch._startup_escape_pending is False  # success: not re-armed
     assert "Supercruise" in orch.sender.actions()
     # Realspace escape throttles up TWICE (engage + fly-clear).
     assert orch.sender.actions().count("SetSpeed100") == 2
+
+
+def test_startup_escape_failure_rearms_and_does_not_honk(tmp_path: Path):
+    """If SC entry never logs, the escape bails: re-arm for retry, do NOT honk."""
+    status = _flyable_realspace_status()  # stays realspace -> SC entry never logs
+    ticks = iter(range(0, 1000000, 1000))
+
+    class _StuckReader:
+        def __init__(self, st):
+            self.current = st
+            self._st = st
+
+        def poll(self):
+            return self._st  # never flips to supercruise
+
+    orch = Orchestrator(
+        sender=RecordingSender(_binds()),
+        recorder=None,
+        state=GameState(),
+        config=Config(),
+        clock=lambda: float(next(ticks, 1000000)),
+        sleeper=lambda _t: None,
+        status_reader=_StuckReader(status),
+        sun_grab=_dark_frame,
+    )
+    orch.tick_status()
+    # Bailed: re-armed to retry next tick, honk NOT armed.
+    assert orch._startup_escape_pending is True
+    assert orch._startup_honk_pending is False
+    # Only the engage throttle fired; no fly-away throttle, no route target.
+    assert orch.sender.actions().count("SetSpeed100") == 1
+    assert "TargetNextRouteSystem" not in orch.sender.actions()
 
 
 def test_run_live_fires_pending_startup_honk(tmp_path: Path):

@@ -241,10 +241,8 @@ class Orchestrator:
             return
         e = self.config.escape
 
-        # Honk the system we loaded into, just like a jump arrival. The actual
-        # honk fires from the live loop (see run_live) because it consumes the
-        # journal stream, which tick_status — where we are now — cannot.
-        self._startup_honk_pending = True
+        # NB: the system honk is armed only on SUCCESS (see below / the realspace
+        # path) — never before we know we actually got into supercruise.
 
         # Realspace and supercruise need DIFFERENT clearing. In NORMAL space full
         # throttle barely moves you relative to the star — you must point away,
@@ -285,6 +283,9 @@ class Orchestrator:
             "aligned": sensed.aligned,
             "notes": sensed.notes,
         })
+        # Already in supercruise and the star is cleared — honk the system, same
+        # as a jump arrival (fired from the live loop; see run_live).
+        self._startup_honk_pending = True
 
     def _startup_escape_realspace(self, e: Any) -> None:
         """Get off the star from NORMAL space on launch via the DEDICATED
@@ -319,6 +320,15 @@ class Orchestrator:
             "aligned": outcome.aligned,
             "notes": outcome.notes,
         })
+        if outcome.sc_entered is False:
+            # Engage failed — never entered supercruise. The escape bailed
+            # without throttling/targeting/orienting. RE-ARM so the next Status
+            # tick retries the whole escape, and do NOT honk: we're not in the
+            # system proper yet, we're still stuck by the star.
+            self._startup_escape_pending = True
+            return
+        # In supercruise and clear — honk the system, same as a jump arrival.
+        self._startup_honk_pending = True
 
     def _maybe_engage_next_jump(self, status: Status) -> None:
         """Press HyperSuperCombination if we have a safe target + Status
