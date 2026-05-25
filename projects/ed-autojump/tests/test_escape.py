@@ -591,9 +591,11 @@ class TestPerformRealspaceEscape:
         acts = sender.actions()
         assert acts.index("Supercruise") < len(acts) - 1 - acts[::-1].index("SetSpeed100")
 
-    def test_sc_entry_timeout_still_proceeds_best_effort(self):
-        """If SC entry never logs within the window, we still press the second
-        throttle (best-effort) and record sc_entered=False — visible failure."""
+    def test_sc_entry_timeout_bails_without_proceeding(self):
+        """If SC entry never logs, the engage FAILED — we're still in normal
+        space. Bail: only the engage throttle (1 SetSpeed100), NO second
+        throttle, NO TargetNextRouteSystem, NO align. sc_entered=False so the
+        caller knows to retry."""
         sender = _CountingSender()
         out = perform_realspace_escape(
             sender,
@@ -606,7 +608,10 @@ class TestPerformRealspaceEscape:
             clock=_FixedClock(start=0.0, step=0.1),  # advances past the timeout
         )
         assert out.sc_entered is False
-        assert sender.actions().count("SetSpeed100") == 2
+        assert out.aligned is None
+        # Only the engage throttle landed — no fly-away throttle, no target.
+        assert sender.actions().count("SetSpeed100") == 1
+        assert "TargetNextRouteSystem" not in sender.actions()
 
     def test_no_star_skips_pitch_still_engages(self):
         """No star detected: skip the pitch, but STILL throttle->engage->throttle

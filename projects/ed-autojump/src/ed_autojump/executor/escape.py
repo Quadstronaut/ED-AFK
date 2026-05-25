@@ -692,6 +692,25 @@ def perform_realspace_escape(
         clock=clock,
         sleeper=sleeper,
     )
+    if sc_entered is False:
+        # Timed out: the ship NEVER entered supercruise, so the engage failed.
+        # We're still in NORMAL space, almost certainly still near the star.
+        # Throttling up, targeting, and orienting now would all act on a ship
+        # that never left — nonsense. Bail with NONE of that so the caller can
+        # retry the whole engage. (None = no SC check wired, unit tests only:
+        # fall through and proceed.)
+        return RealspaceEscapeOutcome(
+            star_detected=detected,
+            sun_avoid=avoid_result,
+            engaged_sc=True,
+            sc_entered=False,
+            aligned=None,
+            notes=(
+                "engaged FSD but supercruise entry never logged within "
+                f"{sc_entry_timeout_s:g}s; bailed without throttle/target/orient "
+                "— caller should retry the engage"
+            ),
+        )
     sender.press(full_throttle, hold=0.05)   # SC throttle (separate axis), fly away
 
     # 5. Let the star recede before turning.
