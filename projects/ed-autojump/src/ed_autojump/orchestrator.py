@@ -268,44 +268,36 @@ class Orchestrator:
 
         e = self.config.escape
 
-        # Realspace and supercruise need DIFFERENT handling. In NORMAL space full
-        # throttle barely moves you relative to the star — if a star is in the
-        # way you must ENGAGE supercruise first, then move clear (its own
-        # dedicated procedure, NOT smack recovery). In supercruise the brightness
-        # fly-clear below already works.
+        # NORMAL space: if a star is in the way you must ENGAGE supercruise first,
+        # then move clear (its own dedicated procedure, NOT smack recovery).
         if not status.in_supercruise:
             self._startup_escape_realspace(e)
             return
 
-        sensed: SensedEscapeOutcome = perform_sensed_escape(
-            None,
-            self.sender,
-            mode="brightness",
-            compass_reader=self.compass_reader,
-            compass_capture=self.frame_grabber,
-            sun_capture=self.sun_grab,
-            cached_star_class=self.state.last_star_class,
-            align_kwargs=self._align_kwargs(),
-            sleeper=self.sleeper,
-            clock=self.clock,
-            bright_thresh=e.sun_bright_thresh,
-            present_frac=e.sun_present_frac,
-            clear_frac=e.sun_clear_frac,
-            pitch_hold=e.sun_pitch_hold_s,
-            timeout_s=e.sun_timeout_s,
-            clear_throttle=e.clear_throttle,
-            clear_s=e.clear_s,
-            clear_reenter_frac=e.clear_reenter_frac,
-            clear_step_s=e.clear_step_s,
-        )
-        avoid = sensed.sun_avoid
+        # ALREADY IN SUPERCRUISE: do NOT pitch + accelerate. That fly-clear is
+        # what ran the ship straight at the star. In supercruise you don't fly
+        # AROUND the star — you point at the next system and jump, and the jump
+        # removes you. So we just orient toward the target; the engage gate fires
+        # the jump (with the §9.2 throttle-zero-on-StartJump safety). The harder
+        # "maneuver stars while in SC" case is deferred per spec.
+        aligned: Optional[bool] = None
+        if self.compass_reader is not None and self.frame_grabber is not None:
+            outcome = align_to_target(
+                self.compass_reader,
+                self.sender,
+                capture=self.frame_grabber,
+                clock=self.clock,
+                sleeper=self.sleeper,
+                **self._align_kwargs(),
+            )
+            aligned = outcome.aligned
         self._record_outcome("StartupEscape", {
-            "in_supercruise": status.in_supercruise,
-            "star_detected": getattr(sensed, "star_detected", None),
-            "sun_cleared": avoid.cleared if avoid is not None else None,
-            "sun_iterations": avoid.iterations if avoid is not None else None,
-            "aligned": sensed.aligned,
-            "notes": sensed.notes,
+            "in_supercruise": True,
+            "star_detected": None,
+            "accelerated": False,
+            "aligned": aligned,
+            "notes": ("already in supercruise — oriented to target, NO "
+                      "pitch/accelerate; engage gate jumps"),
         })
         # SC path is a single shot — clear the pending flag so we don't re-run it
         # (and so the engage gate is released to jump).
