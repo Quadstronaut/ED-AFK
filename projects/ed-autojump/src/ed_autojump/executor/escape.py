@@ -670,24 +670,16 @@ def perform_realspace_escape(
       from normal space (the jump itself fires from the engage gate on a later
       tick). ``engaged_sc=False``, ``sc_entered=None``.
 
-    * STAR ahead -> supercruise is REQUIRED to maneuver it out of the way (in
-      normal space the star never recedes). Full throttle -> engage SC ->
-      MONITOR LOGS for SC entry (BAIL + retry if it never logs) -> pitch the
-      star off-screen IN SC -> full throttle AGAIN (separate SC axis) -> wait
-      ``post_sc_wait_s`` -> target next -> orient.
+    * STAR ahead -> PITCH IT OFF-SCREEN FIRST (always the first move — never
+      throttle while pointed at the star). THEN supercruise: if in normal space,
+      throttle (nose is now off the star, so this flies us away) -> engage SC ->
+      MONITOR LOGS for entry (BAIL + retry if it never logs); if ``already_in_
+      supercruise`` there is nothing to engage, so skip it. Then full throttle to
+      fly clear -> wait ``post_sc_wait_s`` -> target next -> orient.
 
-    ``already_in_supercruise``: when the ship is ALREADY in supercruise at
-    startup, there is nothing to engage — skip the throttle->engage->log-wait
-    and go straight to the move-out-of-the-way (pitch off the star -> throttle
-    to fly clear -> target -> orient). The maneuver is otherwise identical, so
-    the same "fly AROUND the star, then re-aim and jump" behaviour applies in
-    both normal space (after engaging) and supercruise.
-
-    The SC-entry gate is a hard FAIL: if the ship never enters supercruise the
-    engage failed and we are still in normal space, so we bail without
-    pitch/throttle/target/orient and let the caller retry. The in-SC pitch is
-    the one tolerated best-effort (vision) — we proceed even if it only partly
-    clears. Everything is injected for testability.
+    If the pitch can't get the star off-screen we do NOT throttle (that is the
+    slam) — we bail and the caller retries the pitch. The SC-entry gate is also a
+    hard FAIL (bail+retry). Everything is injected for testability.
     """
     # 1. CHECK: is there actually a star in the top-2/3 region?
     detected = star_present(
@@ -717,44 +709,10 @@ def perform_realspace_escape(
             ),
         )
 
-    # 3-4. STAR ahead. If we're in NORMAL space we must ENGAGE supercruise first
-    #      (full throttle to engage, then SC, then MONITOR THE LOGS for entry —
-    #      bail+retry if it never logs). If we're ALREADY in supercruise there is
-    #      nothing to engage; skip straight to moving the star out of the way.
-    if already_in_supercruise:
-        sc_entered: Optional[bool] = True
-    else:
-        sender.press(full_throttle, hold=0.05)   # normal-space throttle, to engage SC
-        sender.press(SC_ENGAGE, hold=0.05)
-        # MONITOR THE LOGS. If SC entry never logs the engage FAILED — we're
-        # still in NORMAL space (almost certainly still on the star). Pitching,
-        # throttling, targeting, orienting would all act on a ship that never
-        # left: bail with NONE of that so the caller retries. (None = no SC check
-        # wired, unit tests only: fall through and proceed.)
-        sc_entered = wait_for_supercruise(
-            in_supercruise,
-            timeout_s=sc_entry_timeout_s,
-            poll_s=sc_entry_poll_s,
-            clock=clock,
-            sleeper=sleeper,
-        )
-        if sc_entered is False:
-            return RealspaceEscapeOutcome(
-                star_detected=True,
-                sun_avoid=None,
-                engaged_sc=True,
-                sc_entered=False,
-                aligned=None,
-                notes=(
-                    "engaged FSD but supercruise entry never logged within "
-                    f"{sc_entry_timeout_s:g}s; bailed without pitch/throttle/"
-                    "target/orient — caller should retry the engage"
-                ),
-            )
-
-    # 5. NOW IN SUPERCRUISE: move out of the way — pitch UP HARD until the star
-    #    is off-screen. Vision is the lone tolerated best-effort: record the
-    #    result and proceed even if it only partly clears.
+    # 2b. STAR ahead -> PITCH IT OFF-SCREEN FIRST. This is ALWAYS the first move:
+    #     get the nose off the star BEFORE any throttle, so we can never fly into
+    #     it. If the pitch can't clear it, do NOT throttle (that's the slam) —
+    #     bail and let the caller retry the pitch.
     avoid_result: Optional[SunAvoidOutcome] = sun_avoid(
         sender,
         sun_capture,
@@ -767,28 +725,64 @@ def perform_realspace_escape(
         clock=clock,
         sleeper=sleeper,
     )
+    if not avoid_result.cleared:
+        return RealspaceEscapeOutcome(
+            star_detected=True,
+            sun_avoid=avoid_result,
+            engaged_sc=False,
+            sc_entered=None,
+            aligned=None,
+            notes=(
+                "star detected but pitch did NOT clear it (reason="
+                f"{avoid_result.reason}); did NOT throttle — retry the pitch"
+            ),
+        )
 
-    # 6. Full throttle AGAIN — SC throttle is a SEPARATE axis from normal-space
-    #    throttle, so this is what actually flies the ship clear of the star.
+    # 3. Star is off-screen now. THEN supercruise — but ONLY if we're not already
+    #    in it. Already in SC -> nothing to engage; go straight to flying clear.
+    #    In NORMAL space: throttle (nose is off the star, so this flies us AWAY)
+    #    to engage, press SC, then MONITOR THE LOGS for entry (bail+retry if it
+    #    never logs). (None = no SC check wired, unit tests only: proceed.)
+    if already_in_supercruise:
+        sc_entered: Optional[bool] = True
+    else:
+        sender.press(full_throttle, hold=0.05)   # nose is off-star -> throttle flies us away
+        sender.press(SC_ENGAGE, hold=0.05)
+        sc_entered = wait_for_supercruise(
+            in_supercruise,
+            timeout_s=sc_entry_timeout_s,
+            poll_s=sc_entry_poll_s,
+            clock=clock,
+            sleeper=sleeper,
+        )
+        if sc_entered is False:
+            return RealspaceEscapeOutcome(
+                star_detected=True,
+                sun_avoid=avoid_result,
+                engaged_sc=True,
+                sc_entered=False,
+                aligned=None,
+                notes=(
+                    "pitched clear + engaged FSD but supercruise entry never "
+                    f"logged within {sc_entry_timeout_s:g}s; bailed — retry"
+                ),
+            )
+
+    # 4. Fly clear (SC throttle is a separate axis), let the star recede, then
+    #    target the next hop and orient.
     sender.press(full_throttle, hold=0.05)
-
-    # 7. Let the star recede before turning.
     sleeper(post_sc_wait_s)
-
-    # 8. Target the next hop, then orient toward it.
     sender.press(ROUTE_TARGET, hold=0.05)
     aligned = _align(
         compass_reader, compass_capture, sender, align_kwargs,
         clock=clock, sleeper=sleeper,
     )
 
-    if already_in_supercruise:
-        notes = ("star ahead, already in SC -> pitched clear -> full SC throttle "
-                 "-> waited, targeted, aligned")
-    else:
-        notes = ("star ahead; engaged SC -> waited for SC entry "
-                 f"(entered={sc_entered}) -> pitched clear in SC -> full SC "
-                 "throttle -> waited, targeted, aligned")
+    notes = (
+        "star pitched off-screen FIRST"
+        + (" (already in SC)" if already_in_supercruise else " -> engaged SC")
+        + " -> flew clear -> targeted + aligned"
+    )
     return RealspaceEscapeOutcome(
         star_detected=True,
         sun_avoid=avoid_result,

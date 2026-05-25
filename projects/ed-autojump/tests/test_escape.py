@@ -493,20 +493,19 @@ class TestFlyClear:
 # ---------------------------------------------------------------------------
 
 class TestPerformRealspaceEscape:
-    def test_star_engage_sc_first_then_pitch_throttle_target_align(self):
-        """Star present: SC-FIRST order — SetSpeed100 (engage) -> Supercruise ->
-        [log-gate] -> pitch off-screen IN SC -> SetSpeed100 (fly) ->
-        TargetNextRouteSystem, then align. The pitch lands AFTER Supercruise (you
-        maneuver the star out of the way only once you're in supercruise); the
-        double throttle is the crux: SC throttle is a separate axis."""
+    def test_star_pitches_FIRST_then_engages_throttle_target_align(self):
+        """Star present, NORMAL space: PITCH the star off-screen FIRST, THEN
+        SetSpeed100 (engage) -> Supercruise -> [log-gate] -> SetSpeed100 (fly) ->
+        TargetNextRouteSystem -> align. The pitch lands BEFORE any throttle — we
+        never throttle while pointed at the star."""
         call_count = [0]
         bright = _make_frame(10, 10, 200)
         dark = _make_frame(10, 10, 0)
 
         def _sun_capture():
             call_count[0] += 1
-            # call 1: CHECK (bright -> detected); call 2: in-SC sun_avoid bright
-            # -> pitch once; call 3+: dark -> cleared.
+            # call 1: CHECK (bright -> detected); call 2: pitch once; call 3+:
+            # dark -> cleared.
             return bright if call_count[0] <= 2 else dark
 
         sender = _CountingSender()
@@ -533,24 +532,25 @@ class TestPerformRealspaceEscape:
         assert out.sc_entered is True
         assert out.aligned is True
         actions = sender.actions()
-        # The throttle/engage/throttle/target backbone (pitch presses are
-        # filtered out — but the FIRST pitch must come AFTER Supercruise).
+        # Backbone (pitch presses filtered out): engage throttle -> Supercruise ->
+        # fly throttle -> target.
         seq = [a for a in actions
                if a in ("SetSpeed100", "Supercruise", "TargetNextRouteSystem")]
         assert seq == ["SetSpeed100", "Supercruise", "SetSpeed100",
                        "TargetNextRouteSystem"]
-        # Pitch happens IN supercruise: its first press is after the engage.
-        assert actions.index("PitchUpButton") > actions.index("Supercruise")
+        # PITCH FIRST: the pitch precedes ALL throttle AND the engage.
+        assert actions.index("PitchUpButton") < actions.index("SetSpeed100")
+        assert actions.index("PitchUpButton") < actions.index("Supercruise")
 
-    def test_star_not_cleared_in_sc_still_proceeds_best_effort(self):
-        """Star present, SC entered, but the in-SC pitch never fully clears it:
-        we DON'T bail — vision is the one tolerated best-effort. We still fly,
-        target, and orient (engage already succeeded at the log gate)."""
+    def test_star_not_cleared_bails_without_throttle(self):
+        """Star present but the pitch never gets it off-screen: BAIL — do NOT
+        throttle (throttling while pointed at the star is the slam). No engage,
+        no target; the caller retries the pitch."""
         sender = _CountingSender()
         out = perform_realspace_escape(
             sender,
-            lambda: _make_frame(10, 10, 255),  # always bright -> pitch never clears
-            in_supercruise=lambda: True,        # SC entry confirmed
+            lambda: _make_frame(10, 10, 255),  # always bright -> never clears
+            in_supercruise=lambda: True,
             bright_thresh=125,
             clear_frac=0.05,
             pitch_hold=0.1,
@@ -562,12 +562,14 @@ class TestPerformRealspaceEscape:
             clock=_FixedClock(start=0.0, step=0.0),
         )
         assert out.star_detected is True
-        assert out.engaged_sc is True
-        assert out.sc_entered is True
         assert out.sun_avoid is not None and out.sun_avoid.cleared is False
-        # Proceeded anyway: engaged, flew (2x throttle), targeted.
-        assert sender.actions().count("SetSpeed100") == 2
-        assert "TargetNextRouteSystem" in sender.actions()
+        assert out.engaged_sc is False
+        assert out.sc_entered is None
+        # Pitched (tried) but NEVER threw throttle / engaged / targeted.
+        assert "PitchUpButton" in sender.actions()
+        assert "SetSpeed100" not in sender.actions()
+        assert "Supercruise" not in sender.actions()
+        assert "TargetNextRouteSystem" not in sender.actions()
 
     def test_second_throttle_waits_for_logged_sc_entry(self):
         """The crux: the SECOND SetSpeed100 must come only AFTER the log-backed
@@ -613,27 +615,35 @@ class TestPerformRealspaceEscape:
         acts = sender.actions()
         assert acts.index("Supercruise") < len(acts) - 1 - acts[::-1].index("SetSpeed100")
 
-    def test_sc_entry_timeout_bails_without_proceeding(self):
-        """Star present, SC entry never logs: the engage FAILED — we're still in
-        normal space. Bail: only the engage throttle (1 SetSpeed100), NO in-SC
-        pitch, NO fly-away throttle, NO TargetNextRouteSystem, NO align.
-        sc_entered=False so the caller knows to retry."""
+    def test_sc_entry_timeout_bails_after_pitch(self):
+        """Star present, pitch CLEARS it, then we engage SC but entry never logs:
+        the engage FAILED. Bail with only the engage throttle (1 SetSpeed100), NO
+        fly-away throttle, NO TargetNextRouteSystem, NO align. sc_entered=False so
+        the caller retries."""
+        call_count = [0]
+        bright = _make_frame(10, 10, 200)
+        dark = _make_frame(10, 10, 0)
+
+        def _sun_capture():
+            call_count[0] += 1
+            return bright if call_count[0] == 1 else dark  # CHECK bright, then clears
+
         sender = _CountingSender()
         out = perform_realspace_escape(
             sender,
-            lambda: _make_frame(10, 10, 200),  # star present -> SC path
+            _sun_capture,
             in_supercruise=lambda: False,       # never enters SC
             sc_entry_timeout_s=0.3,
             sc_entry_poll_s=0.1,
+            timeout_s=999.0,                    # pitch loop won't time out
             post_sc_wait_s=0.0,
             sleeper=lambda _: None,
-            clock=_FixedClock(start=0.0, step=0.1),  # advances past the timeout
+            clock=_FixedClock(start=0.0, step=0.1),  # advances past the SC-entry timeout
         )
         assert out.sc_entered is False
         assert out.aligned is None
-        # Only the engage throttle landed — no pitch, no fly-away throttle, no target.
+        # Pitch cleared, engage throttle landed once, then bailed — no fly, no target.
         assert sender.actions().count("SetSpeed100") == 1
-        assert "PitchUpButton" not in sender.actions()
         assert "TargetNextRouteSystem" not in sender.actions()
 
     def test_no_star_skips_supercruise_targets_and_orients(self):
