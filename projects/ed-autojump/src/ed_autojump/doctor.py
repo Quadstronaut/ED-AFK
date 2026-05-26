@@ -97,16 +97,6 @@ def check_binds_preset(binds_path: Path) -> CheckResult:
     return _pass("binds_preset", f"{binds_path.name} OK")
 
 
-def check_edhm() -> CheckResult:
-    from .hud.detect import detect_edhm
-    edhm = detect_edhm()
-    if edhm.ui_installed or edhm.dll_installed:
-        bits = []
-        if edhm.ui_installed: bits.append("UI")
-        if edhm.dll_installed: bits.append("DLL")
-        return _pass("edhm", f"found: {', '.join(bits)}")
-    return _warn("edhm", "not installed — bot will fall back to GraphicsConfigurationOverride.xml")
-
 
 def check_status_files(journal_dir: Path) -> CheckResult:
     status = journal_dir / "Status.json"
@@ -175,7 +165,6 @@ def run_all_checks(cfg: Config) -> list[CheckResult]:
         check_status_files(journal_dir),
         check_pydirectinput(),
         check_panic_hotkey(),
-        check_edhm(),
     ]
 
 
