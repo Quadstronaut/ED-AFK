@@ -113,7 +113,7 @@ class CvConfig:
     capture_backend: str = "dxcam-cpp"
     require_sdr: bool = True
     require_borderless_windowed: bool = True
-    target_resolution: tuple[int, int] = (2560, 1440)
+    target_resolution: tuple[int, int] = (1920, 1080)
     ocr_engine: str = "tesseract"
 
 
@@ -211,73 +211,6 @@ class NavConfig:
 
 
 @dataclass
-class EscapeConfig:
-    """Post-FSDJump star escape configuration.
-
-    escape_mode:
-        "compass" (DEFAULT) — compass-driven get-off-star, NO brightness. Target
-          the star (Select Target Ahead) so the nav-compass points at it, then
-          PITCH it UNDER the ship — compass-gated: pitch up until the target dot is
-          well below the nose (offset_y <= -compass_clear_offset_y) OR goes hollow
-          (behind). ONLY once the nose is off the star: engage supercruise if not
-          already in it, fly clear, target the next hop, and orient. NEVER throttles
-          while the star is ahead (a failed pitch bails without throttle). The jump
-          itself fires from the orchestrator's engage gate. See compass_* knobs.
-        "refuel" (DEPRECATED — WRONG, do not use) — journal-driven scoop via
-          Supercruise Assist. SC Assist is a collision-prone approach autopilot, not
-          a scoop: it rams the star. Kept for reference only. See refuel_* knobs.
-        "brightness" — vision-sensed sun-avoid: CHECK the top-2/3 of the screen
-          (bottom 1/3 is cockpit, excluded), and if a bright star is present pitch
-          up HARD and sustained until it is completely gone, then accelerate (star
-          recedes) and compass-align toward the next target.
-        "sc_assist" — Supercruise-Assist orbital framework (not live-validated;
-          requires SC Assist module, throttle-mode setting, Hyperspace Dethrottle).
-        "blind" — legacy fixed-pitch macro from perform_star_escape() (fallback).
-
-    sun_region: (x, y, w, h) of the capture region.
-        (0,0,0,0) => compute the TOP 2/3 of the primary screen at runtime
-        (full width, y=0..0.667*H) — the bottom 1/3 is cockpit and excluded.
-    """
-
-    escape_mode: str = "compass"       # "compass" (default) | "brightness" | "refuel" (DEPRECATED) | "sc_assist" | "blind"
-    # --- "compass" mode (DEFAULT): target star -> compass pitch-under -> fly -----
-    #     clear -> target next -> orient. NO brightness. See the class docstring.
-    star_target_action: str = "SelectTarget"   # ED action that locks the star ("Select Target Ahead")
-    compass_target_settle_s: float = 0.4   # wait after targeting before reading the compass
-    compass_clear_offset_y: float = 0.6    # star is "under us" when its compass dot offset_y <= -this (or hollow/behind)
-    compass_pitch_hold_s: float = 1.0      # PitchUpButton hold per iteration (hard, sustained)
-    compass_pitch_settle_s: float = 1.0    # wait after each pitch for rotational momentum to settle before re-reading
-    compass_max_iters: int = 20            # max pitch presses before bailing (a bail NEVER throttles)
-    compass_timeout_s: float = 30.0        # abort the pitch-under after this many seconds (failsafe)
-    compass_fly_clear_s: float = 7.0       # seconds flying away from the star before targeting the next hop
-    sun_bright_thresh: int = 125       # grayscale pixel value threshold (EDAPGui default)
-    sun_present_frac: float = 0.02     # bright fraction above which a star IS present (CHECK)
-    sun_detect_samples: int = 3        # grabs to sample for the CHECK; max-of-N beats a flaky black frame
-    sun_clear_frac: float = 0.005      # bright fraction below which the star is "completely gone"
-    sun_pitch_hold_s: float = 1.0      # PitchUpButton hold per iteration — HARD sustained pitch
-    sun_timeout_s: float = 20.0        # abort the pitch-clear after this many seconds
-    sun_region: tuple = (0, 0, 0, 0)   # (x,y,w,h); (0,0,0,0) => auto TOP 2/3 of screen
-    # "refuel" mode (DEPRECATED — SC Assist rams the star; journal-driven).
-    # approach_throttle is the ONE live-tunable knob if you ever use it.
-    refuel_approach_throttle: str = "SetSpeed75"  # throttle while closing on the star
-    refuel_orbit_s: float = 3.0        # seconds on SC-assist orbit before cancelling it
-    refuel_post_depart_wait_s: float = 7.0  # seconds clear of the star before orienting
-    refuel_rate_epsilon: float = 0.05  # Scooped-rate plateau tolerance (tonnes)
-    # Smack recovery: emergency drop INTO the star (SupercruiseExit BodyType:Star).
-    smack_recovery: bool = True        # run recovery on a star emergency-drop
-    smack_cooldown_s: float = 50.0     # wait before re-triggering FSD (~45 s cooldown + margin)
-    smack_post_sc_wait_s: float = 7.0  # seconds in supercruise before targeting next hop
-    # Fly-clear phase: after the star clears center, throttle AWAY from it to put
-    # distance between ship and star BEFORE turning toward the (behind-star) target.
-    # Without this, aligning to the target points the nose back at the star and the
-    # throttle drives straight into it.
-    clear_throttle: str = "SetSpeed100"  # throttle action while flying clear (full ahead)
-    clear_s: float = 8.0                 # seconds to fly away from the star
-    clear_reenter_frac: float = 0.20     # if brightness exceeds this mid-clear, pitch up again
-    clear_step_s: float = 0.5            # poll/step interval during the clear phase
-
-
-@dataclass
 class VisionConfig:
     """Nav-compass alignment (orient the ship toward the next target).
 
@@ -351,7 +284,6 @@ class Config:
     menu_nav: MenuNavConfig = field(default_factory=MenuNavConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     nav: NavConfig = field(default_factory=NavConfig)
-    escape: EscapeConfig = field(default_factory=EscapeConfig)
 
 
 def _merge(section_obj: object, table: dict) -> None:
@@ -379,7 +311,7 @@ def load_config(path: str | Path | None = None) -> Config:
     for section_name in (
         "ship", "routing", "exploration", "safety", "input",
         "binds", "hud", "cv", "eddn", "paths", "launcher", "menu_nav",
-        "vision", "nav", "escape",
+        "vision", "nav",
     ):
         if section_name in raw:
             _merge(getattr(cfg, section_name), raw[section_name])

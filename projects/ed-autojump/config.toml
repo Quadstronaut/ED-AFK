@@ -42,7 +42,7 @@ graphics_override_fallback = true
 capture_backend = "dxcam-cpp"
 require_sdr = true
 require_borderless_windowed = true
-target_resolution = [2560, 1440]
+target_resolution = [1920, 1080]
 ocr_engine = "tesseract"
 
 [eddn]
@@ -79,51 +79,6 @@ deadzone = 0.10                # ignore sub-10% offsets -- don't chase sub-dot n
 timeout_s = 45.0               # give up aligning after this; then skip the jump
 settle_s = 1.4                 # wait after key release; ship momentum decays ~1-1.5 s; 1.4s safe margin
 align_samples = 7              # median of 7 reads robustly rejects transient cyan-UI spikes
-
-[escape]
-# Arrival + startup behaviour: how the ship gets off the star.
-#   "compass" (DEFAULT) — target the star (Select Target Ahead), use the nav-
-#     compass to PITCH it under the ship, then fly clear, target the next hop,
-#     and orient. NO brightness; never throttles while the star is ahead (a
-#     failed pitch bails without throttle). Needs [vision] on + a calibrated
-#     compass region (both set above). The jump fires from the engage gate.
-#   "brightness" — vision-sensed: pitch the bright star off the top-2/3 of the
-#     screen, accelerate, then compass-align.
-#   "refuel" (DEPRECATED — WRONG: Supercruise Assist rams the star). Do not use.
-#   "sc_assist" / "blind" — legacy.
-escape_mode = "compass"
-# compass-mode knobs (defaults shown). "under us" = the star's compass dot is
-# below the nose (offset_y <= -compass_clear_offset_y) OR hollow (behind us).
-compass_clear_offset_y = 0.6   # how far below centre the star dot must sit to count as "under us"
-compass_pitch_hold_s = 1.0     # PitchUpButton hold per iteration (hard, sustained)
-compass_pitch_settle_s = 1.0   # wait after each pitch for rotational momentum to settle before re-reading
-compass_max_iters = 20         # max pitch presses before bailing (a bail NEVER throttles)
-compass_timeout_s = 30.0       # abort the pitch-under after this many seconds
-compass_fly_clear_s = 7.0      # seconds flying away from the star before targeting the next hop
-# refuel knobs (DEPRECATED mode). approach_throttle is the ONE live-tune knob —
-# how hard to close on the star before the scoop-rate plateau cuts the throttle.
-refuel_approach_throttle = "SetSpeed75"
-refuel_orbit_s = 3.0            # seconds on SC-assist orbit before cancelling it
-refuel_post_depart_wait_s = 7.0  # seconds clear of the star before orienting
-refuel_rate_epsilon = 0.05     # Scooped-rate plateau tolerance (tonnes)
-# smack recovery: emergency drop INTO the star (SupercruiseExit BodyType:Star).
-smack_recovery = true
-smack_cooldown_s = 50.0        # wait before re-triggering FSD (~45 s cooldown + margin)
-smack_post_sc_wait_s = 7.0     # seconds in supercruise before targeting the next hop
-# brightness-mode tunables (only used when escape_mode = "brightness").
-sun_bright_thresh = 125     # grayscale pixel value threshold
-sun_present_frac = 0.02     # bright fraction above which a star IS present
-sun_clear_frac = 0.005      # bright fraction below which the star is "completely gone"
-sun_pitch_hold_s = 1.0      # PitchUpButton hold per iteration — HARD sustained pitch
-sun_timeout_s = 20.0        # abort the pitch-clear after this many seconds
-# Region to probe for star brightness: (x, y, w, h).
-# (0, 0, 0, 0) = auto-compute the TOP 2/3 of the primary screen at runtime.
-sun_region = [0, 0, 0, 0]
-# Fly-clear phase (brightness mode): after the star clears, fly AWAY before turning.
-clear_throttle = "SetSpeed100"  # throttle action while flying clear (full ahead)
-clear_s = 8.0                   # seconds to fly away from the star
-clear_reenter_frac = 0.20       # if brightness exceeds this fraction mid-clear, pitch up again
-clear_step_s = 0.5              # poll/step interval during the clear phase (seconds)
 
 [nav]
 # Press TargetNextRouteSystem (H) before each engage so the next route star
