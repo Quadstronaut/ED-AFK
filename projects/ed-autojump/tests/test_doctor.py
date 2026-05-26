@@ -76,7 +76,7 @@ def test_run_all_checks_returns_one_per_check(tmp_path: Path, monkeypatch):
     cfg = Config()
     cfg.paths.journal_dir = str(tmp_path)
     results = run_all_checks(cfg)
-    assert len(results) == 7  # journal, sessions, binds, status_files, pdi, panic_hotkey, edhm
+    assert len(results) == 6  # journal, sessions, binds, status_files, pdi, panic_hotkey
     names = [r.name for r in results]
     assert "journal_dir" in names
     assert "sessions_dir" in names

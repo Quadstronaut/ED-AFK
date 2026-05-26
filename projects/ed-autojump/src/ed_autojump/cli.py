@@ -217,12 +217,10 @@ def cmd_run(args) -> int:
     from datetime import datetime, timezone
 
     from .config import load_config
-    from .eddn.publisher import EddnPublisher
     from .journal.tail import JournalTail
     from .keys import NullSender, parse_binds
     from .panic import PanicSwitch
     from .panic_listener import HotkeyListener, _NullBackend, resolve_backend
-    from .planner.spansh import SpanshClient
     from .recorder import Recorder, default_session_path
     from .status.navroute import NavRouteReader
     from .status.status import StatusReader
@@ -279,34 +277,6 @@ def cmd_run(args) -> int:
         navroute_path = journal_dir / "NavRoute.json"
         status_reader = StatusReader(status_path)
         navroute_reader = NavRouteReader(navroute_path)
-
-    # EDDN publisher.
-    eddn_publisher = None
-    if cfg.eddn.publish:
-        eddn_publisher = EddnPublisher(
-            uploader_id=cfg.eddn.uploader_id,
-            software_name=cfg.eddn.software_name,
-            software_version=cfg.eddn.software_version,
-            enabled=True,
-        )
-
-    # Route planner adapter.
-    route_planner = None
-    if args.route_plot:
-        client = SpanshClient()
-
-        def _planner(source: str, dest: str, range_ly: float):
-            try:
-                return client.plot_route(
-                    source=source,
-                    destination=dest,
-                    range_ly=range_ly,
-                    efficiency=cfg.routing.efficiency,
-                )
-            except Exception as exc:  # noqa: BLE001
-                # Orchestrator catches + records; we don't need to here.
-                raise
-        route_planner = _planner
 
     # --launch: invoke MEL → wait main menu → optional menu nav → wait LoadGame
     # BEFORE the AFK loop begins. If the launch fails, abort with a clear
