@@ -125,6 +125,7 @@ Each step is `{ action = "<name>", <params> }`. Every step returns
 | `pitch` | `dir` ∈ {up,down}, `hold_s` | hold Pitch{Up,Down}Button (dead-reckoned, no vision) | bind unbound |
 | `pitch_compass` | `until` ∈ {edge,behind}, pitch knobs | compass-gated pitch: hold PitchUp until the TARGETED star's dot reaches the rim (`edge` ≈ 90° off the nose) or goes centred + hollow (`behind` ≈ directly astern) | star not confirmed there within budget |
 | `wait_for_event` | `event`, `timeout_s` | block until the journal logs `event` | timeout |
+| `wait_cooldown` | `since` (event), `s` | block until `s` seconds after the referenced event's timestamp (e.g. the realspace drop) — steps run *before* it eat into the wait, so no idle time is wasted | never |
 | `target_ahead` | — | press `SelectTarget` (lock the body in the reticle) | bind unbound |
 | `target_next_route` | — | press `TargetNextRouteSystem` (also cancels SC-assist) | bind unbound |
 | `sc_assist_orbit` | `settle_s=0.4` | run `navpanel.engage_supercruise_assist` (orbit the star, get around it) | any bind unbound |
@@ -240,11 +241,14 @@ steps = [
 ```
 
 ### `procedures/smack_recovery.toml`  (reflex: `SupercruiseExit` with `BodyType:Star`)
-You emergency-dropped INSIDE the star's exclusion zone. Face directly **away**
-from the star (centred + hollow), wait out the long cooldown, clear the target,
-then igniting the FSD spawns the game's **escape-vector** compass marker — fly
-that out of the exclusion zone into supercruise, put the star on the compass
-edge, fly clear for a longer 15 s (deeper gravity well), then orient and jump.
+You emergency-dropped INSIDE the star's exclusion zone. The ~45 s FSD cooldown
+starts the **instant you drop into realspace** (the `SupercruiseExit` log entry),
+so do the turn *during* it — face directly **away** from the star (centred +
+hollow) while the clock runs, don't idle. Once the cooldown's remainder is up,
+clear the target; igniting the FSD spawns the game's **escape-vector** compass
+marker — fly that out of the exclusion zone into supercruise, put the star on the
+compass edge, fly clear for a longer 15 s (deeper gravity well), then orient and
+jump.
 ```toml
 [on_required_fail]
 retry_from = "pitch_compass"
@@ -253,8 +257,8 @@ backoff_s = 2.0
 
 steps = [
   { action = "target_ahead" },                                    # lock the star (you dropped facing it)
-  { action = "pitch_compass", until = "behind", required = true },# star CENTRED + HOLLOW (directly astern)
-  { action = "wait", s = 45.0 },                                  # FSD cooldown after an emergency drop (~45 s)
+  { action = "pitch_compass", until = "behind", required = true },# face astern DURING the cooldown (don't idle)
+  { action = "wait_cooldown", since = "drop", s = 45.0 },         # wait only the REMAINING cooldown; timer started at the realspace drop
   { action = "target_ahead" },                                    # nothing ahead now -> CLEARS the star target
   { action = "press", bind = "Supercruise" },                     # ignite FSD -> spawns the escape-vector marker
   { action = "set_throttle", pct = 100 },
@@ -355,11 +359,15 @@ order.
   fail again. Confirmed: a failed orient generally means the geometry is still
   obstructed.
 - **Orbit duration** (`wait s=10`) acknowledged as a live-tune knob.
+- **Changing target cancels SC-assist — every time** (operator-confirmed). So the
+  `target_next_route` step both cancels assist *and* locks the next star in one
+  press; no separate deactivate step is needed.
+- **Smack cooldown is anchored to the realspace-drop timestamp**, not to when the
+  maneuvers begin. The dispatcher records the `SupercruiseExit` time; the
+  `wait_cooldown` step waits only the remainder, so the face-astern pitch runs
+  during the cooldown rather than after it.
 
 ### Open / verify-in-flight
-- **`target_next_route` cancelling SC-assist.** Operator believes one press both
-  cancels assist and locks the next star ("i think so"). Verify in a supervised
-  run; if it doesn't, add an explicit deactivate step (the macro is symmetric).
 - **Smack escape-vector decomposition.** See the flight-verify note under
   `smack_recovery` in §6.
 - **Compass vision is "jerky" (v1-acceptable).** The orient is a low-resolution,
