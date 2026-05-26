@@ -1,0 +1,24 @@
+# Reflex: emergency drop INSIDE the star's exclusion zone (SupercruiseExit,
+# BodyType:Star). Face astern during the cooldown, ignite the FSD to spawn the
+# escape vector, fly it out, then clear + jump. The ~45s cooldown timer is
+# anchored to the realspace drop, so the pitch below runs DURING it.
+[on_required_fail]
+retry_from = "pitch_compass"
+max_retries = 3
+backoff_s = 2.0
+
+steps = [
+  { action = "target_ahead" },
+  { action = "pitch_compass", until = "behind", required = true },
+  { action = "wait_cooldown", since = "drop", s = 45.0 },
+  { action = "target_ahead" },
+  { action = "press", bind = "Supercruise" },
+  { action = "set_throttle", pct = 100 },
+  { action = "orient_compass", required = true },
+  { action = "wait_for_event", event = "SupercruiseEntry", timeout_s = 30.0, required = true },
+  { action = "pitch_compass", until = "edge", required = true },
+  { action = "wait", s = 15.0 },
+  { action = "target_next_route" },
+  { action = "orient_compass", required = true },
+  { action = "engage_jump", required = true },
+]

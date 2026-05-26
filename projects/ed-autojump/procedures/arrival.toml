@@ -1,0 +1,19 @@
+# Runs on every LIVE FSDJump (you arrive in supercruise). Orbit AROUND the star
+# so a next-hop hidden behind it becomes reachable, THEN orient + jump.
+parallel_tracks = ["honk"]
+
+[on_required_fail]
+retry_from = "sc_assist_orbit"   # re-orbit changes geometry; re-orienting alone would just fail again
+max_retries = 3
+backoff_s = 2.0
+
+steps = [
+  { action = "target_ahead" },
+  { action = "sc_assist_orbit" },
+  { action = "wait", s = 10.0 },
+  { action = "target_next_route" },
+  { action = "set_throttle", pct = 100 },
+  { action = "wait", s = 10.0 },
+  { action = "orient_compass", required = true },
+  { action = "engage_jump", required = true },
+]

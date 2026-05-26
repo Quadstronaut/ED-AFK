@@ -1,0 +1,21 @@
+# Fresh load: ship sits at the star in NORMAL space. Pitch the star to the
+# compass EDGE, throttle to engage the FSD, enter SC, full throttle again
+# (separate axis), wait, orient, jump. No orbit (orbit is arrival-only).
+parallel_tracks = ["honk"]
+
+[on_required_fail]
+retry_from = "pitch_compass"
+max_retries = 3
+backoff_s = 2.0
+
+steps = [
+  { action = "target_ahead" },
+  { action = "pitch_compass", until = "edge", required = true },
+  { action = "set_throttle", pct = 100 },
+  { action = "engage_supercruise", required = true },
+  { action = "set_throttle", pct = 100 },
+  { action = "wait", s = 10.0 },
+  { action = "target_next_route" },
+  { action = "orient_compass", required = true },
+  { action = "engage_jump", required = true },
+]
