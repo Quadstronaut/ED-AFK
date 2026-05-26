@@ -126,3 +126,84 @@ STEP_REGISTRY.update({
     "wait_for_event": step_wait_for_event,
     "wait_cooldown": step_wait_cooldown,
 })
+
+
+def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
+    from ..executor.navpanel import engage_supercruise_assist
+    try:
+        engage_supercruise_assist(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s)
+        return True
+    except KeyError:
+        ctx.log("BindMissing", {"step": "sc_assist_orbit"})
+        return False
+
+
+def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
+    if ctx.compass_reader is None or ctx.frame_grabber is None:
+        ctx.log("OrientNoVision", {})
+        return False  # FAIL CLOSED — never proceed to jump without a confirmed orient
+    from ..executor.align import align_to_target
+    kwargs = dict(ctx.align_kwargs)
+    kwargs.update(align_overrides)
+    outcome = align_to_target(
+        ctx.compass_reader,
+        ctx.sender,
+        capture=ctx.frame_grabber,
+        clock=ctx.clock,
+        sleeper=ctx.sleeper,
+        samples=ctx.compass_samples,
+        **kwargs,
+    )
+    ctx.log("Orient", {"aligned": outcome.aligned, "reason": outcome.reason,
+                       "iterations": outcome.iterations})
+    return bool(outcome.aligned)
+
+
+def step_pitch_compass(
+    ctx: StepContext,
+    *,
+    until: str = "edge",
+    edge_frac: float = 0.6,
+    center_frac: float = 0.25,
+    pitch_hold: float = 1.0,
+    settle_s: float = 1.0,
+    max_iters: int = 20,
+    timeout_s: float = 30.0,
+) -> bool:
+    """Compass-gated pitch. PitchUp until the TARGETED star's dot reaches the
+    gate, then stop. NEVER throttles. Fails closed without vision."""
+    if ctx.compass_reader is None or ctx.frame_grabber is None:
+        ctx.log("PitchCompassNoVision", {"until": until})
+        return False
+    from ..executor.align import _measure
+
+    def _at_gate(read) -> bool:
+        if not read.found:
+            return False
+        if until == "behind":
+            return (not read.in_front) and read.magnitude <= center_frac
+        # "edge": dot near the rim (≈90° off the nose)
+        return read.magnitude >= edge_frac
+
+    start = ctx.clock()
+    for i in range(max_iters):
+        if ctx.clock() - start > timeout_s:
+            ctx.log("PitchCompassTimeout", {"until": until, "iters": i})
+            return False
+        read = _measure(ctx.compass_reader, ctx.frame_grabber, ctx.compass_samples)
+        if _at_gate(read):
+            ctx.log("PitchCompassDone", {"until": until, "iters": i,
+                                         "offset_y": read.offset_y,
+                                         "in_front": read.in_front})
+            return True
+        ctx.sender.press("PitchUpButton", hold=pitch_hold)
+        ctx.sleeper(settle_s)
+    ctx.log("PitchCompassMaxIters", {"until": until})
+    return False
+
+
+STEP_REGISTRY.update({
+    "sc_assist_orbit": step_sc_assist_orbit,
+    "orient_compass": step_orient_compass,
+    "pitch_compass": step_pitch_compass,
+})
