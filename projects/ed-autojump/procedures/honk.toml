@@ -1,0 +1,7 @@
+# The one parallel track. A plain key hold; FSSDiscoveryScan confirms it landed.
+parallel = true
+stop_on_event = "FSSDiscoveryScan"
+timeout_s = 12.0
+steps = [
+  { action = "press", bind = "ExplorationFSSDiscoveryScan", hold_s = 6.0 },
+]
