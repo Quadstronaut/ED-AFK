@@ -207,9 +207,9 @@ def cmd_replay(args) -> int:
 
 
 def cmd_run(args) -> int:
-    """Phase-12 main loop.
+    """Procedure-engine main loop.
 
-    Wires JournalTail → Orchestrator → executor dispatch with Recorder
+    Wires JournalTail → FlowRunner → procedure dispatch with Recorder
     snooping every event + outcome. By default uses NullSender (does not
     send keys); --engage-keys swaps in DirectInputSender driven by the
     parsed ED-AFK.4.2.binds preset.
@@ -220,12 +220,10 @@ def cmd_run(args) -> int:
     from .eddn.publisher import EddnPublisher
     from .journal.tail import JournalTail
     from .keys import NullSender, parse_binds
-    from .orchestrator import Orchestrator
     from .panic import PanicSwitch
     from .panic_listener import HotkeyListener, _NullBackend, resolve_backend
     from .planner.spansh import SpanshClient
     from .recorder import Recorder, default_session_path
-    from .state import GameState
     from .status.navroute import NavRouteReader
     from .status.status import StatusReader
 
@@ -347,13 +345,12 @@ def cmd_run(args) -> int:
             print(f"--launch failed: {result.status.value} — {result.detail}")
             return 1
 
-    state = GameState()
     # Wire nav-compass alignment when engaging keys. build_vision returns
     # (None, None) unless [vision] is enabled AND a region is calibrated, so
     # this is a no-op for everyone who hasn't run calibrate-compass.
-    compass_reader = frame_grabber = sun_grab = None
+    compass_reader = frame_grabber = None
     if args.engage_keys:
-        from .vision.capture import build_sun_grabber, build_vision
+        from .vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
         if compass_reader is not None:
             print(f"vision: alignment ON (backend={cfg.vision.backend}, "
@@ -365,43 +362,46 @@ def cmd_run(args) -> int:
             print(f"vision: alignment OFF ({reason}) — the ship will NOT be "
                   "steered. Run `ed-autojump calibrate-compass` and set "
                   "[vision].enabled = true to enable orientation.")
-        # The "get off the star" maneuver's dependency depends on the mode:
-        #   compass (DEFAULT) -> uses the NAV-COMPASS (compass_reader); NO sun grab.
-        #   brightness/sc_assist/refuel -> use the sun-brightness grabber (top 2/3).
-        #   blind -> fixed-timer pitch; needs neither.
-        escape_mode = cfg.escape.escape_mode
-        if escape_mode == "compass":
-            if compass_reader is None:
-                # Loud: compass mode without vision can't get off the star at all.
-                print("escape: mode='compass' but vision/compass is OFF — the ship "
-                      "will NOT get off the star (arrivals will stall at it). Run "
-                      "`ed-autojump calibrate-compass` and set [vision].enabled = true.")
-            else:
-                print("escape: mode='compass' — target star -> nav-compass pitch-under "
-                      "-> fly clear -> target next -> orient (no brightness, no scoop)")
-        elif escape_mode != "blind":
-            sun_grab = build_sun_grabber(cfg)
-            if sun_grab is None:
-                print(f"escape: mode={escape_mode!r} but sun grabber unavailable; "
-                      "startup get-off-star pitch disabled (jumps may stall at the star)")
-            elif escape_mode == "refuel":
-                print("escape: mode='refuel' (DEPRECATED — SC Assist rams the star); "
-                      f"compass align {'ON' if compass_reader is not None else 'OFF'}")
-            else:
-                print(f"escape: sensed mode={escape_mode!r} (sun region probe active)")
-    orch = Orchestrator(
+
+    from .flow import FlowRunner, load_procedures
+    from .flow.loader import validate_procedure
+    from .flow.steps import STEP_REGISTRY
+
+    proc_dir = Path(__file__).resolve().parents[2] / "procedures"
+    procedures = load_procedures(proc_dir)
+    # Fail fast on an invalid procedure file rather than improvising in flight.
+    problems = []
+    for proc in procedures.values():
+        problems += validate_procedure(proc, known_actions=STEP_REGISTRY.keys())
+    if problems:
+        for p in problems:
+            print(f"procedure error: {p}", file=sys.stderr)
+        return 2
+
+    align_kwargs = dict(
+        align_tol=cfg.vision.align_tol,
+        deadzone=cfg.vision.deadzone,
+        gain=cfg.vision.gain,
+        min_press=cfg.vision.min_press_s,
+        max_press=cfg.vision.max_press_s,
+        search_press=cfg.vision.search_press_s,
+        settle_s=cfg.vision.settle_s,
+        max_iters=cfg.vision.max_iters,
+        timeout_s=cfg.vision.timeout_s,
+    )
+
+    runner = FlowRunner(
+        procedures=procedures,
         sender=sender,
-        recorder=recorder,
-        state=state,
-        config=cfg,
-        panic_switch=panic,
         status_reader=status_reader,
         navroute_reader=navroute_reader,
-        eddn_publisher=eddn_publisher,
-        route_planner=route_planner,
         compass_reader=compass_reader,
         frame_grabber=frame_grabber,
-        sun_grab=sun_grab,
+        align_kwargs=align_kwargs,
+        compass_samples=cfg.vision.align_samples,
+        record=(recorder.record_outcome if recorder is not None else None),
+        tail=JournalTail(journal_dir),
+        panic_switch=panic,
     )
 
     # Startup route check. The jump loop only engages when a route is plotted;
@@ -433,7 +433,6 @@ def cmd_run(args) -> int:
         print("=" * 64)
 
     try:
-        tail = JournalTail(journal_dir)
         if args.duration <= 0:
             return 0
         # Resolve + start hotkey listener now that we know we'll be running.
@@ -449,17 +448,23 @@ def cmd_run(args) -> int:
                 f"{cfg.safety.panic_hotkey}); Ctrl+C in this terminal still trips panic."
             )
         listener.start()
-        orch.run_live(tail, duration_s=args.duration)
+        runner.run_live(duration_s=args.duration)
         return 0
     except KeyboardInterrupt:
         print("\ninterrupted — tripping panic switch")
         panic.trip()
-        orch.request_stop()
+        runner.request_stop()
         return 130
     finally:
         if listener is not None:
             listener.stop()
-        orch.shutdown()
+        # Release held keys best-effort; close recorder if one is open.
+        try:
+            sender.release_all()
+        except Exception:
+            pass
+        if recorder is not None:
+            recorder.close()
 
 
 def _build_launch_spec(cfg, *, commander=None, auth=None, product=None):
