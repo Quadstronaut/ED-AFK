@@ -53,9 +53,53 @@ def step_pitch(ctx: StepContext, *, dir: str, hold_s: float) -> bool:
     return _press(ctx, action, hold_s)
 
 
+def step_target_ahead(ctx: StepContext) -> bool:
+    # SelectTarget locks the body ahead; with NOTHING ahead it clears the target.
+    return _press(ctx, "SelectTarget")
+
+
+def step_target_next_route(ctx: StepContext) -> bool:
+    # Cancels Supercruise Assist AND locks the next route star in one press.
+    return _press(ctx, "TargetNextRouteSystem")
+
+
+def step_engage_jump(ctx: StepContext) -> bool:
+    st = ctx.status_supplier()
+    if st is not None and (
+        getattr(st, "docked", False)
+        or getattr(st, "fsd_charging", False)
+        or getattr(st, "fsd_cooldown", False)
+        or getattr(st, "fsd_mass_locked", False)
+        or getattr(st, "overheating", False)
+    ):
+        ctx.log("EngageBlocked", {"reason": "status_flag"})
+        return False
+    if not _press(ctx, "SetSpeed100"):
+        return False
+    return _press(ctx, "HyperSuperCombination")
+
+
+def step_engage_supercruise(ctx: StepContext, *, timeout_s: float = 30.0) -> bool:
+    st = ctx.status_supplier()
+    if st is not None and getattr(st, "in_supercruise", False):
+        return True  # already in SC; nothing to engage
+    if not _press(ctx, "Supercruise"):
+        return False
+    if ctx.event_waiter is None:
+        return True  # no journal wiring (unit tests) -> proceed
+    return ctx.event_waiter("SupercruiseEntry", timeout_s)
+
+
 STEP_REGISTRY: dict[str, Callable[..., bool]] = {
     "press": step_press,
     "wait": step_wait,
     "set_throttle": step_set_throttle,
     "pitch": step_pitch,
 }
+
+STEP_REGISTRY.update({
+    "target_ahead": step_target_ahead,
+    "target_next_route": step_target_next_route,
+    "engage_jump": step_engage_jump,
+    "engage_supercruise": step_engage_supercruise,
+})
