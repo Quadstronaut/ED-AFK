@@ -103,3 +103,26 @@ STEP_REGISTRY.update({
     "engage_jump": step_engage_jump,
     "engage_supercruise": step_engage_supercruise,
 })
+
+
+def step_wait_for_event(ctx: StepContext, *, event: str, timeout_s: float) -> bool:
+    if ctx.event_waiter is None:
+        return True  # no journal wiring (unit tests) -> proceed
+    return ctx.event_waiter(event, timeout_s)
+
+
+def step_wait_cooldown(ctx: StepContext, *, since: str, s: float) -> bool:
+    anchor = ctx.event_time(since)
+    if anchor is None:
+        ctx.sleeper(s)            # no anchor known -> wait the full cooldown
+        return True
+    remaining = (anchor + s) - ctx.clock()
+    if remaining > 0:
+        ctx.sleeper(remaining)
+    return True
+
+
+STEP_REGISTRY.update({
+    "wait_for_event": step_wait_for_event,
+    "wait_cooldown": step_wait_cooldown,
+})
