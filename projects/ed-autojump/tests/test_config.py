@@ -12,6 +12,7 @@ def test_default_config_loadable_without_file():
     assert isinstance(cfg, Config)
     assert cfg.routing.efficiency == 60
     assert cfg.exploration.honk is True
+    assert cfg.cv.target_resolution == (1920, 1080)
 
 
 def test_load_config_overrides_from_toml(tmp_path: Path):
