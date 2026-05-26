@@ -28,8 +28,14 @@ class Procedure:
     name: str
     steps: tuple[Step, ...]
     parallel: bool = False                 # this procedure is a background track
-    stop_on_event: Optional[str] = None    # journal event that ends a parallel track
-    timeout_s: float = 0.0                 # hard cap for a parallel track (0 = none)
+    # NOTE (v1): stop_on_event / timeout_s are RESERVED metadata — parsed and
+    # carried, but NOT yet enforced by the interpreter/dispatcher. v1 honk is a
+    # self-terminating fixed-length key hold, so its track ends naturally; the
+    # dispatcher joins parallel tracks on a fixed 15s cap (see dispatcher._run).
+    # A future parallel track that needs early exit on a journal match or its
+    # own timeout must add that enforcement before relying on these fields.
+    stop_on_event: Optional[str] = None    # (reserved) journal event meant to end a parallel track
+    timeout_s: float = 0.0                 # (reserved) intended hard cap for a parallel track (0 = none)
     parallel_tracks: tuple[str, ...] = ()  # procedures to launch concurrently at start
     on_required_fail: OnRequiredFail = field(default_factory=OnRequiredFail)
 
