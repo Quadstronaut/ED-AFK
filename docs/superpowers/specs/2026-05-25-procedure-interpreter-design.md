@@ -122,7 +122,8 @@ Each step is `{ action = "<name>", <params> }`. Every step returns
 | `press` | `bind`, `hold_s=0.05` | press a bound ED action for `hold_s` | bind unbound |
 | `wait` | `s` | sleep `s` seconds | never |
 | `set_throttle` | `pct` ∈ {0,25,50,75,100} | press the matching `SetSpeedN` | bind unbound |
-| `pitch` | `dir` ∈ {up,down}, `hold_s` | hold Pitch{Up,Down}Button (dead-reckoned) | bind unbound |
+| `pitch` | `dir` ∈ {up,down}, `hold_s` | hold Pitch{Up,Down}Button (dead-reckoned, no vision) | bind unbound |
+| `pitch_compass` | `until` ∈ {edge,behind}, pitch knobs | compass-gated pitch: hold PitchUp until the TARGETED star's dot reaches the rim (`edge` ≈ 90° off the nose) or goes centred + hollow (`behind` ≈ directly astern) | star not confirmed there within budget |
 | `wait_for_event` | `event`, `timeout_s` | block until the journal logs `event` | timeout |
 | `target_ahead` | — | press `SelectTarget` (lock the body in the reticle) | bind unbound |
 | `target_next_route` | — | press `TargetNextRouteSystem` (also cancels SC-assist) | bind unbound |
@@ -139,6 +140,15 @@ Notes:
   has no keybind; the macro walks the left nav panel
   (`FocusLeftPanel → UI_Select → UI_Right → UI_Select → close`). The arrival star
   is the auto-selected top row, so the macro is deterministic and vision-free.
+- `pitch_compass` repurposes the (otherwise-retired) compass-gated pitch loop
+  from `escape.py:pitch_star_under` + the cyan reader. `until = "edge"` gates on
+  the star's dot magnitude reaching the rim; `until = "behind"` gates on
+  hollow + small offset (centred astern). It is the get-the-star-out-of-the-way
+  primitive for `startup` and `smack_recovery` (arrival uses orbit instead).
+- `target_ahead` does double duty: it presses `SelectTarget` ("Select Target
+  Ahead"). With a body ahead it locks it; with **nothing** ahead (e.g. the star
+  is now behind you) the same press **clears** the target — that is how
+  `smack_recovery` "targets nothing" before igniting the FSD.
 
 ---
 
@@ -190,7 +200,7 @@ steps = [
 ### `procedures/arrival.toml`  (runs on every LIVE `FSDJump`; ship is in supercruise)
 ```toml
 [on_required_fail]
-retry_from = "orient_compass"
+retry_from = "sc_assist_orbit"   # re-orbit changes the geometry; a 2nd orient at the same obstructed angle would just fail again
 max_retries = 3
 backoff_s = 2.0
 
@@ -207,35 +217,62 @@ steps = [
 ```
 
 ### `procedures/startup.toml`  (fresh load: ship sits at the star in NORMAL space)
+Get the star to the **edge** of the compass (nose off it), then full throttle to
+engage the FSD, enter supercruise, full throttle **again** (SC throttle is a
+separate axis), wait, orient, jump. No orbit — orbit is arrival-only.
 ```toml
 [on_required_fail]
-retry_from = "orient_compass"
+retry_from = "pitch_compass"
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  { action = "target_ahead" },
-  { action = "set_throttle", pct = 100 },            # normal-space throttle to engage the FSD
-  { action = "engage_supercruise", required = true },# confirm SC entry via Status flag (fail closed)
-  { action = "sc_assist_orbit" },
+  { action = "target_ahead" },                              # lock the arrival star
+  { action = "pitch_compass", until = "edge", required = true },  # star to the EDGE of the compass
+  { action = "set_throttle", pct = 100 },                   # normal-space throttle to engage the FSD
+  { action = "engage_supercruise", required = true },       # confirm SC entry via Status flag (fail closed)
+  { action = "set_throttle", pct = 100 },                   # SC throttle is a SEPARATE axis — full again
   { action = "wait", s = 10.0 },
   { action = "target_next_route" },
-  { action = "set_throttle", pct = 100 },
-  { action = "wait", s = 10.0 },
   { action = "orient_compass", required = true },
   { action = "engage_jump", required = true },
 ]
 ```
 
 ### `procedures/smack_recovery.toml`  (reflex: `SupercruiseExit` with `BodyType:Star`)
+You emergency-dropped INSIDE the star's exclusion zone. Face directly **away**
+from the star (centred + hollow), wait out the long cooldown, clear the target,
+then igniting the FSD spawns the game's **escape-vector** compass marker — fly
+that out of the exclusion zone into supercruise, put the star on the compass
+edge, fly clear for a longer 15 s (deeper gravity well), then orient and jump.
 ```toml
+[on_required_fail]
+retry_from = "pitch_compass"
+max_retries = 3
+backoff_s = 2.0
+
 steps = [
-  { action = "pitch", dir = "up", hold_s = 4.0 },    # nose off the star
+  { action = "target_ahead" },                                    # lock the star (you dropped facing it)
+  { action = "pitch_compass", until = "behind", required = true },# star CENTRED + HOLLOW (directly astern)
+  { action = "wait", s = 45.0 },                                  # FSD cooldown after an emergency drop (~45 s)
+  { action = "target_ahead" },                                    # nothing ahead now -> CLEARS the star target
+  { action = "press", bind = "Supercruise" },                     # ignite FSD -> spawns the escape-vector marker
   { action = "set_throttle", pct = 100 },
-  { action = "wait_for_event", event = "SupercruiseEntry", timeout_s = 60.0 },  # FSD cooldown ~45s
-  { action = "wait", s = 7.0 },
+  { action = "orient_compass", required = true },                 # fly the escape vector out of the exclusion zone
+  { action = "wait_for_event", event = "SupercruiseEntry", timeout_s = 30.0, required = true },
+  { action = "pitch_compass", until = "edge", required = true },  # in SC now: star to the EDGE of the compass
+  { action = "wait", s = 15.0 },                                  # fly clear 15 s (stronger gravity well post-smack)
+  { action = "target_next_route" },
+  { action = "orient_compass", required = true },
+  { action = "engage_jump", required = true },
 ]
 ```
+
+> **Flight-verify (smack):** the exact decomposition of the escape-vector phase
+> — whether one `press Supercruise` + orient + throttle is enough to clear the
+> zone and auto-enter SC, or whether SC must be re-pressed once clear — is
+> modelled here as best-understood and must be confirmed in a supervised run.
+> Because every step is data, correcting it is a file edit, not a code change.
 
 These are the editing surface. Every number is a live-tune knob in execution
 order.
@@ -255,9 +292,13 @@ order.
 ### Removed / disabled for v1
 - `orchestrator.py` escape + engage methods → replaced by Dispatcher +
   Interpreter. (The journal/status plumbing inside it is lifted out, not lost.)
-- `executor/escape.py` — the `brightness`, `sc_assist`, `blind`, and compass
-  escape functions are retired; the pitch-under maneuver is no longer the escape
-  (orbit-around-star is). Keep only what a step needs.
+- `executor/escape.py` — the `sc_assist` and `blind` escape functions are
+  retired. The compass `pitch_star_under` loop is **repurposed** into the
+  `pitch_compass` step (not deleted). The **brightness** sun-avoid code is
+  **archived, not removed**: moved to `projects/ed-autojump/archive/brightness/`
+  with a header noting the v2 plan (a grid of brightness checks for directional
+  star response — see §11). It must stay out of the live import graph but remain
+  in the repo for v2 to bust back out.
 - `executor/fss.py`, `executor/dss.py`, `executor/refuel.py`, `docking/`,
   `launcher/`, `hud/`, `eddn/`, `planner/` — zero live callers for v1
   (audit-confirmed). Left on disk but unwired, or deleted, per the plan.
@@ -299,23 +340,57 @@ order.
 
 ---
 
-## 10. Risks & open questions
+## 10. Decisions & open questions
 
-- **Orbit duration.** `wait s=10` after `sc_assist_orbit` is a guess for "enough
-  angular travel to clear the star." Tune live; it is a one-line knob. Risk: a
-  very large/close star may need longer, or the SC-assist may not have reached a
-  stable orbit in 10 s.
-- **`target_next_route` cancelling SC-assist.** `navpanel.py` documents that
-  `TargetNextRouteSystem` both cancels assist and locks the next star. Verify in
-  flight that one press does both on the operator's build.
-- **Compass region vs resolution.** `[vision].region` was calibrated at
-  1920×1080 but `[cv].target_resolution` is 2560×1440. Confirm the live game
-  resolution and recalibrate `region` before trusting `orient_compass`.
-- **SC-assist availability.** `sc_assist_orbit` assumes the ship has Supercruise
-  Assist fitted and the nav-panel layout the macro expects. Pre-flight check
-  should confirm the module (extend the existing `Loadout` scan).
-- **Retry-from after orbit.** `retry_from = "orient_compass"` re-runs orient
-  without re-orbiting. If a failed orient means the geometry is still obstructed,
-  a second orient will also fail; consider `retry_from = "sc_assist_orbit"` if
-  flight testing shows that.
+### Resolved (operator)
+- **Display resolution.** The game runs **at 1080p** on the main monitor and the
+  hardware never goes higher. `[vision].region` calibrated at 1920×1080 is
+  therefore correct. Action: fix `[cv].target_resolution` to `[1920, 1080]` (the
+  `2560×1440` value is stale and misleading).
+- **SC-assist & Advanced Docking Computer are assumed fitted** for v1. No
+  pre-flight gating on them; accommodating ships *without* them is a later scope.
+- **Retry after a failed orient** resumes from the get-around step
+  (`sc_assist_orbit` for arrival, `pitch_compass` for startup/smack), not from
+  `orient_compass` — re-running orient at the same obstructed angle would just
+  fail again. Confirmed: a failed orient generally means the geometry is still
+  obstructed.
+- **Orbit duration** (`wait s=10`) acknowledged as a live-tune knob.
+
+### Open / verify-in-flight
+- **`target_next_route` cancelling SC-assist.** Operator believes one press both
+  cancels assist and locks the next star ("i think so"). Verify in a supervised
+  run; if it doesn't, add an explicit deactivate step (the macro is symmetric).
+- **Smack escape-vector decomposition.** See the flight-verify note under
+  `smack_recovery` in §6.
+- **Compass vision is "jerky" (v1-acceptable).** The orient is a low-resolution,
+  move-check-move-check loop that lands "within tolerance." Fine for v1
+  (functional is the bar). Smoothness is a v2 goal — see §11.
+- **Realtime compass vision (research).** *How do we get high-resolution,
+  near-realtime compass reads so the ship turns smoothly instead of
+  jank-stepping?* Carried as a v2 research project; the operator has a plan to
+  gather compass training data in an automated fashion.
+
+---
+
+## 11. Scope boundary & v2 earmarks
+
+**v1 is deliberately narrow: functional A→B route jumping that doesn't ram the
+star.** The design is built to *scale* into the rest without rework:
+
+- **Procedures are independent files.** Adding `docking`, `undocking`,
+  `refuel_via_purchase`, mining, Robigo, exobiology, etc. is dropping new files
+  in `procedures/` and (where needed) new primitives in the step library — no
+  surgery on existing procedures. This is the whole point of the editable-list
+  architecture. Those procedures are **out of v1 scope**.
+- **Brightness / directional star sensing (v2).** The archived brightness code
+  (§7) returns in v2 as a **grid of brightness checks** enabling *directional*
+  response to stars (know which way the star is, not just "bright ahead"). Kept
+  in `archive/brightness/`, out of the live path.
+- **High-resolution, near-realtime compass vision (v2).** Replace the jerky
+  low-res orient with an accurate, smooth closed loop so the ship turns fluidly
+  rather than stepping to "approximately within tolerance." Depends on the
+  realtime-vision research question (§10) and the operator's automated
+  data-gathering plan.
+- **Ships without SC-assist / Advanced Docking Computer (later).** v1 assumes
+  both are fitted; graceful handling of their absence is deferred.
 ```
