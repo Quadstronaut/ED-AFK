@@ -334,10 +334,95 @@ def step_hold_alignment(
     return False
 
 
+def step_orient_widget_ring(
+    ctx: StepContext, *,
+    timeout_s: float = 18.0,
+    settle_s: float = 0.45,
+    samples: int = 3,
+    gain_s_per_px: float = 0.18,     # press seconds per (|delta|/ring_r)
+    min_press: float = 0.04,
+    max_press: float = 0.25,
+) -> bool:
+    """FINE alignment stage: drive the target reticle ring onto the mouse widget.
+
+    Runs immediately AFTER orient_compass (the coarse stage, its own prior step).
+    Flag off -> no-op success: compass already oriented, there is nothing to
+    refine and re-running compass would double it. Flag on but unwired -> FAIL
+    CLOSED (never jump on an unconfirmed orient). Sign convention is the locked
+    widget-ring contract (spec §2): delta_y>0 (ring below) -> PitchDown,
+    delta_x>0 (ring right) -> YawRight, NO inversion. NOT shared with align.py.
+    """
+    # Flag off -> no-op success (NOT a passthrough — compass is its own prior
+    # step now, so passing through would double-run it).
+    if not getattr(ctx, "widget_ring_enabled", False):
+        return True
+
+    # Flag on but unwired -> fail closed.
+    if ctx.widget_ring_reader is None or ctx.widget_frame_grabber is None:
+        ctx.log("WidgetRingNoVision", {})
+        return False
+
+    from ..vision.widget_ring import median_of
+
+    start = ctx.clock()
+    iterations = 0
+    while ctx.clock() - start < timeout_s:
+        reads = [ctx.widget_ring_reader.read(ctx.widget_frame_grabber())
+                 for _ in range(samples)]
+        read = median_of(reads)
+        iterations += 1
+        if not read.found:
+            ctx.sleeper(settle_s)
+            continue
+        if read.aligned:
+            ctx.log("WidgetRingAligned", {"iters": iterations,
+                    "dx": read.delta_x, "dy": read.delta_y})
+            return True
+        # Bind-missing catch lives HERE in the loop — an unbound Yaw/Pitch key
+        # must log and continue to the timeout, never propagate a KeyError out
+        # of the step.
+        try:
+            _correct_widget_ring(ctx.sender, read,
+                                 gain_s_per_px=gain_s_per_px,
+                                 min_press=min_press, max_press=max_press)
+        except KeyError as e:
+            ctx.log("BindMissing", {"action": str(e), "step": "orient_widget_ring"})
+        ctx.sleeper(settle_s)
+    ctx.log("WidgetRingTimeout", {"iters": iterations})
+    return False
+
+
+def _hold_for(delta_px: float, ring_r: float, gain_s_per_px: float,
+              min_press: float, max_press: float) -> float:
+    """Proportional press seconds for a pixel error, normalised by ring radius.
+    Distinct from align._press_for (normalises by abs(offset)). Guards ring_r
+    against 0 so a degenerate median read can't div-by-zero."""
+    return max(min_press, min(max_press,
+               gain_s_per_px * delta_px / max(ring_r, 1.0)))
+
+
+def _correct_widget_ring(sender, read, *, gain_s_per_px, min_press, max_press):
+    """One dominant-axis micro-correction. Per-axis deadzone is read.deadzone_px.
+    delta_y>0 (ring below widget) -> pitch DOWN; delta_x>0 -> yaw RIGHT. NO
+    inversion (the OPPOSITE of compass.py's pre-inverted offset_y)."""
+    dx, dy = read.delta_x, read.delta_y
+    if abs(dx) >= abs(dy):
+        if abs(dx) > read.deadzone_px:
+            hold = _hold_for(abs(dx), read.ring_radius_px, gain_s_per_px,
+                             min_press, max_press)
+            sender.press("YawRightButton" if dx > 0 else "YawLeftButton", hold=hold)
+    else:
+        if abs(dy) > read.deadzone_px:
+            hold = _hold_for(abs(dy), read.ring_radius_px, gain_s_per_px,
+                             min_press, max_press)
+            sender.press("PitchDownButton" if dy > 0 else "PitchUpButton", hold=hold)
+
+
 STEP_REGISTRY.update({
     "sc_assist_orbit": step_sc_assist_orbit,
     "nav_panel_target": step_nav_panel_target,
     "orient_compass": step_orient_compass,
     "pitch_compass": step_pitch_compass,
     "hold_alignment": step_hold_alignment,
+    "orient_widget_ring": step_orient_widget_ring,
 })
