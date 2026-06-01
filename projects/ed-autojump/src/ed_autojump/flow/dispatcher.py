@@ -28,6 +28,9 @@ class FlowRunner:
         frame_grabber: Optional[Callable[[], Any]] = None,
         align_kwargs: Optional[dict] = None,
         compass_samples: int = 7,
+        widget_ring_enabled: bool = False,
+        widget_ring_reader: Optional[Any] = None,
+        widget_frame_grabber: Optional[Callable[[], Any]] = None,
         record: Optional[Callable[[str, Any], None]] = None,
         tail: Optional[Any] = None,
         status_reader: Optional[Any] = None,
@@ -44,6 +47,9 @@ class FlowRunner:
         self.frame_grabber = frame_grabber
         self.align_kwargs = align_kwargs or {}
         self.compass_samples = compass_samples
+        self.widget_ring_enabled = widget_ring_enabled
+        self.widget_ring_reader = widget_ring_reader
+        self.widget_frame_grabber = widget_frame_grabber
         self.record = record
         self.tail = tail
         self.status_reader = status_reader
@@ -72,6 +78,9 @@ class FlowRunner:
             frame_grabber=self.frame_grabber,
             align_kwargs=self.align_kwargs,
             compass_samples=self.compass_samples,
+            widget_ring_enabled=self.widget_ring_enabled,
+            widget_ring_reader=self.widget_ring_reader,
+            widget_frame_grabber=self.widget_frame_grabber,
             status_supplier=lambda: self._latest_status,
             event_time=self.event_time,
             event_waiter=self._wait_for_event,

@@ -119,6 +119,35 @@ def test_heat_guard_missing_bind_records_and_debounces():
     assert any(n == "HeatEjectBindMissing" for n, _ in logs)
 
 
+def test_make_context_threads_widget_ring_fields():
+    """A FlowRunner built with the widget-ring params produces a context that
+    carries all three through to the steps (the only place a real run wires
+    them). Without this, widget_ring_alignment=on is inert at runtime."""
+    sender = FakeSender()
+    reader = object()
+    grab = lambda: object()
+    r = FlowRunner(
+        procedures={}, sender=sender, clock=lambda: 0.0, sleeper=lambda s: None,
+        status_supplier=lambda: None,
+        widget_ring_enabled=True, widget_ring_reader=reader,
+        widget_frame_grabber=grab,
+    )
+    ctx = r._make_context()
+    assert ctx.widget_ring_enabled is True
+    assert ctx.widget_ring_reader is reader
+    assert ctx.widget_frame_grabber is grab
+
+
+def test_make_context_widget_ring_defaults_off():
+    """Default construction leaves the fine pass disabled and unwired."""
+    r = FlowRunner(procedures={}, sender=FakeSender(), clock=lambda: 0.0,
+                   sleeper=lambda s: None, status_supplier=lambda: None)
+    ctx = r._make_context()
+    assert ctx.widget_ring_enabled is False
+    assert ctx.widget_ring_reader is None
+    assert ctx.widget_frame_grabber is None
+
+
 def test_parallel_track_runs_alongside_main():
     sender = FakeSender()
     procs = {
