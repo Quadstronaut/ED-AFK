@@ -31,3 +31,46 @@ def test_wait_cooldown_without_anchor_waits_full():
                       event_time=lambda name: None)
     assert STEP_REGISTRY["wait_cooldown"](ctx, since="drop", s=45.0) is True
     assert sleeps == [45.0]
+
+
+def test_press_until_event_returns_true_when_event_fires():
+    # Honk: hold the discovery-scanner key, return True when FSSDiscoveryScan
+    # is logged within the timeout. The key gets pressed regardless.
+    sender = FakeSender()
+    ctx = StepContext(
+        sender=sender,
+        event_waiter=lambda ev, t: ev == "FSSDiscoveryScan",
+    )
+    ok = STEP_REGISTRY["press_until_event"](
+        ctx, bind="ExplorationFSSDiscoveryScan",
+        event="FSSDiscoveryScan", timeout_s=0.1,
+    )
+    assert ok is True
+    assert sender.actions() == ["ExplorationFSSDiscoveryScan"]
+
+
+def test_press_until_event_returns_false_on_timeout():
+    # Event never arrives within the timeout -> ok is False, key still pressed.
+    sender = FakeSender()
+    ctx = StepContext(
+        sender=sender,
+        event_waiter=lambda ev, t: False,
+    )
+    ok = STEP_REGISTRY["press_until_event"](
+        ctx, bind="ExplorationFSSDiscoveryScan",
+        event="FSSDiscoveryScan", timeout_s=0.1,
+    )
+    assert ok is False
+    assert sender.actions() == ["ExplorationFSSDiscoveryScan"]
+
+
+def test_press_until_event_falls_back_without_waiter():
+    # No journal wiring (unit tests / no tail) -> press for the cap, return True.
+    sender = FakeSender()
+    ctx = StepContext(sender=sender)
+    ok = STEP_REGISTRY["press_until_event"](
+        ctx, bind="ExplorationFSSDiscoveryScan",
+        event="FSSDiscoveryScan", timeout_s=0.05,
+    )
+    assert ok is True
+    assert sender.actions() == ["ExplorationFSSDiscoveryScan"]

@@ -1,7 +1,8 @@
-# The one parallel track. A plain key hold; FSSDiscoveryScan confirms it landed.
+# The one parallel track. Hold the Discovery Scanner key until the journal
+# logs FSSDiscoveryScan (scan-completed confirmation), capped at 12s.
+# The press_until_event step owns the event + timeout; the parallel header
+# fields stop_on_event/timeout_s remain reserved (not enforced by v1).
 parallel = true
-stop_on_event = "FSSDiscoveryScan"
-timeout_s = 12.0
 steps = [
-  { action = "press", bind = "ExplorationFSSDiscoveryScan", hold_s = 6.0 },
+  { action = "press_until_event", bind = "ExplorationFSSDiscoveryScan", event = "FSSDiscoveryScan", timeout_s = 12.0 },
 ]

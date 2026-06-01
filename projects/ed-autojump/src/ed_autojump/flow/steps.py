@@ -122,9 +122,36 @@ def step_wait_cooldown(ctx: StepContext, *, since: str, s: float) -> bool:
     return True
 
 
+def step_press_until_event(
+    ctx: StepContext,
+    *,
+    bind: str,
+    event: str,
+    timeout_s: float,
+) -> bool:
+    """Hold a key while waiting for a journal event; return True if the event
+    fires within `timeout_s`, else False. Press is atomic in v1 (no key_up
+    primitive) so the key is held the FULL timeout even if the event fires
+    early — fine for the discovery scanner (extra hold after the scan registers
+    is harmless). Falls back to a plain timed press when no journal is wired
+    (unit tests)."""
+    if ctx.event_waiter is None:
+        return _press(ctx, bind, hold_s=timeout_s)
+    import threading
+    holder = threading.Thread(
+        target=lambda: _press(ctx, bind, hold_s=timeout_s),
+        daemon=True,
+    )
+    holder.start()
+    seen = ctx.event_waiter(event, timeout_s)
+    holder.join(timeout=timeout_s + 1.0)
+    return seen
+
+
 STEP_REGISTRY.update({
     "wait_for_event": step_wait_for_event,
     "wait_cooldown": step_wait_cooldown,
+    "press_until_event": step_press_until_event,
 })
 
 
