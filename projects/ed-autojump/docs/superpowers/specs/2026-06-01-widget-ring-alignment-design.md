@@ -617,8 +617,17 @@ v2→v3 blockers A–K and v3 council blockers L–S are resolved and unchanged 
 | N2 | annulus band samples off-crop near edge | holistic (nit) | §2.5: acknowledged, fail-closed → compass re-run; keep `CROP_H=600` |
 | N3 | §6 understated smack retry (whole escape-vector spawn) | holistic (nit) | §6: smack `retry_from=pitch_compass` re-runs full spawn, bounded `max_retries=3` |
 
-### Implementation-discovered corrections (TDD; to ratify at review gate)
+### Implementation-discovered corrections (TDD)
 
 | id | issue (found while implementing) | resolution |
 |----|----------------------------------|------------|
-| AA | annulus "orange ÷ band-area" rejects realistic thin rings (~3 px ring fills only ~25 % of the 0.4r band; threshold 0.55 unreachable) | §4.1: redefine fill = in-band ÷ (in-band + in-core) orange — ring≈1.0, filled-disc≈0.36; same band, same 0.55 threshold, thickness-robust. Empirically verified. |
+| AA | annulus "orange ÷ band-area" rejects realistic thin rings (~3 px ring fills only ~25 % of the 0.4r band; threshold 0.55 unreachable) | §4.1: redefine fill = in-band ÷ (in-band + in-core) orange — ring≈1.0, filled-disc≈0.36; same band, same 0.55 threshold, thickness-robust. **RATIFIED 3/3 at the review gate** (each seat re-derived the 0.36 filled-disc result by hand; the circularity gate independently rejects arcs, minRadius rejects the widget dot). |
+
+## 10. Council gate record
+
+| gate | verdict | notes |
+|------|---------|-------|
+| brainstorm/spec v3→v3.1 | 3/3 kinematics, fix-blockers folded | A–S |
+| spec v4 re-gate | 3/3 kinematics, 3/3 pipeline, 0 regressions | W–Z + N1–N3 folded → v4.1 |
+| plan gate | 3/3 implementable + tests-sound; 2 plan-gate fixes | cli outer-scope init; context-before-step order |
+| **review gate** | **3/3 ship-it; 0 blockers, 0 regressions; AA ratified; reached_end = 3/3** | 564 passed, 25 skipped, 1 deselected (game-required); doctor + validate_procedure clean |
