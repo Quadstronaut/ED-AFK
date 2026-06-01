@@ -9,6 +9,9 @@ def test_defaults_are_safe_and_off():
     assert cfg.vision.enabled is False           # opt-in until calibrated
     assert cfg.vision.backend == "yolo-onnx"     # light path by default
     assert cfg.vision.region == (0, 0, 0, 0)     # uncalibrated sentinel
+    # widget-ring fine pass: off by default, 1080p centre crop
+    assert cfg.vision.widget_ring_alignment is False
+    assert cfg.vision.widget_crop == (510, 240, 900, 600)
 
 
 def test_toml_overrides_vision(tmp_path):
@@ -22,6 +25,8 @@ def test_toml_overrides_vision(tmp_path):
             "conf_threshold = 0.4",
             "region = [10, 20, 300, 300]",
             "timeout_s = 30.0",
+            "widget_ring_alignment = true",
+            "widget_crop = [0, 0, 1280, 720]",
         ]),
         encoding="utf-8",
     )
@@ -32,3 +37,5 @@ def test_toml_overrides_vision(tmp_path):
     assert cfg.vision.conf_threshold == 0.4
     assert cfg.vision.region == (10, 20, 300, 300)  # list coerced to tuple
     assert cfg.vision.timeout_s == 30.0
+    assert cfg.vision.widget_ring_alignment is True
+    assert cfg.vision.widget_crop == (0, 0, 1280, 720)  # list coerced to tuple

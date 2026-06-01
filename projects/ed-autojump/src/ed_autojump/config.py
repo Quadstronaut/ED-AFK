@@ -252,6 +252,11 @@ class VisionConfig:
     timeout_s: float = 45.0
     # Reads per measurement; >1 enables temporal-median spike rejection.
     align_samples: int = 7
+    # Widget-ring FINE alignment (additive after orient_compass). OFF by
+    # default; needs the HUD mouse widget in "point" mode. widget_crop is the
+    # 1080p centre rect (x, y, w, h) the WidgetRingReader captures.
+    widget_ring_alignment: bool = False
+    widget_crop: tuple[int, int, int, int] = (510, 240, 900, 600)
 
 
 @dataclass
