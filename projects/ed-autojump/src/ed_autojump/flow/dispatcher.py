@@ -33,6 +33,7 @@ class FlowRunner:
         status_reader: Optional[Any] = None,
         navroute_reader: Optional[Any] = None,
         panic_switch: Optional[Any] = None,
+        heat_eject_cooldown_s: float = 10.0,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -48,11 +49,13 @@ class FlowRunner:
         self.status_reader = status_reader
         self.navroute_reader = navroute_reader
         self.panic_switch = panic_switch
+        self.heat_eject_cooldown_s = heat_eject_cooldown_s
 
         self._event_times: dict[str, float] = {}
         self._latest_status: Optional[Any] = status_supplier()
         self._caught_up = False
         self._startup_done = False
+        self._last_eject_t: float = 0.0
         self.stop_requested = False
 
     # ---- public state accessors ------------------------------------------
@@ -136,6 +139,32 @@ class FlowRunner:
             if st is not None:
                 self._latest_status = st
 
+    def heat_guard(self) -> None:
+        """Reactive heatsink eject. Fires DeployHeatSink the moment the
+        OverHeating status flag (bit 20, Heat >= 1.0) is observed, debounced
+        by `heat_eject_cooldown_s` so a stuck flag can't spam the launcher.
+
+        Caveat: OverHeating means damage has *already started* (>=1.0). A
+        threshold-on-Status.Heat trigger would be cleaner, but Frontier only
+        writes the Heat field above some internal cutoff so it's unreliable
+        as a continuous signal. Flag-driven is good-enough for the alpha."""
+        st = self._latest_status
+        if st is None or not getattr(st, "overheating", False):
+            return
+        if (self.clock() - self._last_eject_t) < self.heat_eject_cooldown_s:
+            return
+        try:
+            self.sender.press("DeployHeatSink")
+        except KeyError:
+            # Bind missing -> log once, still debounce so we don't spam-fail.
+            if self.record is not None:
+                self.record("HeatEjectBindMissing", {})
+            self._last_eject_t = self.clock()
+            return
+        self._last_eject_t = self.clock()
+        if self.record is not None:
+            self.record("HeatEject", {"t": self._last_eject_t})
+
     def _maybe_startup(self) -> None:
         if self._startup_done:
             return
@@ -158,6 +187,7 @@ class FlowRunner:
             if self.panic_switch is not None and getattr(self.panic_switch, "tripped", False):
                 break
             self._poll_status()
+            self.heat_guard()
             events = self.tail.step()
             if not events:
                 self._caught_up = True

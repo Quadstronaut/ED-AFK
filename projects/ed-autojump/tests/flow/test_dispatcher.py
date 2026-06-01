@@ -47,6 +47,78 @@ def test_supercruise_exit_not_star_is_ignored():
     assert sender.actions() == []
 
 
+def _heat_runner(*, overheating, clock, sender=None, cooldown=10.0, record=None):
+    """FlowRunner with a mutable status whose `overheating` we control."""
+    sender = sender or FakeSender()
+    st = SimpleNamespace(overheating=overheating)
+    r = FlowRunner(
+        procedures={},
+        sender=sender,
+        clock=clock,
+        sleeper=lambda s: None,
+        status_supplier=lambda: st,
+        heat_eject_cooldown_s=cooldown,
+        record=record,
+    )
+    return r, sender, st
+
+
+def test_heat_guard_ejects_when_overheating():
+    r, sender, _ = _heat_runner(overheating=True, clock=lambda: 100.0)
+    r.heat_guard()
+    assert sender.actions() == ["DeployHeatSink"]
+
+
+def test_heat_guard_no_op_when_cool():
+    r, sender, _ = _heat_runner(overheating=False, clock=lambda: 100.0)
+    r.heat_guard()
+    assert sender.actions() == []
+
+
+def test_heat_guard_no_op_when_no_status():
+    sender = FakeSender()
+    r = FlowRunner(
+        procedures={}, sender=sender, clock=lambda: 0.0, sleeper=lambda s: None,
+        status_supplier=lambda: None,
+    )
+    r.heat_guard()
+    assert sender.actions() == []
+
+
+def test_heat_guard_debounces_within_cooldown():
+    """Two heat_guard calls inside the cooldown window -> one eject only."""
+    t = [100.0]
+    r, sender, _ = _heat_runner(overheating=True, clock=lambda: t[0], cooldown=10.0)
+    r.heat_guard()                # fires at t=100
+    t[0] = 105.0                  # 5s later, still hot
+    r.heat_guard()                # debounced, no fire
+    assert sender.actions() == ["DeployHeatSink"]
+
+
+def test_heat_guard_fires_again_after_cooldown():
+    t = [100.0]
+    r, sender, _ = _heat_runner(overheating=True, clock=lambda: t[0], cooldown=10.0)
+    r.heat_guard()                # fires at t=100
+    t[0] = 110.5                  # past 10s window
+    r.heat_guard()                # fires again
+    assert sender.actions() == ["DeployHeatSink", "DeployHeatSink"]
+
+
+def test_heat_guard_missing_bind_records_and_debounces():
+    """If DeployHeatSink is unbound, log it and debounce so we don't loop."""
+    logs: list[tuple[str, dict]] = []
+    sender = FakeSender(unbound={"DeployHeatSink"})
+    r = FlowRunner(
+        procedures={}, sender=sender, clock=lambda: 100.0, sleeper=lambda s: None,
+        status_supplier=lambda: SimpleNamespace(overheating=True),
+        record=lambda name, payload: logs.append((name, payload)),
+    )
+    r.heat_guard()
+    r.heat_guard()                # still inside cooldown -> no retry
+    assert sender.actions() == [] # nothing pressed
+    assert any(n == "HeatEjectBindMissing" for n, _ in logs)
+
+
 def test_parallel_track_runs_alongside_main():
     sender = FakeSender()
     procs = {
