@@ -33,10 +33,29 @@ class KeyEvent:
 
 
 class Sender(ABC):
-    """Abstract base. Subclasses implement `press`."""
+    """Abstract base. Subclasses implement `press`, `key_down`, `key_up`.
+
+    `press` is one atomic press-and-release. `key_down`/`key_up` are the
+    independent primitives for callers that need to hold a key across an
+    external wait (e.g. honk holds the Discovery Scanner key down until
+    the journal logs FSSDiscoveryScan, then releases — no fixed duration).
+    """
 
     @abstractmethod
     def press(self, action: str, *, hold: float = 0.05) -> KeyEvent:
+        ...
+
+    @abstractmethod
+    def key_down(self, action: str) -> KeyEvent:
+        """Press the key for `action` and DO NOT release it. The caller is
+        responsible for a matching `key_up`. KeyError if action is unbound."""
+        ...
+
+    @abstractmethod
+    def key_up(self, action: str) -> KeyEvent:
+        """Release the key for `action`. Safe to call after a key_down;
+        also tolerated when the key was never down (the OS ignores it).
+        KeyError if action is unbound."""
         ...
 
     def hold(self, action: str, *, hold: float) -> KeyEvent:
@@ -60,6 +79,18 @@ class NullSender(Sender):
             scancode=0,
             modifier_scancode=None,
             hold_s=hold,
+        )
+
+    def key_down(self, action: str) -> KeyEvent:
+        return KeyEvent(
+            timestamp=time.time(), action=f"{action}:down",
+            scancode=0, modifier_scancode=None, hold_s=0.0,
+        )
+
+    def key_up(self, action: str) -> KeyEvent:
+        return KeyEvent(
+            timestamp=time.time(), action=f"{action}:up",
+            scancode=0, modifier_scancode=None, hold_s=0.0,
         )
 
 
@@ -101,6 +132,32 @@ class RecordingSender(Sender):
     def actions(self) -> list[str]:
         return [e.action for e in self.events]
 
+    def key_down(self, action: str) -> KeyEvent:
+        binding = self.binds.get(action)
+        if binding is None or not binding.key:
+            raise KeyError(f"no keyboard binding for action {action!r}")
+        sc = scancode_for(binding.key)
+        mod_sc = scancode_for(binding.modifier) if binding.modifier else None
+        ev = KeyEvent(
+            timestamp=time.time(), action=f"{action}:down",
+            scancode=sc, modifier_scancode=mod_sc, hold_s=0.0,
+        )
+        self.events.append(ev)
+        return ev
+
+    def key_up(self, action: str) -> KeyEvent:
+        binding = self.binds.get(action)
+        if binding is None or not binding.key:
+            raise KeyError(f"no keyboard binding for action {action!r}")
+        sc = scancode_for(binding.key)
+        mod_sc = scancode_for(binding.modifier) if binding.modifier else None
+        ev = KeyEvent(
+            timestamp=time.time(), action=f"{action}:up",
+            scancode=sc, modifier_scancode=mod_sc, hold_s=0.0,
+        )
+        self.events.append(ev)
+        return ev
+
 
 class LoggingSender(Sender):
     """Wraps a real Sender and records EVERY press to the Recorder.
@@ -133,6 +190,16 @@ class LoggingSender(Sender):
     def press(self, action: str, *, hold: float = 0.05) -> KeyEvent:
         ev = self._inner.press(action, hold=hold)
         self._log(action, hold, ev)
+        return ev
+
+    def key_down(self, action: str) -> KeyEvent:
+        ev = self._inner.key_down(action)
+        self._log(f"{action}:down", 0.0, ev)
+        return ev
+
+    def key_up(self, action: str) -> KeyEvent:
+        ev = self._inner.key_up(action)
+        self._log(f"{action}:up", 0.0, ev)
         return ev
 
     def press_raw(self, scancode: int, *, extended: bool = False, hold: float = 0.05) -> KeyEvent:
@@ -221,7 +288,10 @@ class DirectInputSender(Sender):
             hold_s=hold,
         )
 
-    def press(self, action: str, *, hold: float = 0.05) -> KeyEvent:
+    def _resolve_binding_args(self, action: str):
+        """Resolve `action` to its scancode args. Returns (sc, sc_arg,
+        mod_sc, mod_arg). KeyError if action is unbound. RuntimeError if
+        the sender has no binds at all."""
         if self.binds is None:
             raise RuntimeError(
                 f"DirectInputSender has no binds — cannot resolve action {action!r}"
@@ -234,10 +304,12 @@ class DirectInputSender(Sender):
         sc_ext = is_extended(binding.key)
         mod_sc = scancode_for(binding.modifier) if binding.modifier else None
         mod_ext = is_extended(binding.modifier) if binding.modifier else False
-
         sc_arg = self._scancode_arg(sc, extended=sc_ext)
         mod_arg = self._scancode_arg(mod_sc, extended=mod_ext) if mod_sc is not None else None
+        return sc, sc_arg, mod_sc, mod_arg
 
+    def press(self, action: str, *, hold: float = 0.05) -> KeyEvent:
+        sc, sc_arg, mod_sc, mod_arg = self._resolve_binding_args(action)
         self._ever_pressed.add(sc)
         if mod_sc is not None:
             self._ever_pressed.add(mod_sc)
@@ -255,6 +327,28 @@ class DirectInputSender(Sender):
             scancode=sc,
             modifier_scancode=mod_sc,
             hold_s=hold,
+        )
+
+    def key_down(self, action: str) -> KeyEvent:
+        sc, sc_arg, mod_sc, mod_arg = self._resolve_binding_args(action)
+        self._ever_pressed.add(sc)
+        if mod_sc is not None:
+            self._ever_pressed.add(mod_sc)
+            self._pdi.scancode_keyDown(mod_arg, _pause=False)
+        self._pdi.scancode_keyDown(sc_arg, _pause=False)
+        return KeyEvent(
+            timestamp=time.time(), action=f"{action}:down",
+            scancode=sc, modifier_scancode=mod_sc, hold_s=0.0,
+        )
+
+    def key_up(self, action: str) -> KeyEvent:
+        sc, sc_arg, mod_sc, mod_arg = self._resolve_binding_args(action)
+        self._pdi.scancode_keyUp(sc_arg, _pause=False)
+        if mod_sc is not None:
+            self._pdi.scancode_keyUp(mod_arg, _pause=False)
+        return KeyEvent(
+            timestamp=time.time(), action=f"{action}:up",
+            scancode=sc, modifier_scancode=mod_sc, hold_s=0.0,
         )
 
     def release_all(self) -> None:

@@ -122,36 +122,46 @@ def step_wait_cooldown(ctx: StepContext, *, since: str, s: float) -> bool:
     return True
 
 
-def step_press_until_event(
+def step_hold_until_event(
     ctx: StepContext,
     *,
     bind: str,
     event: str,
-    timeout_s: float,
+    max_hold_s: float = 30.0,
 ) -> bool:
-    """Hold a key while waiting for a journal event; return True if the event
-    fires within `timeout_s`, else False. Press is atomic in v1 (no key_up
-    primitive) so the key is held the FULL timeout even if the event fires
-    early — fine for the discovery scanner (extra hold after the scan registers
-    is harmless). Falls back to a plain timed press when no journal is wired
-    (unit tests)."""
-    if ctx.event_waiter is None:
-        return _press(ctx, bind, hold_s=timeout_s)
-    import threading
-    holder = threading.Thread(
-        target=lambda: _press(ctx, bind, hold_s=timeout_s),
-        daemon=True,
-    )
-    holder.start()
-    seen = ctx.event_waiter(event, timeout_s)
-    holder.join(timeout=timeout_s + 1.0)
-    return seen
+    """Press the key DOWN, wait for `event` to be logged, then release.
+
+    The success path is purely log-gated — the key is released the instant
+    the journal records the event, not on a fixed timer. `max_hold_s` is a
+    safety backstop only (so a missing event can't deadlock the parallel
+    track); the default 30s is way longer than any real honk and only fires
+    if something has gone badly wrong (broken keybind, scanner disabled).
+
+    Returns True if the event fired before the safety cap, False otherwise.
+    The key is ALWAYS released (try/finally), even on the safety-cap path
+    or if the waiter raises."""
+    try:
+        ctx.sender.key_down(bind)
+    except KeyError:
+        ctx.log("BindMissing", {"action": bind, "phase": "down"})
+        return False
+    try:
+        if ctx.event_waiter is None:
+            # No journal wiring (unit-test fallback with no waiter): no way
+            # to learn of completion, so just release and report success.
+            return True
+        return ctx.event_waiter(event, max_hold_s)
+    finally:
+        try:
+            ctx.sender.key_up(bind)
+        except KeyError:
+            ctx.log("BindMissing", {"action": bind, "phase": "up"})
 
 
 STEP_REGISTRY.update({
     "wait_for_event": step_wait_for_event,
     "wait_cooldown": step_wait_cooldown,
-    "press_until_event": step_press_until_event,
+    "hold_until_event": step_hold_until_event,
 })
 
 
