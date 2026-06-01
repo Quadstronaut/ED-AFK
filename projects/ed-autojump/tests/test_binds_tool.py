@@ -49,6 +49,23 @@ def test_installed_binds_parse_cleanly(tmp_path: Path):
     assert binds.preset_name == "ED-AFK"
 
 
+def test_install_reproduces_canonical_binds_byte_for_byte(tmp_path: Path):
+    """install-binds MUST reproduce the canonical pulled preset exactly, so
+    'install' == 'what's in Elite right now'. The canonical ED-AFK.4.2.binds is
+    the single source of truth (edited in-game, synced via pull-binds); install
+    copies it verbatim. This regression guards against any transform/generation
+    ever sneaking back into the install path and making it non-idempotent."""
+    import importlib.resources as pkg_resources
+    canonical = (
+        pkg_resources.files("ed_autojump")
+        .joinpath("binds/ED-AFK.4.2.binds")
+        .read_text(encoding="utf-8")
+    )
+    cfg = _cfg(tmp_path)
+    dest = install_binds_preset(cfg, dest_dir=tmp_path)
+    assert dest.read_text(encoding="utf-8") == canonical
+
+
 def test_swap_start_preset_writes_only_line_two(tmp_path: Path):
     cfg = _cfg(tmp_path)
     p = _player_start_preset(tmp_path)
