@@ -15,7 +15,7 @@ backoff_s = 2.0
 
 steps = [
   # ── Real-space recovery during the smack cooldown ─────────────────────
-  { action = "set_throttle", pct = 33 },                                                    # 0
+  { action = "set_throttle", pct = 50 },                                                    # 0
   { action = "nav_panel_target" },                                                           # 1 row 0 = arrival star
   { action = "pitch_compass", until = "behind", required = true },                           # 2
   { action = "wait_cooldown", since = "drop", s = 45.0 },                                    # 3
