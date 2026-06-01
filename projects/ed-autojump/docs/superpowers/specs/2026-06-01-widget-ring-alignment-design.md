@@ -21,6 +21,12 @@ preserved verbatim.
   and the loop is two-stage (compass coarse → widget fine, additive). New
   ledger rows T–V in §9. The council must re-gate v4 because the pipeline shape
   changed, even though the kinematics and per-frame CV are unchanged.
+- **v4 council re-gate verdict (2026-06-01)** — sonnet-architect + sonnet-implementer
+  + opus-holistic: **3/3 `kinematics_agrees`**, **3/3 `pipeline_agrees`**,
+  **0 regressions** (A–S all held). Verdicts split 2 fix-blockers / 1 ship-it,
+  all blockers wiring-spec gaps or arithmetic nits, none fatal. Folded into this
+  revision as ledger rows **W–Z + N1–N3** (§9). Architect: *"architecturally
+  sound and physically realisable… none of the A–S blockers regressed."*
 
 ---
 
@@ -110,10 +116,21 @@ enough to hold the ring once compass has brought it near centre, and no bigger.
   search a 120×120 box at the crop centre.
 - **Why 900×600 is enough**: compass aligns to ~20 % of screen height ≈ 216 px
   of error. The crop spans ±300 px vertically and ±450 px horizontally from
-  centre, so the ring centre (≤216 px off) always lands inside the crop, with
-  margin for the ring radius (18–90 px). If compass under-aligns so badly the
-  ring is outside the crop, the reader simply returns `not_found` and the step
-  fails closed (§6) — it never invents a target.
+  centre, so the ring **centre** (≤216 px off) always lands inside the crop
+  (margin 84 px at the worst case). [council nit N1, implementer] Ring *edges*
+  may clip the crop boundary at maximum radius (216 + 90 = 306 > 300), but
+  `HoughCircles` detects by centre position — not edges — and the annulus fill
+  stays ≥ 88 % of the band, well above the 0.55 threshold, so a real ring is
+  still accepted. [council nit N2, holistic] If compass under-aligns so badly
+  the ring *centre* is outside the crop, the reader returns `not_found` and the
+  step fails closed (§6) — it never invents a target.
+- **Annulus gate may clip near the crop edge** (accepted, fail-closed): at the
+  worst case the band's far edge reaches `216 + 1.2·90 = 324 px > 300 px`
+  half-height, so a few annulus rows are off-crop and the orange-fill ratio
+  drops. If that ever drops a *real* ring to `not_found`, the step times out and
+  `on_required_fail` re-runs compass (§6) — the intended fail-closed path, not a
+  silent miss. We keep `CROP_H = 600` rather than bumping to 700: the extra rows
+  buy nothing HoughCircles needs, and the clip case is already self-healing.
 - **No full-screen capture, ever.** A dedicated centre-crop `ScreenGrabber`
   feeds `read()`; it is distinct from the compass-region grabber.
 
@@ -367,6 +384,13 @@ nudges are tiny and the FSD spool budget is short).
   `cli.py`'s `validate_procedure(proc, known_actions=STEP_REGISTRY.keys())`
   runs at startup over every loaded TOML. An unregistered action → unknown-action
   error at load. [council FATAL, unanimous 3/3]
+  - **Ordering (council B4, architect).** Register `orient_widget_ring` in
+    `steps.py` **before** (or in the *same commit* as) the `arrival.toml` /
+    `smack_recovery.toml` inserts. If the TOMLs reference the action before it's
+    in `STEP_REGISTRY`, `validate_procedure` makes **every** CLI invocation exit
+    2. The implementation order is: **steps.py (define + register) → context.py
+    (3 fields) → dispatcher.py (3 params) → cli.py (build + wire) → TOML
+    inserts**, so no intermediate commit is ever broken.
 
 - **`flow/context.py`** — `StepContext` gains **three** fields:
   ```python
@@ -381,18 +405,58 @@ nudges are tiny and the FSD spool budget is short).
   `widget_ring_enabled: bool = False`, `widget_ring_reader=None`,
   `widget_frame_grabber=None`; stores them; `_make_context()` passes all three
   into `StepContext`. (The single place a real run builds its context.)
-- **`vision/capture.py` + `config.py`** — `[vision]` gains
-  `widget_ring_alignment: bool` (default **False**) and (optional)
-  `widget_crop` override (default the 1080p 900×600 centre rect). A
-  `build_widget_vision(cfg)` factory (sibling of `build_vision`) returns
-  `(WidgetRingReader, centre_crop_grabber)` when the flag is on, else
-  `(None, None)`; it NEVER raises (missing deps → off, like `build_vision`).
-  The centre-crop grabber is a `ScreenGrabber` over the 900×600 centre rect.
-- **`cli.py`** — when `widget_ring_alignment` is on, call `build_widget_vision`,
-  run `verify_widget_rendered(reader, grabber)` at preflight, and pass the flag
-  + reader + grabber into `FlowRunner`. If `verify_widget_rendered` is False,
-  abort preflight with:
-  `"mouse widget not detected — enable HUD mouse widget in 'point' mode (see ED-AFK preset) before running with widget_ring_alignment=on"`.
+- **`config.py` — config home, PINNED (council B1, architect).** The two new
+  keys are **fields on the existing `VisionConfig` dataclass** (`config.py`,
+  the `VisionConfig` near line 214) — *not* a new TOML section:
+  ```python
+  widget_ring_alignment: bool = False
+  widget_crop: tuple[int, int, int, int] = (510, 240, 900, 600)  # x, y, w, h
+  ```
+  TOML key is therefore `[vision].widget_ring_alignment` (and
+  `[vision].widget_crop`). Every consumer reads `cfg.vision.widget_ring_alignment`
+  and `cfg.vision.widget_crop`. This pins the access path so the CLI and factory
+  below are unambiguous.
+- **`vision/capture.py` — `build_widget_vision(cfg)` factory** (sibling of
+  `build_vision`). Returns **`(WidgetRingReader, centre_crop_grabber.grab)`**
+  when `cfg.vision.widget_ring_alignment` is on, else `(None, None)`. It NEVER
+  raises (missing deps → off, like `build_vision`).
+  - **Returns the bound `.grab` callable, NOT the `ScreenGrabber` object**
+    (council B3, holistic). `build_vision` returns `grabber.grab`; a
+    `ScreenGrabber` instance is **not** callable, and every call site does
+    `ctx.widget_frame_grabber()` / `capture()`. Returning the object →
+    `TypeError` at the first grab. The `widget_frame_grabber` StepContext field
+    holds the bound `.grab`, matching `frame_grabber`'s contract exactly.
+  - **It constructs its OWN `ScreenGrabber` over `cfg.vision.widget_crop`** (the
+    900×600 centre rect) — it NEVER wraps or delegates to the compass-region
+    grabber from `build_vision` (council nit, architect). `WidgetRingResolutionError`
+    (per-call crop-size guard) is the runtime backstop if the wrong grabber is
+    ever passed in by a wiring mistake.
+- **`cli.py` — exact insertion (council B2, architect + implementer).** Inside
+  the existing `if args.engage_keys:` block, **after** the `build_vision(cfg)`
+  call (which today sits ~line 337) and **before** the `FlowRunner(...)`
+  construction (~lines 376–388), add:
+  ```python
+  widget_ring_reader = widget_frame_grabber = None
+  if cfg.vision.widget_ring_alignment:
+      from .vision.capture import build_widget_vision
+      widget_ring_reader, widget_frame_grabber = build_widget_vision(cfg)
+      if widget_ring_reader is None or widget_frame_grabber is None:
+          print("widget_ring_alignment=on but vision is unavailable "
+                "(install the [vision] extra)", file=sys.stderr)
+          return 2
+      if not verify_widget_rendered(widget_ring_reader, widget_frame_grabber):
+          print("mouse widget not detected — enable HUD mouse widget in "
+                "'point' mode (see ED-AFK preset) before running with "
+                "widget_ring_alignment=on", file=sys.stderr)
+          return 2
+  ```
+  Then add to the existing `FlowRunner(...)` call:
+  ```python
+  widget_ring_enabled=cfg.vision.widget_ring_alignment,
+  widget_ring_reader=widget_ring_reader,
+  widget_frame_grabber=widget_frame_grabber,
+  ```
+  (`verify_widget_rendered` is imported from `.vision.widget_ring`.)
 - **`procedures/arrival.toml` / `procedures/smack_recovery.toml`** — **INSERT a
   new step** right after the targeted `orient_compass` lines (do NOT rename
   compass). With the flag off the new step is an instant no-op success, so the
@@ -432,6 +496,14 @@ within the ring, leaving margin for residual sway during the spool.
 - **Ring outside the crop** (compass under-aligned worse than ~300 px) →
   `not_found` → timeout → fail closed; `on_required_fail` re-runs from an
   earlier step (which re-runs compass), giving the fine pass another chance.
+  **In `smack_recovery` specifically** (council nit N3, holistic): its
+  `on_required_fail.retry_from = "pitch_compass"` (step 2), so a fine-step
+  failure re-runs the **whole escape-vector spawn** — pitch-up, throttle,
+  Supercruise press, re-target, re-orient — not just compass. This is
+  intentional and unchanged from v3.1 (the prior `orient_compass` at step 11 had
+  the same retry target), and is bounded by `max_retries = 3`. In `arrival` the
+  retry target is the plain compass orient, so there it really does just re-run
+  compass.
 - **Wrong crop size** → `WidgetRingResolutionError` (preflight message + per-call
   backstop).
 - **Ring detected but widget missing** → `not_found` (both required).
@@ -525,3 +597,15 @@ v2→v3 blockers A–K and v3 council blockers L–S are resolved and unchanged 
 | T | v3 implied near-full-screen ROI | §2.5: capture is a 900×600 centre crop; crop-local coords; `widget_frame_grabber` |
 | U | v3 *replaced* compass orient (rename) | §1/§3/§4.3: widget-ring is an **additive** fine step *after* `orient_compass`; TOML INSERTS, doesn't rename |
 | V | v3 flag-off passthrough would double-run compass | §4.2: flag-off is a **no-op True**; test 12 rewritten |
+
+### v4 council re-gate fixes (folded into this revision)
+
+| id | issue (council) | seat | resolution |
+|----|------------------|------|------------|
+| W | config home for `widget_ring_alignment`/`widget_crop` unpinned | architect (plan-gate) | §4.3: **fields on existing `VisionConfig`**, TOML key `[vision]`, access `cfg.vision.*` |
+| X | `build_widget_vision` return type ambiguous — object isn't callable | holistic (spec-level) | §4.3: returns **`.grab` bound callable**, not the `ScreenGrabber`; mirrors `build_vision` |
+| Y | cli.py wiring insertion point + ordering vague; flag inert at runtime | architect + implementer (plan-gate) | §4.3: exact `if args.engage_keys` block + `FlowRunner` args; impl order steps→context→dispatcher→cli→TOML |
+| Z | registration-vs-TOML ordering (re-flag of fatal L) | architect (spec-level) | §4.3: register in steps.py **before/same-commit** as TOML inserts |
+| N1 | §2.5 crop-margin math wrong (clips 6 px at r=90) | implementer (nit) | §2.5: reworded — Hough votes on centre; annulus ≥88 % ≫ 0.55 |
+| N2 | annulus band samples off-crop near edge | holistic (nit) | §2.5: acknowledged, fail-closed → compass re-run; keep `CROP_H=600` |
+| N3 | §6 understated smack retry (whole escape-vector spawn) | holistic (nit) | §6: smack `retry_from=pitch_compass` re-runs full spawn, bounded `max_retries=3` |
