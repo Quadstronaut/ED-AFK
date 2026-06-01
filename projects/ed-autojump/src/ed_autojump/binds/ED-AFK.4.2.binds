@@ -7,75 +7,99 @@
 <Root PresetName="ED-AFK" MajorVersion="4" MinorVersion="2">
   <KeyboardLayout>en-US</KeyboardLayout>
   <HyperSuperCombination>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_J" />
     <Secondary Device="{NoDevice}" Key="" />
   </HyperSuperCombination>
   <Supercruise>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_K" />
     <Secondary Device="{NoDevice}" Key="" />
   </Supercruise>
   <SelectTarget>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_T" />
     <Secondary Device="{NoDevice}" Key="" />
   </SelectTarget>
   <TargetNextRouteSystem>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_H" />
     <Secondary Device="{NoDevice}" Key="" />
   </TargetNextRouteSystem>
   <SetSpeedZero>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_X" />
     <Secondary Device="{NoDevice}" Key="" />
   </SetSpeedZero>
   <SetSpeed25>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_C" />
     <Secondary Device="{NoDevice}" Key="" />
   </SetSpeed25>
   <SetSpeed50>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_V" />
     <Secondary Device="{NoDevice}" Key="" />
   </SetSpeed50>
   <SetSpeed75>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_B" />
     <Secondary Device="{NoDevice}" Key="" />
   </SetSpeed75>
   <SetSpeed100>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_N" />
     <Secondary Device="{NoDevice}" Key="" />
   </SetSpeed100>
   <PitchUpButton>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_S" />
     <Secondary Device="{NoDevice}" Key="" />
   </PitchUpButton>
   <PitchDownButton>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_W" />
     <Secondary Device="{NoDevice}" Key="" />
   </PitchDownButton>
   <YawLeftButton>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_A" />
     <Secondary Device="{NoDevice}" Key="" />
   </YawLeftButton>
   <YawRightButton>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_D" />
     <Secondary Device="{NoDevice}" Key="" />
   </YawRightButton>
   <ExplorationFSSDiscoveryScan>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_Equals" />
     <Secondary Device="{NoDevice}" Key="" />
   </ExplorationFSSDiscoveryScan>
   <FocusLeftPanel>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_1" />
     <Secondary Device="{NoDevice}" Key="" />
   </FocusLeftPanel>
+  <FocusCommsPanel>
+    <Primary Device="Keyboard" Key="Key_2" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </FocusCommsPanel>
+  <FocusRadarPanel>
+    <Primary Device="Keyboard" Key="Key_3" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </FocusRadarPanel>
+  <FocusRightPanel>
+    <Primary Device="Keyboard" Key="Key_4" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </FocusRightPanel>
   <UI_Select>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_Enter" />
     <Secondary Device="{NoDevice}" Key="" />
   </UI_Select>
+  <UI_Left>
+    <Primary Device="Keyboard" Key="Key_LeftArrow" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </UI_Left>
   <UI_Right>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_RightArrow" />
     <Secondary Device="{NoDevice}" Key="" />
   </UI_Right>
   <DeployHeatSink>
-    <Primary Device="{NoDevice}" Key="" />
+    <Primary Device="Keyboard" Key="Key_Minus" />
     <Secondary Device="{NoDevice}" Key="" />
   </DeployHeatSink>
+  <ShipSpotLightToggle>
+    <Primary Device="Keyboard" Key="Key_L" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </ShipSpotLightToggle>
+  <NightVisionToggle>
+    <Primary Device="Keyboard" Key="Key_G" />
+    <Secondary Device="{NoDevice}" Key="" />
+  </NightVisionToggle>
 </Root>

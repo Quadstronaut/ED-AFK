@@ -28,7 +28,12 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-from .keys.scancodes import KEY_TO_SCANCODE
+from .keys.scancodes import EXTENDED_KEY_TO_SCANCODE, KEY_TO_SCANCODE
+
+# Whitelist of every Key_* name the sender can resolve. The two scancode
+# tables are split (8-bit standard vs 0xE0-prefixed extended) but both are
+# valid as `<Primary Key="..." />` values, so the linter accepts either.
+_VALID_KEYS: frozenset[str] = frozenset(KEY_TO_SCANCODE) | frozenset(EXTENDED_KEY_TO_SCANCODE)
 
 
 # ── Actions the bot's CODE calls (mechanically derived) ───────────────────
@@ -127,7 +132,7 @@ def lint_keymap(bindings: dict[str, str]) -> None:
     bad_keys = [
         f"{action}={key!r}"
         for action, key in bindings.items()
-        if key and key not in KEY_TO_SCANCODE
+        if key and key not in _VALID_KEYS
     ]
     if bad_keys:
         raise LintError(
