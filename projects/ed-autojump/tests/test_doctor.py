@@ -38,10 +38,19 @@ def test_sessions_dir_created_and_writable(tmp_path: Path):
 
 def test_binds_preset_fixture_passes():
     """A fully-populated binds preset (the legacy fixture) must pass the
-    doctor check.  The live preset is intentionally blank (user fills keys
-    via keymap.md); doctor readiness on the live preset is a runtime concern,
-    not a CI concern."""
+    doctor check.  The live preset is now fully bound too (it's the canonical
+    pulled binds), so it passes — see test_live_binds_passes_doctor below."""
     binds_path = Path(__file__).parent / "fixtures" / "ED-AFK.legacy.binds"
+    r = check_binds_preset(binds_path)
+    assert r.status == "PASS", r.detail
+
+
+def test_live_binds_passes_doctor():
+    """The canonical live binds must satisfy every CRITICAL_ACTION."""
+    binds_path = (
+        Path(__file__).parent.parent
+        / "src" / "ed_autojump" / "binds" / "ED-AFK.4.2.binds"
+    )
     r = check_binds_preset(binds_path)
     assert r.status == "PASS", r.detail
 

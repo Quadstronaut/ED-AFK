@@ -39,11 +39,10 @@ def test_install_binds_preset_writes_file(tmp_path: Path):
 
 
 def test_installed_binds_parse_cleanly(tmp_path: Path):
-    """The live preset is intentionally sparse (all keys blank — user fills
-    them in via keymap.md + binds_generate).  install_binds_preset copies it
-    verbatim; we only assert it's well-formed XML with the right preset name.
-    Key-binding presence is validated by test_binds_coverage and
-    test_binds_generate tests."""
+    """The live preset is the canonical pulled binds (edited in-game, synced
+    via pull-binds).  install_binds_preset copies it verbatim; we only assert
+    it's well-formed XML with the right preset name. Key-binding presence is
+    validated by test_binds_coverage and test_binds_validate tests."""
     cfg = _cfg(tmp_path)
     dest = install_binds_preset(cfg, dest_dir=tmp_path)
     binds = parse_binds(dest)

@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CANONICAL ED-AFK binds preset: the single source of truth.
+  Edited IN-GAME, then synced into the repo with the pull-binds command
+  (run: python -m ed_autojump.cli pull-binds, then re-run with the apply flag).
+  Do NOT regenerate or hand-rewrite the action blocks. Validate with:
+      python -m ed_autojump.binds_validate
+-->
 <Root PresetName="ED-AFK" MajorVersion="4" MinorVersion="2">
 	<KeyboardLayout>en-US</KeyboardLayout>
 	<MouseXMode Value="" />

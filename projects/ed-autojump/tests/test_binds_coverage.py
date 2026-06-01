@@ -21,21 +21,20 @@ Two layers of defence:
 The test fails fast on either: missing binding, or AST-discovered action
 that isn't in our known set (so removing an action also forces an update).
 
-NOTE: completeness of the LIVE preset is now enforced at generation time by
-`binds_generate.REQUIRED_ACTIONS` (see `tests/test_binds_generate.py`).
-The two tests here that loaded the live preset have been replaced by a single
-test that checks the generated XML enumerates every REQUIRED_ACTION as a tag.
+NOTE: completeness of the LIVE preset is now enforced by
+`binds_validate.REQUIRED_ACTIONS` against the live-pulled binds (see
+`tests/test_binds_validate.py`). The test here checks every REQUIRED_ACTION
+appears as a bound tag in that live file.
 """
 
 from __future__ import annotations
 
 import ast
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 
-from ed_autojump.binds_generate import REQUIRED_ACTIONS
+from ed_autojump.binds_validate import REQUIRED_ACTIONS
 from ed_autojump.executor.jump import (
     DEFAULT_CLASS_PITCH_S,
     DEFAULT_CLASS_POST_PITCH_THROTTLE,
@@ -86,24 +85,22 @@ def _all_executor_actions() -> set[str]:
 # Bind-coverage tests -------------------------------------------------------
 
 
-def test_required_actions_all_tagged_in_live_binds():
-    """Every name in binds_generate.REQUIRED_ACTIONS must appear as a tag in
-    the generated live .binds file.
+def test_required_actions_all_bound_in_live_binds():
+    """Every name in binds_validate.REQUIRED_ACTIONS must resolve to a bound
+    key in the live-pulled .binds file.
 
-    The live preset is intentionally sparse (all keys blank — user fills
-    them in via keymap.md).  What matters is that the generator emits an
-    XML element for each required action so ED's preset system knows the
-    action slot exists.  This is enforced at generation time by
-    lint_keymap(), and this test catches any regression where a required
-    action is dropped from the generated XML structure.
+    The live preset is the single source of truth — edited in-game and pulled
+    with `pull-binds`. If a required action is missing or unbound there, the
+    bot KeyErrors mid-flight, so this catches a stale pull before it ships.
     """
-    tree = ET.parse(LIVE_BINDS_PATH)
-    root = tree.getroot()
-    rendered_tags = {child.tag for child in root}
-    missing = REQUIRED_ACTIONS - rendered_tags
+    binds = parse_binds(LIVE_BINDS_PATH)
+    missing = sorted(
+        a for a in REQUIRED_ACTIONS
+        if binds.get(a) is None or not binds.get(a).key
+    )
     assert not missing, (
-        f"Live ED-AFK.4.2.binds is missing XML tags for required actions: "
-        f"{sorted(missing)} — run `python -m ed_autojump.binds_generate` to regenerate."
+        f"Live ED-AFK.4.2.binds is missing bound keys for required actions: "
+        f"{missing} — bind them in-game and re-run `pull-binds --apply`."
     )
 
 

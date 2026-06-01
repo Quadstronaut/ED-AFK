@@ -28,9 +28,8 @@ CRITICAL_ACTIONS = (
     "SetSpeed75",
     "SetSpeed100",
     "PitchUpButton",
-    "ExplorationFSSDiscoveryScan",
-    "ExplorationFSSEnter",
-    "ExplorationFSSQuit",
+    "ExplorationFSSDiscoveryScan",  # the honk; bot never enters FSS mode,
+                                    # so Enter/Quit are NOT pressed and not critical.
 )
 
 
