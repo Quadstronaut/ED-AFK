@@ -189,19 +189,33 @@ def discover_active_preset(bindings_dir: Optional[Path] = None) -> str:
 def find_binds_file(preset_name: str, bindings_dir: Optional[Path] = None) -> Path:
     """Locate the .binds file for `preset_name` in the ED bindings directory.
 
-    ED uses the format ``<preset>.4.0.binds`` for v4 presets.  Older formats
-    (no version suffix, ``.binds`` only) are also tried as fallbacks."""
+    ED writes ``<preset>.4.N.binds`` where N is the highest minor version the
+    installed game supports (``.4.0``, ``.4.1``, ``.4.2`` …); the minor bumps
+    when Frontier adds binding slots. We can't assume which N is on disk, so
+    glob every ``<preset>.4.*.binds`` and pick the HIGHEST minor version — that
+    is the file ED actually loaded. A bare ``<preset>.binds`` (very old, no
+    version suffix) is the final fallback."""
     bd = bindings_dir or _bindings_dir()
-    candidates = [
-        bd / f"{preset_name}.4.0.binds",
-        bd / f"{preset_name}.binds",
-    ]
-    for p in candidates:
-        if p.is_file():
-            return p
+
+    # Collect <preset>.4.<minor>.binds and sort by integer minor, descending.
+    versioned: list[tuple[int, Path]] = []
+    for p in bd.glob(f"{preset_name}.4.*.binds"):
+        # Stem after the two ".4." dots, e.g. "ED-AFK.4.2.binds" -> "2".
+        suffix = p.name[len(preset_name) + len(".4.") : -len(".binds")]
+        if suffix.isdigit():
+            versioned.append((int(suffix), p))
+    if versioned:
+        versioned.sort(key=lambda t: t[0], reverse=True)
+        return versioned[0][1]
+
+    # Legacy unversioned fallback.
+    legacy = bd / f"{preset_name}.binds"
+    if legacy.is_file():
+        return legacy
+
     raise FileNotFoundError(
         f"No .binds file found for preset {preset_name!r} in {bd}.\n"
-        f"Tried: {[str(c) for c in candidates]}"
+        f"Tried: {preset_name}.4.*.binds glob and {legacy.name}"
     )
 
 

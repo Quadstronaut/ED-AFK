@@ -199,6 +199,30 @@ def test_find_binds_file_v4(tmp_path: Path):
     assert find_binds_file("MyPreset", tmp_path) == f
 
 
+def test_find_binds_file_v42(tmp_path: Path):
+    """ED writes the highest minor version it supports (.4.2 here)."""
+    f = tmp_path / "MyPreset.4.2.binds"
+    f.write_text(_MINI_BINDS, encoding="utf-8")
+    assert find_binds_file("MyPreset", tmp_path) == f
+
+
+def test_find_binds_file_picks_highest_minor(tmp_path: Path):
+    """With .4.0 AND .4.2 on disk, pick .4.2 — the one ED actually loaded."""
+    (tmp_path / "MyPreset.4.0.binds").write_text(_MINI_BINDS, encoding="utf-8")
+    (tmp_path / "MyPreset.4.1.binds").write_text(_MINI_BINDS, encoding="utf-8")
+    high = tmp_path / "MyPreset.4.2.binds"
+    high.write_text(_MINI_BINDS, encoding="utf-8")
+    assert find_binds_file("MyPreset", tmp_path) == high
+
+
+def test_find_binds_file_minor_sorts_numerically(tmp_path: Path):
+    """.4.10 > .4.2 numerically (not lexically) — guard the int sort."""
+    (tmp_path / "MyPreset.4.2.binds").write_text(_MINI_BINDS, encoding="utf-8")
+    ten = tmp_path / "MyPreset.4.10.binds"
+    ten.write_text(_MINI_BINDS, encoding="utf-8")
+    assert find_binds_file("MyPreset", tmp_path) == ten
+
+
 def test_find_binds_file_fallback(tmp_path: Path):
     f = tmp_path / "MyPreset.binds"
     f.write_text(_MINI_BINDS, encoding="utf-8")
