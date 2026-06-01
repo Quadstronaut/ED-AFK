@@ -116,7 +116,7 @@ def align_to_target(
     sender: Any,
     *,
     capture: Callable[[], Any],
-    align_tol: float = 0.15,
+    align_tol: float = 0.10,
     deadzone: float = 0.10,
     gain: float = 2.0,
     min_press: float = 0.10,
