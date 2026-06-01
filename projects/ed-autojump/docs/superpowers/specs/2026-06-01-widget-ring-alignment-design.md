@@ -1,9 +1,29 @@
 # Widget-Ring Closed-Loop Alignment — Design Spec (v3)
 
 Date: 2026-06-01
-Status: council review (spec gate, v3)
-Supersedes: v2 (in-workflow only; never committed). v3 fixes blockers F, G, H, K
-and closes the coverage gaps the v2 council flagged.
+Status: council spec gate — v3 PASSED kinematics 3/3 + A–K confirmed fixed;
+v3.1 folds in the council's new blockers (registry, `_hold_for`, bind-catch,
+`_find_widget`, circularity, nits) before the plan gate.
+Supersedes: v2 (in-workflow only; never committed). v3 fixed blockers F, G, H, K
+and closed v2's coverage gaps. v3.1 fixes the council's L–S findings below.
+
+## 0. Council v3 verdict (2026-06-01)
+
+Three seats (sonnet-architect, sonnet-implementer, opus-holistic): **3/3
+`kinematics_agrees=true`**, **3/3 `verdict=fix-blockers`**, all of v2's A–K
+independently re-verified fixed (K's annulus arithmetic recomputed by hand by
+two seats). New blockers, all folded into v3.1:
+
+| id | sev | issue | fixed in |
+|----|-----|-------|----------|
+| L | **fatal** | `orient_widget_ring` never added to STEP_REGISTRY → procedure aborts every run | §4.3 first bullet |
+| M | spec | `_hold_for` called but never defined | §4.2 |
+| N | spec | bind-missing try/except only in §6 prose, not the loop test 19 asserts | §4.2 loop |
+| O | spec | `_find_widget` extraction asserted but unsigned | §4.1 |
+| P | spec | circularity contour mode / "nearest" undefined | §4.1 step 3 |
+| Q | nit | `not_found()` positional args | §4.1 |
+| R | nit | test 3 deadzone has no pinned `r` | §7 test 3 |
+| S | nit | passthrough swallows colliding kwargs | §4.2 note |
 
 ---
 
@@ -115,7 +135,11 @@ class WidgetRingRead:
 
     @classmethod
     def not_found(cls) -> "WidgetRingRead":
-        return cls(False, 0,0, 0,0, 0, 0,0, 0)
+        # keyword args (matches CompassRead.not_found convention; robust to
+        # future field insertion). [council nit, architect]
+        return cls(found=False, widget_cx=0.0, widget_cy=0.0,
+                   ring_cx=0.0, ring_cy=0.0, ring_radius_px=0.0,
+                   delta_x=0.0, delta_y=0.0, deadzone_px=0.0)
 
     @property
     def aligned(self) -> bool:
@@ -167,8 +191,14 @@ class WidgetRingReader:
    - **Annulus fill**: ≥ `_ANNULUS_MIN_FILL` of the pixels in the band
      `[0.80r, 1.20r]` are orange (confirms a *ring*, rejects a filled orange
      blob and the widget dot itself, which is far smaller than minRadius).
-   - **Circularity**: take the orange contour nearest the candidate centre,
-     `4π·area / perimeter²` (`cv2.contourArea` / `cv2.arcLength`) ≥ 0.75.
+   - **Circularity**: find orange contours in the ROI with
+     `cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)`.
+     `RETR_EXTERNAL` returns only outer boundaries, so the reticle ring yields
+     ONE contour (its inner hole is not a separate external contour). Pick the
+     contour whose centroid (`cv2.moments` → `m10/m00, m01/m00`) is nearest the
+     Hough candidate centre by Euclidean distance, then require
+     `4π·area / perimeter²` (`cv2.contourArea` / `cv2.arcLength(closed=True)`)
+     ≥ 0.75. [council spec-level, implementer]
    Convert the accepted centre from ROI-local to full-frame coords by adding
    `(ROI_X1, ROI_Y1)`.
 4. If either object missing → `not_found()`.
@@ -211,9 +241,22 @@ def verify_widget_rendered(reader: WidgetRingReader,
     'enable mouse widget (point mode)' message before any orient runs."""
 ```
 
-`verify_widget_rendered` lives in `widget_ring.py` next to the reader. It calls
-a private `_find_widget(frame) -> Optional[tuple[float,float]]` that step 2 of
-`read()` also uses, so the widget-detection logic exists once.
+`verify_widget_rendered` lives in `widget_ring.py` next to the reader.
+
+```python
+def _find_widget(self, frame) -> Optional[tuple[float, float]]:
+    """Private METHOD on WidgetRingReader. The single home of widget-detection
+    logic — step 2 of read() AND verify_widget_rendered both call it (DRY).
+
+    Applies step 2: HSV-threshold orange inside the 120×120 sub-ROI at screen
+    centre; connected components; pick the blob with area >= 4 whose centroid
+    is nearest (WIDGET_CX0, WIDGET_CY0). Returns (cx, cy) in FULL-FRAME
+    coordinates (sub-ROI offset already added back), or None if no qualifying
+    blob. [council spec-level, architect]"""
+```
+
+Both `read()` step 2 and `verify_widget_rendered` call `self._find_widget(frame)`;
+the logic is written once.
 
 ### 4.2 New step: `orient_widget_ring` (in `flow/steps.py`)
 
@@ -257,18 +300,44 @@ def step_orient_widget_ring(
             ctx.log("WidgetRingAligned", {"iters": iterations,
                     "dx": read.delta_x, "dy": read.delta_y})
             return True
-        _correct_widget_ring(ctx.sender, read,
-                             gain_s_per_px=gain_s_per_px,
-                             min_press=min_press, max_press=max_press)
+        # Bind-missing catch lives HERE in the loop (not in §6 prose) — an
+        # unbound Yaw/Pitch key must log and continue to the timeout, never
+        # propagate a KeyError out of the step. [council spec-level, holistic;
+        # test 19 depends on this]
+        try:
+            _correct_widget_ring(ctx.sender, read,
+                                 gain_s_per_px=gain_s_per_px,
+                                 min_press=min_press, max_press=max_press)
+        except KeyError as e:
+            ctx.log("BindMissing", {"action": str(e), "step": "orient_widget_ring"})
         ctx.sleeper(settle_s)
     ctx.log("WidgetRingTimeout", {"iters": iterations})
     return False
 ```
 
-`_correct_widget_ring` (module-private in `steps.py`, NOT shared with
-`align._correct` — opposite sign convention):
+**Passthrough exactness note** [council nit, holistic]: the widget-ring tuning
+kwargs (`timeout_s`, `settle_s`, `samples`, `gain_s_per_px`, `min_press`,
+`max_press`) are declared explicitly before `**compass_overrides`, so a TOML
+param of the same name would be captured by this signature and NOT forwarded to
+`step_orient_compass` on the flag-off path. This is safe ONLY because the §3
+TOML sites pass **no** tuning overrides — they set `required = true` and nothing
+else. Keep it that way: do not add tuning params to the arrival/smack TOML
+orient lines.
+
+`_hold_for` and `_correct_widget_ring` (both module-private in `steps.py`, NOT
+shared with `align._press_for` / `align._correct` — opposite sign convention
+and a different normalisation, `/ring_r` vs `abs(offset)`):
 
 ```python
+def _hold_for(delta_px: float, ring_r: float, gain_s_per_px: float,
+              min_press: float, max_press: float) -> float:
+    """Proportional press seconds for a pixel error, normalised by ring radius.
+    Distinct from align._press_for (which normalises by abs(offset)).
+    Guards ring_r against 0 so a degenerate median read can't div-by-zero.
+    [council spec-level, all three seats]"""
+    return max(min_press, min(max_press, gain_s_per_px * delta_px / max(ring_r, 1.0)))
+
+
 def _correct_widget_ring(sender, read, *, gain_s_per_px, min_press, max_press):
     """One dominant-axis micro-correction. Per-axis deadzone is read.deadzone_px.
     Press duration = clamp(gain_s_per_px * |delta|/ring_radius_px,
@@ -293,6 +362,20 @@ maintenance-hold cadence (shorter than the 1.4 s acquire settle because the
 nudges are tiny and the FSD spool budget is short).
 
 ### 4.3 Wiring (Blocker I resolution — concrete locations)
+
+- **`flow/steps.py` — REGISTER THE STEP (fatal if omitted).** Immediately after
+  the `step_orient_widget_ring` definition, in the same block as the other
+  vision steps:
+  ```python
+  STEP_REGISTRY.update({"orient_widget_ring": step_orient_widget_ring})
+  ```
+  Without this, the §4.3 TOML rename (`orient_compass → orient_widget_ring`) is
+  **not** a no-op: the interpreter resolves a TOML `action` through
+  `STEP_REGISTRY`, and `cli.py`'s `validate_procedure(proc,
+  known_actions=STEP_REGISTRY.keys())` runs at startup over every loaded TOML.
+  An unregistered action → unknown-action validation error at load, or (past
+  load) a missing-key `ok=False` on a `required` step → the procedure aborts on
+  **every** run, flag on or off. [council FATAL, unanimous 3/3]
 
 - **`flow/context.py`** — `StepContext` gains two fields:
   ```python
@@ -369,8 +452,10 @@ All synchronous, no game, no real sleeps. Fakes: a `_FakeRingReader` queuing
 1. `test_resolution_guard_raises` — a 1280×720 frame → `WidgetRingResolutionError`.
 2. `test_widget_found_at_centre` — synthetic frame, orange dot at (962,539) →
    `widget_cx≈962, widget_cy≈539`.
-3. `test_ring_and_widget_delta` — ring centred at (1000,600), widget at
-   (960,540) → `delta_x≈40, delta_y≈60`, `deadzone_px=0.55*r`.
+3. `test_ring_and_widget_delta` — ring drawn at **radius r=50** centred at
+   (1000,600), widget at (960,540) → `delta_x≈40, delta_y≈60`,
+   `ring_radius_px≈50`, `deadzone_px≈27.5` (0.55·50). The fixture pins r so the
+   deadzone assertion is deterministic. [council nit, implementer]
 4. `test_orange_filled_blob_rejected` — a *solid* orange disc (no hole) fails
    the annulus-fill gate → ring not found. *(coverage gap: orange-on-orange
    false positive.)*
