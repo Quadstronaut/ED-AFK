@@ -25,7 +25,7 @@ lint refuses to generate. Bot ≠ player: this preset is loaded only when
 the bot is active. Fly with a different ED preset.
 
 | Action                      | Key | Used by                              |
-|-----------------------------|-----|--------------------------------------|
+| ----------------------------| ----| -------------------------------------|
 | HyperSuperCombination       |     | engage_jump                          |
 | Supercruise                 |     | engage_supercruise, smack_recovery   |
 | SelectTarget                |     | target_ahead                         |
