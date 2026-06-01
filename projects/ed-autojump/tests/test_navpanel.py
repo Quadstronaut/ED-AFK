@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ed_autojump.executor.navpanel import engage_supercruise_assist
+from ed_autojump.executor.navpanel import (
+    engage_supercruise_assist,
+    target_via_navpanel,
+)
 from ed_autojump.keys import parse_binds
 from ed_autojump.keys.sender import RecordingSender
 
@@ -81,3 +84,44 @@ def test_all_macro_actions_are_bound():
     # Would raise KeyError mid-run if any action were unbound.
     engage_supercruise_assist(sender, sleeper=lambda _s: None)
     assert len(sender.events) == 5
+
+
+# ── target_via_navpanel: SAME mechanic as the SC-assist macro, MINUS the
+# UI_Right step. "Lock Destination" is the first item in the row's target
+# submenu, so the second UI_Select activates it. Four presses, not five.
+
+def test_target_via_navpanel_exact_press_sequence():
+    """focus -> UI_Select -> UI_Select -> focus. Four presses (no UI_Right)."""
+    sender = _sender()
+    target_via_navpanel(sender, sleeper=lambda _s: None)
+    assert sender.actions() == [
+        "FocusLeftPanel",
+        "UI_Select",
+        "UI_Select",
+        "FocusLeftPanel",
+    ]
+
+
+def test_target_via_navpanel_settle_after_every_press():
+    sender = _sender()
+    sleeper = _RecordingSleeper()
+    target_via_navpanel(sender, sleeper=sleeper, settle_s=0.4)
+    assert len(sleeper.calls) == len(sender.events) == 4
+    assert all(d == 0.4 for d in sleeper.calls)
+
+
+def test_target_via_navpanel_custom_panel_focus_action():
+    sender = _sender()
+    target_via_navpanel(
+        sender, sleeper=lambda _s: None, panel_focus_action="UIFocus"
+    )
+    acts = sender.actions()
+    assert acts[0] == "UIFocus"
+    assert acts[-1] == "UIFocus"
+    assert acts[1:-1] == ["UI_Select", "UI_Select"]
+
+
+def test_target_via_navpanel_all_actions_bound():
+    sender = _sender()
+    target_via_navpanel(sender, sleeper=lambda _s: None)
+    assert len(sender.events) == 4

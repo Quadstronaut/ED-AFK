@@ -1,25 +1,36 @@
 # Reflex: emergency drop INSIDE the star's exclusion zone (SupercruiseExit,
-# BodyType:Star). Face astern during the cooldown, ignite the FSD to spawn the
-# escape vector, fly it out, then clear + jump. The ~45s cooldown timer is
-# anchored to the realspace drop, so the pitch below runs DURING it.
+# BodyType:Star). Slow throttle, target the arrival star via nav panel
+# (row 0 = closest body — works even when the star isn't ahead of the
+# reticle), pitch it BEHIND, wait the smack cooldown out, deselect targets,
+# fire the FSD WHILE STILL INSIDE the exclusion zone. With no body
+# targeted and the FSD lit inside an exclusion zone, the game spawns an
+# ESCAPE VECTOR compass target — orient_compass homes on that spawned
+# vector during the SC charge even though no body is selected. Once SC
+# entry confirms, throttle up, lock the next route star, fly 13s to clear
+# the arrival star, re-orient, jump (log-gated on StartJump).
 [on_required_fail]
 retry_from = "pitch_compass"
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  { action = "set_throttle", pct = 33 },
-  { action = "target_ahead" },
-  { action = "pitch_compass", until = "behind", required = true },
-  { action = "wait_cooldown", since = "drop", s = 45.0 },
-  { action = "target_ahead" },
-  { action = "press", bind = "Supercruise" },
-  { action = "set_throttle", pct = 100 },
-  { action = "orient_compass", required = true },
-  { action = "wait_for_event", event = "SupercruiseEntry", timeout_s = 30.0, required = true },
-  { action = "pitch_compass", until = "edge", required = true },
-  { action = "wait", s = 15.0 },
-  { action = "target_next_route" },
-  { action = "orient_compass", required = true },
-  { action = "engage_jump", required = true },
+  # ── Real-space recovery during the smack cooldown ─────────────────────
+  { action = "set_throttle", pct = 33 },                                                    # 0
+  { action = "nav_panel_target" },                                                           # 1 row 0 = arrival star
+  { action = "pitch_compass", until = "behind", required = true },                           # 2
+  { action = "wait_cooldown", since = "drop", s = 45.0 },                                    # 3
+
+  # ── Fire FSD inside the exclusion zone to spawn the escape vector ─────
+  { action = "target_ahead" },                                                                # 4 deselect
+  { action = "press", bind = "Supercruise" },                                                 # 5 FSD lit inside exclusion -> escape vector spawns
+  { action = "orient_compass", required = true },                                             # 6 home on escape vector DURING the SC charge
+  { action = "wait_for_event", event = "SupercruiseEntry", timeout_s = 20.0, required = true }, # 7
+
+  # ── In supercruise: clear the star, target route, jump ────────────────
+  { action = "set_throttle", pct = 100 },                                                     # 8
+  { action = "target_next_route" },                                                           # 9
+  { action = "wait", s = 13.0 },                                                              # 10 fly clear of the arrival star
+  { action = "orient_compass", required = true },                                             # 11
+  { action = "engage_jump", required = true },                                                # 12a press FSD combo
+  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },      # 12b confirm via journal
 ]

@@ -1,23 +1,39 @@
-# Fresh load: ship sits at the star in NORMAL space. Pitch the star to the
-# compass EDGE, throttle to engage the FSD, enter SC, full throttle again
-# (separate axis), wait, orient, jump. No orbit (orbit is arrival-only).
+# Fresh load: ship sits at a star in normal space.
+#
+# First attempt: throttle up, lock the next route star, orient on compass,
+# fire the FSD, wait for the journal to confirm StartJump:Hyperspace. If
+# StartJump never arrives within 12s the jump refused (mass-locked, FSD
+# cooldown, off-axis, etc.) — the retry policy below kicks us back into
+# the recovery sequence (target_ahead onward): SC out, re-target, re-orient,
+# re-jump.
+#
+# Every state transition that has a journal correlate gates on it. ED emits
+# no "jump failed" event — absence of StartJump within timeout IS the failure
+# signal. Vision-gated and Status.json-gated actions (orient_compass,
+# set_throttle, target_*) have no journal event and so can't be log-gated;
+# orient_compass fails closed without vision; engage_jump checks Status.json
+# flags before firing keys.
 parallel_tracks = ["honk"]
 
 [on_required_fail]
-retry_from = "pitch_compass"
-max_retries = 3
+retry_from = "target_ahead"
+max_retries = 1
 backoff_s = 2.0
 
 steps = [
-  { action = "orient_compass", required = true },
-  { action = "engage_jump", required = false },
-  { action = "target_ahead" },
-  { action = "set_throttle", pct = 100 },
-  { action = "pitch_compass", until = "edge", required = true },
-  { action = "engage_supercruise", required = true },
-  { action = "set_throttle", pct = 100 },
-  { action = "wait", s = 10.0 },
-  { action = "target_next_route" },
-  { action = "orient_compass", required = true },
-  { action = "engage_jump", required = true },
+  # ── First-try direct jump ────────────────────────────────────────────────
+  { action = "set_throttle", pct = 100 },                                                # 0
+  { action = "target_next_route" },                                                       # 1
+  { action = "orient_compass", required = true },                                         # 2
+  { action = "engage_jump", required = true },                                            # 3a press FSD combo
+  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },  # 3b confirm via journal
+
+  # ── Recovery: retry_from lands here when any required step above fails ───
+  { action = "target_ahead" },                                                            # 4 deselect (no target ahead → clears)
+  { action = "engage_supercruise", required = true },                                     # 5 log-gated on SupercruiseEntry
+  { action = "set_throttle", pct = 100 },                                                 # 6
+  { action = "target_next_route" },                                                       # 7
+  { action = "orient_compass", required = true },                                         # 8
+  { action = "engage_jump", required = true },                                            # 9a press FSD combo
+  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },  # 9b confirm via journal
 ]

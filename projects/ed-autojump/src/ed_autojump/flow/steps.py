@@ -175,6 +175,20 @@ def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
         return False
 
 
+def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
+    """Blind nav-panel macro: target row 0 (the closest body, normally the
+    arrival star). Gives downstream compass-vision steps a body to home on
+    when SelectTarget can't be relied on (after a smack drop the star may
+    not be ahead of the reticle)."""
+    from ..executor.navpanel import target_via_navpanel
+    try:
+        target_via_navpanel(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s)
+        return True
+    except KeyError:
+        ctx.log("BindMissing", {"step": "nav_panel_target"})
+        return False
+
+
 def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
     if ctx.compass_reader is None or ctx.frame_grabber is None:
         ctx.log("OrientNoVision", {})
@@ -241,6 +255,7 @@ def step_pitch_compass(
 
 STEP_REGISTRY.update({
     "sc_assist_orbit": step_sc_assist_orbit,
+    "nav_panel_target": step_nav_panel_target,
     "orient_compass": step_orient_compass,
     "pitch_compass": step_pitch_compass,
 })

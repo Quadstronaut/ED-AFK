@@ -105,3 +105,47 @@ def engage_supercruise_assist(
     # Close the nav panel.
     sender.press(panel_focus_action)
     sleeper(settle_s)
+
+
+def target_via_navpanel(
+    sender: Sender,
+    *,
+    sleeper: Callable[[float], None] = time.sleep,
+    settle_s: float = DEFAULT_SETTLE_S,
+    panel_focus_action: str = "FocusLeftPanel",
+) -> None:
+    """Run the blind nav-panel macro that TARGETS the top row (the closest
+    body — the arrival star on a smack drop) without engaging Supercruise
+    Assist.
+
+    Sequence:
+
+        panel_focus_action  -> open the left nav panel; top row (the star)
+                               is selected by default (closest body)
+        UI_Select           -> open the row's detail pane; cursor lands on
+                               "Lock Destination" (the FIRST control in
+                               the target submenu)
+        UI_Select           -> activate Lock Destination -> target locked
+        panel_focus_action  -> close the panel
+
+    Same first-row mechanic as `engage_supercruise_assist`: closest body is
+    row 0, auto-highlighted on panel-open. Differs by ONE press: no
+    `UI_Right` step past "Lock Destination", so the second `UI_Select`
+    activates the target lock instead of LOCK & SUPERCRUISE.
+
+    Used in smack recovery to give pitch_compass a compass dot to home on
+    (the arrival star) when SelectTarget can't be relied on — after a smack
+    drop the ship may not have the star ahead of the reticle, so a regular
+    SelectTarget would either lock nothing or lock the wrong body.
+
+    Raises KeyError (via the sender) if any action is unbound; the bundled
+    preset binds all of them.
+    """
+    sender.press(panel_focus_action)
+    sleeper(settle_s)
+    sender.press("UI_Select")
+    sleeper(settle_s)
+    sender.press("UI_Select")
+    sleeper(settle_s)
+    sender.press(panel_focus_action)
+    sleeper(settle_s)
