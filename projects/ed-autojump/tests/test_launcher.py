@@ -7,6 +7,7 @@ actually invoke the launcher binary.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -44,6 +45,10 @@ def test_resolve_profile_unknown_commander_raises():
         resolve_profile("NotARealCmdr", cfg)
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows LOCALAPPDATA layout — backslash path semantics need PureWindowsPath on Linux",
+)
 def test_cred_path_for_uses_localappdata_layout(monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Test\AppData\Local")
     p = cred_path_for("account2")
