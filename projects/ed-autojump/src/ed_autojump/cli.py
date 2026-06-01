@@ -332,6 +332,10 @@ def cmd_run(args) -> int:
     # (None, None) unless [vision] is enabled AND a region is calibrated, so
     # this is a no-op for everyone who hasn't run calibrate-compass.
     compass_reader = frame_grabber = None
+    # Outer scope (before the engage-keys guard) so the FlowRunner call below —
+    # which is OUTSIDE this block — always sees defined names, even on a
+    # no-engage run. [council plan-gate fix]
+    widget_ring_reader = widget_frame_grabber = None
     if args.engage_keys:
         from .vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
@@ -345,6 +349,25 @@ def cmd_run(args) -> int:
             print(f"vision: alignment OFF ({reason}) — the ship will NOT be "
                   "steered. Run `ed-autojump calibrate-compass` and set "
                   "[vision].enabled = true to enable orientation.")
+
+        # Widget-ring FINE pass (additive after orient_compass). Off by default;
+        # when on, it MUST detect the HUD mouse widget at preflight or we abort
+        # — a fine pass that can't see the widget would just time out every jump.
+        if cfg.vision.widget_ring_alignment:
+            from .vision.capture import build_widget_vision
+            from .vision.widget_ring import verify_widget_rendered
+            widget_ring_reader, widget_frame_grabber = build_widget_vision(cfg)
+            if widget_ring_reader is None or widget_frame_grabber is None:
+                print("widget_ring_alignment=on but vision is unavailable "
+                      "(install the [vision] extra)", file=sys.stderr)
+                return 2
+            if not verify_widget_rendered(widget_ring_reader, widget_frame_grabber):
+                print("mouse widget not detected — enable HUD mouse widget in "
+                      "'point' mode (see ED-AFK preset) before running with "
+                      "widget_ring_alignment=on", file=sys.stderr)
+                return 2
+            print(f"vision: widget-ring FINE pass ON "
+                  f"(crop={tuple(cfg.vision.widget_crop)})")
 
     from .flow import FlowRunner, load_procedures
     from .flow.loader import validate_procedure
@@ -382,6 +405,9 @@ def cmd_run(args) -> int:
         frame_grabber=frame_grabber,
         align_kwargs=align_kwargs,
         compass_samples=cfg.vision.align_samples,
+        widget_ring_enabled=cfg.vision.widget_ring_alignment,
+        widget_ring_reader=widget_ring_reader,
+        widget_frame_grabber=widget_frame_grabber,
         record=(recorder.record_outcome if recorder is not None else None),
         tail=JournalTail(journal_dir),
         panic_switch=panic,
