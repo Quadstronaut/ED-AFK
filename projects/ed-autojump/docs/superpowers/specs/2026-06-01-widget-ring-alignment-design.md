@@ -1,50 +1,57 @@
-# Widget-Ring Closed-Loop Alignment — Design Spec (v3)
+# Widget-Ring Closed-Loop Alignment — Design Spec (v4)
 
 Date: 2026-06-01
-Status: council spec gate — v3 PASSED kinematics 3/3 + A–K confirmed fixed;
-v3.1 folds in the council's new blockers (registry, `_hold_for`, bind-catch,
-`_find_widget`, circularity, nits) before the plan gate.
-Supersedes: v2 (in-workflow only; never committed). v3 fixed blockers F, G, H, K
-and closed v2's coverage gaps. v3.1 fixes the council's L–S findings below.
+Status: re-spin after operator correction of the capture/pipeline model.
+v3/v3.1 PASSED the council (kinematics 3/3, A–K fixed, L–S folded) but assumed
+a near-full-screen ROI and that widget-ring *replaces* compass orient. The
+operator corrected both: **compass orient is the coarse stage that brings the
+ring into the widget's neighbourhood; widget-ring is the fine close on a small
+CENTRE CROP. Nothing needs full-screen vision.** v4 reworks §1–§4 and §7 around
+that; §2's locked kinematics contract and the council-validated helper code are
+preserved verbatim.
 
-## 0. Council v3 verdict (2026-06-01)
+## 0. History
 
-Three seats (sonnet-architect, sonnet-implementer, opus-holistic): **3/3
-`kinematics_agrees=true`**, **3/3 `verdict=fix-blockers`**, all of v2's A–K
-independently re-verified fixed (K's annulus arithmetic recomputed by hand by
-two seats). New blockers, all folded into v3.1:
-
-| id | sev | issue | fixed in |
-|----|-----|-------|----------|
-| L | **fatal** | `orient_widget_ring` never added to STEP_REGISTRY → procedure aborts every run | §4.3 first bullet |
-| M | spec | `_hold_for` called but never defined | §4.2 |
-| N | spec | bind-missing try/except only in §6 prose, not the loop test 19 asserts | §4.2 loop |
-| O | spec | `_find_widget` extraction asserted but unsigned | §4.1 |
-| P | spec | circularity contour mode / "nearest" undefined | §4.1 step 3 |
-| Q | nit | `not_found()` positional args | §4.1 |
-| R | nit | test 3 deadzone has no pinned `r` | §7 test 3 |
-| S | nit | passthrough swallows colliding kwargs | §4.2 note |
+- **v3 council verdict (2026-06-01)** — sonnet-architect + sonnet-implementer +
+  opus-holistic: **3/3 `kinematics_agrees`**, **3/3 `fix-blockers`**, all of
+  v2's A–K independently re-verified fixed (K's annulus arithmetic recomputed by
+  hand by two seats). New blockers L–S folded into v3.1 (registry-L fatal,
+  `_hold_for`-M, bind-catch-N, `_find_widget`-O, circularity-P, nits Q/R/S).
+- **v4 operator correction** — the capture is a centre crop, not full screen,
+  and the loop is two-stage (compass coarse → widget fine, additive). New
+  ledger rows T–V in §9. The council must re-gate v4 because the pipeline shape
+  changed, even though the kinematics and per-frame CV are unchanged.
 
 ---
 
-## 1. Problem
+## 1. Problem & approach
 
 The compass-based orient loop (`orient_compass` → `align_to_target`,
 `src/ed_autojump/executor/align.py`) drives the ship until the **nav-compass**
-cyan dot is centred. Three live test flights on 2026-06-01 showed
-compass-centred ≠ reticle-on-target: the ship reported the dot centred but the
-flight-view **target reticle** sat ~20 % of screen-height off the body. ED's
-FSD-charge cone keys on the actual nose-to-target angle, not the compass, so a
-compass-aligned ship still drifts out of the cone mid-spool and the charge
-silently aborts.
+cyan dot is centred. Three live flights on 2026-06-01 showed compass-centred ≠
+reticle-on-target: the dot read centred but the flight-view **target reticle**
+sat ~20 % of screen-height off the body. ED's FSD-charge cone keys on the actual
+nose-to-target angle, not the compass, so the charge silently aborts.
 
-We need an orient loop that closes on what ED actually cares about: the angle
-between the ship's nose and the targeted body, measured directly on the
-flight view in screen pixels.
+**Two-stage approach (operator's method):**
+
+1. **Coarse — `orient_compass` (unchanged).** Rotates the ship until the compass
+   dot is centred. This is good to ~20 % of screen height, which is enough to
+   bring the **orange target reticle into the widget's neighbourhood** — i.e.
+   into a small region around screen centre.
+2. **Fine — `orient_widget_ring` (new, additive).** Runs *immediately after*
+   compass. It looks ONLY at a centre crop (where compass already put the ring)
+   and nudges the ship until the widget sits inside the ring. This closes the
+   residual angle the compass can't.
+
+Widget-ring does **not** replace compass and does **not** scan the screen — it
+refines what compass already roughed in, within the widget's area. This is the
+operator's stated goal from the start: *"the finer corrections should get the
+mouse widget inside the orange circle we're almost aimed at."*
 
 ## 2. The two on-screen objects (Locked Kinematics Contract)
 
-This section is **load-bearing and verbatim-locked**. All three v2 council
+This section is **load-bearing and verbatim-locked**. All three v3 council
 members confirmed agreement (kinematics_agrees = 3/3). Do not paraphrase it in
 code or tests — quote it.
 
@@ -66,12 +73,16 @@ code or tests — quote it.
 Consequences that flow from the contract (used throughout):
 
 - The reference is **static**; the **ring** is what we measure and chase.
+- Because the capture is a centre crop (§2.5), the static widget sits at the
+  **crop's centre**. All pixel maths is crop-local — and since `delta` is a
+  *difference* of two crop-local points, it is identical whether measured in
+  crop coords or full-frame coords (the crop offset cancels).
 - **Image coordinates**: x grows right, **y grows down** (OpenCV convention).
   No pixel-y inversion anywhere in this module (unlike `compass.py`, which
   inverts because it reports "up-is-positive" offsets).
-- `delta = ring_centre − widget_centre`, in raw screen pixels.
+- `delta = ring_centre − widget_centre`, in pixels.
 
-### Sign convention (derived from the contract; opus-verified in v2)
+### Sign convention (derived from the contract; opus-verified in v3)
 
 | measurement            | meaning                          | correction      |
 |------------------------|----------------------------------|-----------------|
@@ -85,25 +96,43 @@ nose must come **down** to meet it. This is the **opposite** sign to
 `compass.py`'s `offset_y` (which is pre-inverted to "up positive"). The two
 modules must never share a `_correct`; widget-ring gets its own.
 
-## 3. Scope — where this runs, and where it must NOT
+## 2.5 Capture model — centre crop, not full screen (v4 correction)
 
-Widget-ring alignment requires an **orange target reticle**, which only exists
-when a body is **targeted** in the flight view. It is therefore valid only at
-orient sites where a route star is locked, and **invalid** where nothing is
-targeted.
+Widget-ring captures a single fixed **centre-anchored crop** of the screen, big
+enough to hold the ring once compass has brought it near centre, and no bigger.
 
-| procedure          | step (index)                    | targeted body? | widget-ring? |
-|--------------------|---------------------------------|----------------|--------------|
-| `arrival.toml`     | 7 `orient_compass`              | next-route star (step 4) | **yes** |
-| `smack_recovery.toml` | 6 `orient_compass` (escape vector) | **none** (deselected step 4) | **NO** — compass only |
-| `smack_recovery.toml` | 11 `orient_compass`          | next-route star (step 9) | **yes** |
+- **Crop region (1080p): `CROP_W × CROP_H = 900 × 600`, centred on screen
+  centre** → screen rect x∈[510, 1410], y∈[240, 840]. (This is the same band the
+  v3 spec called its "ROI"; v4 makes it the actual capture, not a sub-window of
+  a full-screen grab.)
+- **The widget is at the crop's centre: `(CROP_W/2, CROP_H/2) = (450, 300)`**
+  in crop coords. We still *measure* it (±a few px for HUD scaling) but only
+  search a 120×120 box at the crop centre.
+- **Why 900×600 is enough**: compass aligns to ~20 % of screen height ≈ 216 px
+  of error. The crop spans ±300 px vertically and ±450 px horizontally from
+  centre, so the ring centre (≤216 px off) always lands inside the crop, with
+  margin for the ring radius (18–90 px). If compass under-aligns so badly the
+  ring is outside the crop, the reader simply returns `not_found` and the step
+  fails closed (§6) — it never invents a target.
+- **No full-screen capture, ever.** A dedicated centre-crop `ScreenGrabber`
+  feeds `read()`; it is distinct from the compass-region grabber.
 
-**Blocker F resolution**: the v2 spec inserted widget-ring at
-`smack_recovery` step 6. That phase orients on a spawned **escape vector**,
-which is a nav-compass-only construct — no body is targeted, so there is no
-orange reticle and the widget-ring reader has nothing to lock. Step 6 stays
-compass-based, permanently. Only steps with a locked target (arrival 7,
-smack_recovery 11) may use widget-ring.
+## 3. Scope — additive fine stage at targeted sites only
+
+Widget-ring needs an **orange target reticle**, which exists only when a body is
+**targeted**. So it is added **only** at orient sites where a route star is
+locked, and **never** where nothing is targeted. It is inserted as a **new step
+immediately after** the existing `orient_compass` (coarse) — `orient_compass` is
+left exactly as-is.
+
+| procedure          | existing orient (coarse)         | targeted body? | add widget-ring fine after? |
+|--------------------|----------------------------------|----------------|-----------------------------|
+| `arrival.toml`     | step 7 `orient_compass`          | next-route star (step 4) | **yes** — new step 8 |
+| `smack_recovery.toml` | step 6 `orient_compass` (escape vector) | **none** (deselected step 4) | **NO** — escape vector has no reticle |
+| `smack_recovery.toml` | step 11 `orient_compass`      | next-route star (step 9) | **yes** — new step after 11 |
+
+**Blocker F (still honoured)**: the escape-vector orient (smack step 6) targets
+no body, so there is no reticle — no widget-ring there, permanently.
 
 ## 4. Components
 
@@ -114,23 +143,23 @@ package still imports without the `[vision]` extra.
 
 ```python
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 class WidgetRingResolutionError(ValueError):
-    """Raised at preflight when the frame is not 1920×1080. The pixel ROIs and
-    the screen-centre widget anchor are 1080p-calibrated; other resolutions
-    would silently mis-locate both objects."""
+    """Raised at preflight when the captured CROP is not the expected
+    CROP_W×CROP_H. The widget anchor (crop centre) and the orange-ring sizing
+    are 1080p-crop-calibrated; a wrong crop size silently mis-locates both."""
 
 @dataclass(frozen=True)
 class WidgetRingRead:
     found: bool          # both widget AND ring located this frame
-    widget_cx: float     # widget centre (≈960, 540); measured, not assumed
+    widget_cx: float     # widget centre in CROP coords (≈450, 300); measured
     widget_cy: float
-    ring_cx: float       # target-reticle ring centre
+    ring_cx: float       # target-reticle ring centre in CROP coords
     ring_cy: float
     ring_radius_px: float
-    delta_x: float       # ring_cx - widget_cx  (image px; +right)
-    delta_y: float       # ring_cy - widget_cy  (image px; +down)
+    delta_x: float       # ring_cx - widget_cx  (px; +right)
+    delta_y: float       # ring_cy - widget_cy  (px; +down)
     deadzone_px: float   # 0.55 * ring_radius_px
 
     @classmethod
@@ -151,15 +180,13 @@ class WidgetRingRead:
 
 #### WidgetRingReader
 
-Constants (1080p):
+Constants (1080p centre crop). All ROIs are **crop-local**.
 
 ```python
 class WidgetRingReader:
-    # ring search ROI — central screen band, well inside HUD chrome
-    ROI_X1, ROI_Y1, ROI_X2, ROI_Y2 = 510, 240, 1410, 840      # 900×600
-    # widget search sub-ROI — tight box at screen centre
-    WIDGET_CX0, WIDGET_CY0 = 960.0, 540.0
-    WIDGET_SUB_ROI_HALF = 60                                   # 120×120 box
+    CROP_W, CROP_H = 900, 600                 # the captured centre crop (§2.5)
+    WIDGET_CX0, WIDGET_CY0 = 450.0, 300.0     # widget anchor = crop centre
+    WIDGET_SUB_ROI_HALF = 60                   # 120×120 widget search box
     # orange in HSV (ED reticle + widget share the HUD orange)
     _ORANGE_HSV_LO = (10, 140, 140)   # H,S,V
     _ORANGE_HSV_HI = (25, 255, 255)
@@ -168,102 +195,79 @@ class WidgetRingReader:
     _ANNULUS_LO, _ANNULUS_HI = 0.80, 1.20     # orange-fill band, ×r
     _ANNULUS_MIN_FILL = 0.55                  # ≥55 % of the band is orange
     _CIRCULARITY_MIN = 0.75                   # 4πA/p²; perfect circle = 1.0
-    EXPECTED_W, EXPECTED_H = 1920, 1080
+    EXPECTED_W, EXPECTED_H = CROP_W, CROP_H   # the guard compares against these
 ```
 
-`read(self, frame) -> WidgetRingRead`:
+`read(self, frame) -> WidgetRingRead` — `frame` is the **900×600 crop**:
 
-1. **Resolution guard** (cheap, every call): if `frame.shape[:2] != (1080,1920)`
-   raise `WidgetRingResolutionError`. (Also surfaced at preflight, §4.3 — the
-   per-call check is a backstop, the preflight is the user-facing message.)
-2. **Widget**: HSV-threshold orange inside the 120×120 sub-ROI at screen
-   centre. Connected components; pick the blob whose centroid is nearest
-   `(WIDGET_CX0, WIDGET_CY0)` with area ≥ 4. Its centroid is
-   `(widget_cx, widget_cy)`. If none → `not_found()` (fail closed; the loop
-   treats this as "no read", and the step fails closed after the budget — see
-   §4.2). The widget is *required*; there is **no** assume-centre fallback,
-   because a missing widget means the HUD setting is wrong and the operator
-   must fix it.
-3. **Ring**: HSV-threshold orange inside the 900×600 ROI. `HoughCircles`
+1. **Crop-size guard** (cheap, every call): if
+   `frame.shape[:2] != (CROP_H, CROP_W)` raise `WidgetRingResolutionError`.
+   (Also surfaced at preflight, §4.3 — the per-call check is a backstop.)
+2. **Widget**: `self._find_widget(frame)` (below). If None → `not_found()`
+   (fail closed; the widget is *required*, there is **no** assume-centre
+   fallback — a missing widget means the HUD setting is wrong).
+3. **Ring**: HSV-threshold orange over the whole crop. `HoughCircles`
    (dp=1.2, minDist=80, param1=100, param2=22, minRadius=18, maxRadius=90).
    For each candidate, in descending accumulator order, accept the first that
    passes BOTH gates:
    - **Annulus fill**: ≥ `_ANNULUS_MIN_FILL` of the pixels in the band
      `[0.80r, 1.20r]` are orange (confirms a *ring*, rejects a filled orange
-     blob and the widget dot itself, which is far smaller than minRadius).
-   - **Circularity**: find orange contours in the ROI with
-     `cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)`.
-     `RETR_EXTERNAL` returns only outer boundaries, so the reticle ring yields
-     ONE contour (its inner hole is not a separate external contour). Pick the
-     contour whose centroid (`cv2.moments` → `m10/m00, m01/m00`) is nearest the
-     Hough candidate centre by Euclidean distance, then require
-     `4π·area / perimeter²` (`cv2.contourArea` / `cv2.arcLength(closed=True)`)
-     ≥ 0.75. [council spec-level, implementer]
-   Convert the accepted centre from ROI-local to full-frame coords by adding
-   `(ROI_X1, ROI_Y1)`.
+     blob and the widget dot, which is far smaller than minRadius).
+   - **Circularity**: `cv2.findContours(mask, cv2.RETR_EXTERNAL,
+     cv2.CHAIN_APPROX_SIMPLE)`. `RETR_EXTERNAL` returns only outer boundaries,
+     so the reticle ring yields ONE contour (its inner hole is not a separate
+     external contour). Pick the contour whose centroid (`cv2.moments` →
+     `m10/m00, m01/m00`) is nearest the Hough candidate centre by Euclidean
+     distance, then require `4π·area / perimeter²` (`cv2.contourArea` /
+     `cv2.arcLength(closed=True)`) ≥ 0.75. [council spec-level, implementer]
+   Centre stays in **crop coords** (no full-frame conversion — everything is
+   crop-local and `delta` is offset-invariant).
 4. If either object missing → `not_found()`.
 5. Compute `delta_x = ring_cx − widget_cx`, `delta_y = ring_cy − widget_cy`,
    `deadzone_px = 0.55 * ring_radius_px`. Return a populated `WidgetRingRead`.
-
-**Why widget centre is measured, not assumed**: the contract says the widget is
-*at* centre, but lens/HUD scaling and ultra-wide letterboxing can shift the
-rendered dot a few px. We measure it so `delta` is exact; we still *search*
-only the 120-px box around centre, so a stray orange pixel elsewhere can't be
-mistaken for the widget.
-
-#### Helpers (Blocker G + H resolutions)
-
-```python
-def median_of(reads: List[WidgetRingRead]) -> WidgetRingRead:
-    """Field-wise temporal median over the FOUND reads in `reads`.
-
-    Blocker-G fix: this was used in v2 pseudocode but never defined.
-
-    - If fewer than half the reads are `.found`, return WidgetRingRead.not_found()
-      (same strict-majority rule as align._measure).
-    - Otherwise return a synthetic read whose widget_*, ring_*, ring_radius_px,
-      delta_*, deadzone_px are the statistics.median of the found reads'
-      corresponding fields. `found=True`. (Median per-field is sound here: all
-      fields are continuous and the medians stay mutually consistent to within
-      sub-pixel noise, which the 0.55r deadzone absorbs.)
-    """
-
-def verify_widget_rendered(reader: WidgetRingReader,
-                           capture: Callable[[], Any],
-                           *, samples: int = 5,
-                           min_found: int = 3) -> bool:
-    """Blocker-H fix: static, no-input preflight that the mouse widget is on.
-
-    Grab `samples` frames; count how many yield a widget centroid in the
-    120-px centre box (ring NOT required — this checks only the widget).
-    Return True iff `found_count >= min_found`. Pure observation: presses
-    nothing, so it can't perturb the ship. Used by §4.3 preflight to give the
-    'enable mouse widget (point mode)' message before any orient runs."""
-```
-
-`verify_widget_rendered` lives in `widget_ring.py` next to the reader.
 
 ```python
 def _find_widget(self, frame) -> Optional[tuple[float, float]]:
     """Private METHOD on WidgetRingReader. The single home of widget-detection
     logic — step 2 of read() AND verify_widget_rendered both call it (DRY).
 
-    Applies step 2: HSV-threshold orange inside the 120×120 sub-ROI at screen
-    centre; connected components; pick the blob with area >= 4 whose centroid
-    is nearest (WIDGET_CX0, WIDGET_CY0). Returns (cx, cy) in FULL-FRAME
-    coordinates (sub-ROI offset already added back), or None if no qualifying
-    blob. [council spec-level, architect]"""
+    HSV-threshold orange inside the 120×120 box at the CROP centre
+    (WIDGET_CX0, WIDGET_CY0); connected components; pick the blob with area >= 4
+    whose centroid is nearest the crop centre. Returns (cx, cy) in CROP coords,
+    or None. [council spec-level, architect]"""
 ```
 
-Both `read()` step 2 and `verify_widget_rendered` call `self._find_widget(frame)`;
-the logic is written once.
+#### Helpers (Blocker G + H resolutions; unchanged from v3.1)
+
+```python
+def median_of(reads: List[WidgetRingRead]) -> WidgetRingRead:
+    """Field-wise temporal median over the FOUND reads in `reads`.
+    - If fewer than half the reads are `.found`, return WidgetRingRead.not_found()
+      (strict-majority rule, same as align._measure).
+    - Otherwise return a synthetic read whose widget_*, ring_*, ring_radius_px,
+      delta_*, deadzone_px are the statistics.median of the found reads'
+      corresponding fields; found=True. (Per-field median is sound: all fields
+      are continuous and stay mutually consistent to sub-pixel, which the 0.55r
+      deadzone absorbs.)"""
+
+def verify_widget_rendered(reader: WidgetRingReader,
+                           capture: Callable[[], Any],
+                           *, samples: int = 5,
+                           min_found: int = 3) -> bool:
+    """Static, no-input preflight that the mouse widget is on. Grab `samples`
+    crops; count how many yield a widget centroid (ring NOT required). Return
+    True iff found >= min_found. Presses nothing — can't perturb the ship.
+    Drives the §4.3 preflight 'enable mouse widget (point mode)' message."""
+```
+
+`verify_widget_rendered` lives in `widget_ring.py`; both it and `read()` step 2
+call `self._find_widget(frame)`, so the logic is written once.
 
 ### 4.2 New step: `orient_widget_ring` (in `flow/steps.py`)
 
-A drop-in alternative to `orient_compass` at the §3 sites. **Passthrough when
-the feature flag is off**: if `ctx.widget_ring_enabled` is False, it delegates
-to `step_orient_compass(ctx, **overrides)` unchanged — so the procedures and
-their tests behave exactly as today until the flag is turned on.
+Additive **fine** stage. It runs *after* `orient_compass` (which stays a
+separate, unchanged step). **Flag off → no-op success** (compass already
+oriented at the prior step; there is nothing to passthrough to).
 
 ```python
 def step_orient_widget_ring(
@@ -274,22 +278,23 @@ def step_orient_widget_ring(
     gain_s_per_px: float = 0.18,     # press seconds per (|delta|/ring_r)
     min_press: float = 0.04,
     max_press: float = 0.25,
-    **compass_overrides,
 ) -> bool:
-    # Passthrough: flag off → behave exactly like orient_compass.
+    # Flag off → no-op success. The coarse orient_compass step already ran;
+    # the fine pass is simply skipped. (NOT a passthrough — compass is its own
+    # prior step now, so passing through would double-run it.)
     if not getattr(ctx, "widget_ring_enabled", False):
-        return step_orient_compass(ctx, **compass_overrides)
+        return True
 
     # Flag on but unwired → FAIL CLOSED (never jump on a bad orient).
-    if ctx.widget_ring_reader is None or ctx.frame_grabber is None:
+    if ctx.widget_ring_reader is None or ctx.widget_frame_grabber is None:
         ctx.log("WidgetRingNoVision", {})
         return False
 
-    from ..vision.widget_ring import median_of, WidgetRingResolutionError
+    from ..vision.widget_ring import median_of
     start = ctx.clock()
     iterations = 0
     while ctx.clock() - start < timeout_s:
-        reads = [ctx.widget_ring_reader.read(ctx.frame_grabber())
+        reads = [ctx.widget_ring_reader.read(ctx.widget_frame_grabber())
                  for _ in range(samples)]
         read = median_of(reads)
         iterations += 1
@@ -300,10 +305,9 @@ def step_orient_widget_ring(
             ctx.log("WidgetRingAligned", {"iters": iterations,
                     "dx": read.delta_x, "dy": read.delta_y})
             return True
-        # Bind-missing catch lives HERE in the loop (not in §6 prose) — an
-        # unbound Yaw/Pitch key must log and continue to the timeout, never
-        # propagate a KeyError out of the step. [council spec-level, holistic;
-        # test 19 depends on this]
+        # Bind-missing catch lives HERE in the loop — an unbound Yaw/Pitch key
+        # must log and continue to the timeout, never propagate a KeyError out
+        # of the step. [council spec-level, holistic; test 19 depends on this]
         try:
             _correct_widget_ring(ctx.sender, read,
                                  gain_s_per_px=gain_s_per_px,
@@ -315,26 +319,16 @@ def step_orient_widget_ring(
     return False
 ```
 
-**Passthrough exactness note** [council nit, holistic]: the widget-ring tuning
-kwargs (`timeout_s`, `settle_s`, `samples`, `gain_s_per_px`, `min_press`,
-`max_press`) are declared explicitly before `**compass_overrides`, so a TOML
-param of the same name would be captured by this signature and NOT forwarded to
-`step_orient_compass` on the flag-off path. This is safe ONLY because the §3
-TOML sites pass **no** tuning overrides — they set `required = true` and nothing
-else. Keep it that way: do not add tuning params to the arrival/smack TOML
-orient lines.
-
-`_hold_for` and `_correct_widget_ring` (both module-private in `steps.py`, NOT
-shared with `align._press_for` / `align._correct` — opposite sign convention
-and a different normalisation, `/ring_r` vs `abs(offset)`):
+`_hold_for` and `_correct_widget_ring` (module-private in `steps.py`, NOT shared
+with `align._press_for` / `align._correct` — opposite sign convention and a
+different normalisation, `/ring_r` vs `abs(offset)`):
 
 ```python
 def _hold_for(delta_px: float, ring_r: float, gain_s_per_px: float,
               min_press: float, max_press: float) -> float:
     """Proportional press seconds for a pixel error, normalised by ring radius.
-    Distinct from align._press_for (which normalises by abs(offset)).
-    Guards ring_r against 0 so a degenerate median read can't div-by-zero.
-    [council spec-level, all three seats]"""
+    Distinct from align._press_for (normalises by abs(offset)). Guards ring_r
+    against 0 so a degenerate median read can't div-by-zero."""
     return max(min_press, min(max_press, gain_s_per_px * delta_px / max(ring_r, 1.0)))
 
 
@@ -356,194 +350,178 @@ def _correct_widget_ring(sender, read, *, gain_s_per_px, min_press, max_press):
             sender.press("PitchDownButton" if dy > 0 else "PitchUpButton", hold=hold)
 ```
 
-Dominant-axis only, like the validated compass loop: the proportional press on
-the larger error each iteration, the other axis follows. `settle_s=0.45` is the
-maintenance-hold cadence (shorter than the 1.4 s acquire settle because the
+Dominant-axis only, like the validated compass loop: proportional press on the
+larger error each iteration, the other axis follows. `settle_s=0.45` is the
+maintenance-hold cadence (shorter than compass's 1.4 s acquire settle — the
 nudges are tiny and the FSD spool budget is short).
 
-### 4.3 Wiring (Blocker I resolution — concrete locations)
+### 4.3 Wiring
 
 - **`flow/steps.py` — REGISTER THE STEP (fatal if omitted).** Immediately after
-  the `step_orient_widget_ring` definition, in the same block as the other
-  vision steps:
+  the `step_orient_widget_ring` definition, in the same `STEP_REGISTRY.update`
+  block as the other vision steps:
   ```python
   STEP_REGISTRY.update({"orient_widget_ring": step_orient_widget_ring})
   ```
-  Without this, the §4.3 TOML rename (`orient_compass → orient_widget_ring`) is
-  **not** a no-op: the interpreter resolves a TOML `action` through
-  `STEP_REGISTRY`, and `cli.py`'s `validate_procedure(proc,
-  known_actions=STEP_REGISTRY.keys())` runs at startup over every loaded TOML.
-  An unregistered action → unknown-action validation error at load, or (past
-  load) a missing-key `ok=False` on a `required` step → the procedure aborts on
-  **every** run, flag on or off. [council FATAL, unanimous 3/3]
+  The interpreter resolves a TOML `action` through `STEP_REGISTRY`, and
+  `cli.py`'s `validate_procedure(proc, known_actions=STEP_REGISTRY.keys())`
+  runs at startup over every loaded TOML. An unregistered action → unknown-action
+  error at load. [council FATAL, unanimous 3/3]
 
-- **`flow/context.py`** — `StepContext` gains two fields:
+- **`flow/context.py`** — `StepContext` gains **three** fields:
   ```python
   widget_ring_enabled: bool = False
   widget_ring_reader: Optional[Any] = None
+  widget_frame_grabber: Optional[Callable[[], Any]] = None   # centre-crop source
   ```
   Defaults keep every existing construction site (and all current tests)
-  passing unchanged.
+  passing unchanged. (v4: the third field is the centre-crop grabber — distinct
+  from `frame_grabber`, which is the compass-region crop.)
 - **`flow/dispatcher.py`** — `FlowRunner.__init__` gains
-  `widget_ring_enabled: bool = False` and `widget_ring_reader=None`; stores
-  them; `_make_context()` passes them into `StepContext`. (This is the single
-  place a real run builds its context — confirmed by reading dispatcher.py;
-  `launcher/flow.py` is the *launch* flow and is unrelated.)
-- **`config.py`** — `[vision]` config gains `widget_ring_alignment: bool`
-  (default **False**). The CLI/launcher that constructs the `FlowRunner` reads
-  it and, when True, builds a `WidgetRingReader`, runs `verify_widget_rendered`
-  at preflight, and passes both the flag and the reader to `FlowRunner`. If
-  `verify_widget_rendered` returns False, preflight aborts with:
+  `widget_ring_enabled: bool = False`, `widget_ring_reader=None`,
+  `widget_frame_grabber=None`; stores them; `_make_context()` passes all three
+  into `StepContext`. (The single place a real run builds its context.)
+- **`vision/capture.py` + `config.py`** — `[vision]` gains
+  `widget_ring_alignment: bool` (default **False**) and (optional)
+  `widget_crop` override (default the 1080p 900×600 centre rect). A
+  `build_widget_vision(cfg)` factory (sibling of `build_vision`) returns
+  `(WidgetRingReader, centre_crop_grabber)` when the flag is on, else
+  `(None, None)`; it NEVER raises (missing deps → off, like `build_vision`).
+  The centre-crop grabber is a `ScreenGrabber` over the 900×600 centre rect.
+- **`cli.py`** — when `widget_ring_alignment` is on, call `build_widget_vision`,
+  run `verify_widget_rendered(reader, grabber)` at preflight, and pass the flag
+  + reader + grabber into `FlowRunner`. If `verify_widget_rendered` is False,
+  abort preflight with:
   `"mouse widget not detected — enable HUD mouse widget in 'point' mode (see ED-AFK preset) before running with widget_ring_alignment=on"`.
-- **`procedures/arrival.toml`** and **`procedures/smack_recovery.toml`** — at
-  the §3 sites only, the step action string changes `orient_compass` →
-  `orient_widget_ring`. Because the new step passes through to compass when the
-  flag is off, this rename is a no-op until the operator opts in. **Exact
-  edits (Blocker J resolution)**:
-  - `arrival.toml`: the single line whose comment is `# vision | 7` —
-    `{ action = "orient_compass", required = true }` →
-    `{ action = "orient_widget_ring", required = true }`.
-  - `smack_recovery.toml`: ONLY the line commented `# vision | 11`
-    (post-`target_next_route`). Leave the `# vision | 6` escape-vector line as
-    `orient_compass` (per §3 / Blocker F).
+- **`procedures/arrival.toml` / `procedures/smack_recovery.toml`** — **INSERT a
+  new step** right after the targeted `orient_compass` lines (do NOT rename
+  compass). With the flag off the new step is an instant no-op success, so the
+  procedures behave exactly as today until opt-in. **Exact edits:**
+  - `arrival.toml`: after the `# vision | 7` line insert
+    `{ action = "orient_widget_ring", required = true }   # vision | 8 fine`.
+    (Downstream comment indices shift by one; `engage_jump` becomes step 9.)
+  - `smack_recovery.toml`: after the `# vision | 11` line insert
+    `{ action = "orient_widget_ring", required = true }`. Leave the
+    `# vision | 6` escape-vector line untouched (§3 / Blocker F).
 
 ## 5. Control parameters (defaults)
 
 | param            | value     | why |
 |------------------|-----------|-----|
-| `timeout_s`      | 18.0 s    | acquire budget; longer than compass hold (spool starts after) |
-| `settle_s`       | 0.45 s    | maintenance cadence; momentum from a ≤0.25 s nudge decays fast |
+| `timeout_s`      | 18.0 s    | fine-acquire budget before the spool starts |
+| `settle_s`       | 0.45 s    | maintenance cadence; a ≤0.25 s nudge's momentum decays fast |
 | `samples`        | 3         | 3-frame median rejects a transient orange flicker |
 | `gain_s_per_px`  | 0.18      | press-seconds per normalised error `|delta|/ring_r` |
 | `min_press`      | 0.04 s    | shortest reliable key tap |
 | `max_press`      | 0.25 s    | cap; a maintenance nudge, never a swing |
-| deadzone         | 0.55·ring_r | "widget inside the circle" — the user's stated success criterion |
+| deadzone         | 0.55·ring_r | "widget inside the circle" — the operator's success criterion |
+| crop             | 900×600 centre | holds the ring after compass coarse (~216 px error) |
 
-Deadzone rationale: the user's success criterion is literally "get the mouse
-widget **inside** the orange circle." Inside = `|delta| < ring_radius`. We use
-`0.55·r` so the widget sits comfortably within the ring rather than grazing its
-edge, leaving margin for the residual sway during the FSD spool.
+Deadzone rationale: success = "get the mouse widget **inside** the orange
+circle." Inside = `|delta| < ring_radius`; `0.55·r` keeps the widget comfortably
+within the ring, leaving margin for residual sway during the spool.
 
 ## 6. Failure modes & fail-closed behaviour
 
-- **Widget undetectable** → reader returns `not_found`; orient loop keeps
-  trying until `timeout_s`, then returns False. A required orient returning
-  False trips `on_required_fail` (retry/backoff), and the jump never fires on
-  an unconfirmed orient. **No compass fallback** in the on-path loop (the flag
-  being on means the operator chose widget-ring); the *passthrough* only
-  applies when the flag is off.
-- **Wrong resolution** → `WidgetRingResolutionError` at preflight (clear
-  message) and as a per-call backstop.
+- **Flag off** → the step is a no-op `True`; compass orient (prior step) is the
+  whole alignment, exactly as today.
+- **Widget undetectable** (flag on) → reader `not_found`; loop retries to
+  `timeout_s`, then returns False → `on_required_fail` retry/backoff; the jump
+  never fires on an unconfirmed orient. **No compass fallback inside the fine
+  loop** — compass already ran as its own step.
+- **Ring outside the crop** (compass under-aligned worse than ~300 px) →
+  `not_found` → timeout → fail closed; `on_required_fail` re-runs from an
+  earlier step (which re-runs compass), giving the fine pass another chance.
+- **Wrong crop size** → `WidgetRingResolutionError` (preflight message + per-call
+  backstop).
 - **Ring detected but widget missing** → `not_found` (both required).
 - **Bind missing** (`YawRightButton` etc. unbound) → `sender.press` raises
-  `KeyError`; the loop must catch it the same way `_press` does, log
-  `BindMissing`, and treat the iteration as a no-op correction (continue to
-  next iteration; eventual timeout → fail closed). *(Spec note: wrap the
-  `_correct_widget_ring` call in try/except KeyError in the step.)*
+  `KeyError`; caught in the loop (§4.2), logged `BindMissing`, iteration is a
+  no-op, eventual timeout → fail closed.
 
 ## 7. Test plan
 
 All synchronous, no game, no real sleeps. Fakes: a `_FakeRingReader` queuing
 `WidgetRingRead`s; the shared `FakeSender`; a `clock`/`sleeper` pair like
-`test_hold_alignment.py`.
+`test_hold_alignment.py`. Synthetic frames are **900×600 crops**.
 
 ### Reader unit tests (`tests/vision/test_widget_ring.py`)
 
-1. `test_resolution_guard_raises` — a 1280×720 frame → `WidgetRingResolutionError`.
-2. `test_widget_found_at_centre` — synthetic frame, orange dot at (962,539) →
-   `widget_cx≈962, widget_cy≈539`.
-3. `test_ring_and_widget_delta` — ring drawn at **radius r=50** centred at
-   (1000,600), widget at (960,540) → `delta_x≈40, delta_y≈60`,
-   `ring_radius_px≈50`, `deadzone_px≈27.5` (0.55·50). The fixture pins r so the
-   deadzone assertion is deterministic. [council nit, implementer]
-4. `test_orange_filled_blob_rejected` — a *solid* orange disc (no hole) fails
-   the annulus-fill gate → ring not found. *(coverage gap: orange-on-orange
-   false positive.)*
-5. `test_star_glare_inside_ring_ignored` — bright white/orange star blob
-   *inside* the ring does not break ring acceptance (annulus band is `[0.8r,
-   1.2r]`, the star sits near centre, outside the band). *(coverage gap:
-   star-inside-ring.)*
-6. `test_widget_missing_returns_not_found` — orange ring present, no centre
-   dot → `not_found` (widget required, no assume-centre).
-7. `test_circularity_rejects_arc` — a 120° orange arc (partial reticle) fails
-   `_CIRCULARITY_MIN` → not found.
+1. `test_crop_size_guard_raises` — a 1280×720 frame → `WidgetRingResolutionError`.
+2. `test_widget_found_at_crop_centre` — orange dot at (452,299) in the crop →
+   `widget_cx≈452, widget_cy≈299` (near crop centre 450,300).
+3. `test_ring_and_widget_delta` — ring drawn at **r=50** centred at (490,360) in
+   the crop, widget at (450,300) → `delta_x≈40, delta_y≈60`, `ring_radius_px≈50`,
+   `deadzone_px≈27.5` (0.55·50). Fixture pins r so the deadzone is deterministic.
+4. `test_orange_filled_blob_rejected` — a solid orange disc fails the
+   annulus-fill gate → ring not found.
+5. `test_star_glare_inside_ring_ignored` — bright blob inside the ring (near
+   centre, outside the `[0.8r,1.2r]` band) doesn't break acceptance.
+6. `test_widget_missing_returns_not_found` — ring present, no centre dot →
+   `not_found` (widget required, no assume-centre).
+7. `test_circularity_rejects_arc` — a 120° orange arc fails `_CIRCULARITY_MIN`.
 
-### `median_of` tests (Blocker G coverage)
+### `median_of` tests
 
-8. `test_median_of_all_found` — three reads with delta_x [38,40,42] →
-   `delta_x==40` (median), `found=True`.
-9. `test_median_of_minority_found` — 1-of-3 found → `not_found()` (strict
-   majority). *(coverage gap: partial-dropout median.)*
-10. `test_median_of_field_consistency` — medians taken per field; ring_radius
-    and deadzone stay mutually consistent (`deadzone == 0.55*ring_radius` holds
-    on the synthetic median read within tolerance).
+8. `test_median_of_all_found` — delta_x [38,40,42] → `delta_x==40`, found True.
+9. `test_median_of_minority_found` — 1-of-3 found → `not_found()`.
+10. `test_median_of_field_consistency` — `deadzone == 0.55*ring_radius` holds on
+    the synthetic median read within tolerance.
 
-### Annulus-mask math test (Blocker K fix)
+### Annulus-mask math test (Blocker K fix — arithmetic re-verified by 2 seats)
 
-11. `test_annulus_band_membership` — build the boolean annulus mask for a ring
-    of `r=50` centred at `(60,60)` in a 120×120 grid with band `[0.80r, 1.20r]
-    = [40, 60]`. Assert:
-    - cell at distance **45** from centre (e.g. `mask[60, 105]`, dx=45,dy=0) is
-      **True** (45 ∈ [40,60]).
-    - cell at distance **30** (`mask[60, 90]`, dx=30) is **False** (inside inner
-      radius 40).
-    - cell at distance **70** (`mask[60, 130]` clipped — use `mask[60, 119]`,
-      dx=59) … use a cell genuinely outside: distance **62** is impossible in a
-      120-box from (60,60) on-axis (max 59); instead test the outer edge with a
-      diagonal cell `mask[105, 105]` (dx=45,dy=45,dist≈63.6) is **False**
-      (63.6 > 60).
-    > v2's test asserted `mask[60,90] is True` with the band `[40,55]`, but
-    > dist=30 is *inside* the inner radius → the assertion was wrong and would
-    > fail on correct code. Fixed: in-band cell is dist=45, out-of-band cells
-    > are dist=30 (inner) and dist≈63.6 (outer).
+11. `test_annulus_band_membership` — annulus mask for `r=50` at `(60,60)` in a
+    120×120 grid, band `[0.80r,1.20r]=[40,60]`. Assert:
+    - `mask[60, 105]` (dist 45) is **True** (45 ∈ [40,60]).
+    - `mask[60, 90]` (dist 30) is **False** (inside inner radius 40).
+    - `mask[105, 105]` (dist ≈63.6) is **False** (>60, outer).
 
 ### Step tests (`tests/flow/test_orient_widget_ring.py`)
 
-12. `test_passthrough_when_flag_off` — `widget_ring_enabled=False` → calls
-    `orient_compass` path; with `compass_reader=None` it fails closed exactly
-    like compass does. *(proves the no-op rename is safe.)*
+12. `test_noop_true_when_flag_off` — `widget_ring_enabled=False` → returns True,
+    **zero presses, reader never called** (the fine pass is skipped; compass
+    already ran). *(v4: replaces v3's passthrough test.)*
 13. `test_flag_on_no_reader_fails_closed` — flag on, `widget_ring_reader=None`
-    → False, zero presses, logs `WidgetRingNoVision`.
-14. `test_aligns_then_returns_true` — reader queues a not-aligned read then an
-    aligned read → one correction press, then True.
+    (or `widget_frame_grabber=None`) → False, zero presses, logs `WidgetRingNoVision`.
+14. `test_aligns_then_returns_true` — reader queues a not-aligned then an aligned
+    read → one correction press, then True.
 15. `test_dominant_axis_yaw` — delta_x=80,delta_y=20,r=40 (deadzone 22) →
     exactly `["YawRightButton"]`.
 16. `test_dominant_axis_pitch_down` — delta_x=10,delta_y=60,r=40 → exactly
     `["PitchDownButton"]` (delta_y>0, no inversion).
-17. `test_deadzone_arithmetic` — delta_x=18,delta_y=15,r=40 →
-    deadzone=22 → both within deadzone → `aligned` True, zero presses.
-    *(coverage gap: deadzone arithmetic.)*
-18. `test_timeout_fails_closed` — reader always not-aligned, clock exhausts
-    `timeout_s` → False.
+17. `test_deadzone_arithmetic` — delta_x=18,delta_y=15,r=40 → deadzone 22 →
+    both within deadzone → `aligned` True, zero presses.
+18. `test_timeout_fails_closed` — reader always not-aligned → False at timeout.
 19. `test_bind_missing_is_caught` — `FakeSender` raising `KeyError` on
-    `YawRightButton` → loop logs `BindMissing`, continues, times out False (no
-    crash). *(coverage gap: BindMissing branch.)*
+    `YawRightButton` → logs `BindMissing`, continues, times out False (no crash).
 
-### `verify_widget_rendered` tests (Blocker H coverage)
+### `verify_widget_rendered` tests
 
-20. `test_verify_widget_happy` — 4-of-5 frames yield a centre widget → True.
-21. `test_verify_widget_sad` — 1-of-5 → False (would drive the preflight abort
-    message). *(coverage gap: calibration happy/sad path.)*
+20. `test_verify_widget_happy` — 4-of-5 crops yield a centre widget → True.
+21. `test_verify_widget_sad` — 1-of-5 → False (drives the preflight abort).
 
-## 8. Out of scope (deferred, not in this spec)
+### Procedure integration
+
+22. `test_arrival_has_widget_ring_after_compass` — load `arrival.toml`; the
+    `orient_widget_ring` step exists and immediately follows `orient_compass`;
+    with the flag off, running the procedure presses the same keys as before
+    (the new step no-ops). Confirms the insert didn't disturb the flow.
+
+## 8. Out of scope (deferred)
 
 - Per-ship gain calibration (Task #20 — separate).
-- Multi-resolution support (1080p only; guarded).
-- Replacing compass orient at the escape-vector site (impossible — no target).
-- Touching `align.py`'s compass loop (untouched; widget-ring is additive).
+- Multi-resolution / non-1080p crops (1080p only; guarded).
+- Widget-ring at the escape-vector site (impossible — no target).
+- Touching `align.py`'s compass loop or `orient_compass` (untouched; widget-ring
+  is purely additive).
 
-## 9. Blocker ledger (for the council)
+## 9. Ledger (for the council)
 
-| id | v2 blocker | v3 resolution |
-|----|------------|---------------|
-| A  | circularity metric undefined | §4.1: `4πA/p²` via arcLength, ≥0.75 |
-| B  | calibration did jitter-press | §4.1: `verify_widget_rendered` is no-input |
-| C  | StepContext flag vs reader conflated | §4.3: two distinct fields |
-| D  | resolution guard unenforced | §4.1 + §4.3: error + preflight |
-| E  | ogrid var-name/role mismatch | §4.1 written with explicit roles |
-| F  | widget-ring on escape-vector orient | §3: that site stays compass; only targeted sites use it |
-| G  | `median_of` undefined | §4.1: full signature + semantics + tests 8–10 |
-| H  | `verify_widget_rendered` prose-only | §4.1: signature + location + tests 20–21 |
-| I  | FlowRunner wiring unspecified | §4.3: context.py + dispatcher.py + config.py named |
-| J  | TOML insertions lacked line refs | §4.3: exact step lines named, F-corrected |
-| K  | test-9 annulus cell math wrong | §7 test 11: in-band dist=45, out dist=30/63.6 |
+v2→v3 blockers A–K and v3 council blockers L–S are resolved and unchanged (see
+§0 history + the code blocks above). v4 adds:
+
+| id | issue (operator correction) | resolution |
+|----|------------------------------|------------|
+| T | v3 implied near-full-screen ROI | §2.5: capture is a 900×600 centre crop; crop-local coords; `widget_frame_grabber` |
+| U | v3 *replaced* compass orient (rename) | §1/§3/§4.3: widget-ring is an **additive** fine step *after* `orient_compass`; TOML INSERTS, doesn't rename |
+| V | v3 flag-off passthrough would double-run compass | §4.2: flag-off is a **no-op True**; test 12 rewritten |
