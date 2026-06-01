@@ -253,9 +253,87 @@ def step_pitch_compass(
     return False
 
 
+def step_hold_alignment(
+    ctx: StepContext,
+    *,
+    until_event: str = "StartJump",
+    timeout_s: float = 12.0,
+    align_tol: float = 0.07,
+    gain: float = 0.3,
+    min_press: float = 0.04,
+    max_press: float = 0.10,
+    settle_s: float = 0.8,
+    samples: int = 3,
+) -> bool:
+    """Hold compass alignment during an FSD spool until `until_event` arrives.
+
+    Replaces the old `wait_for_event StartJump` after `engage_jump`. That
+    pattern was OPEN-LOOP: once HyperSuperCombination fired, nothing kept the
+    target in ED's FSD-charge cone for the ~7s spool. The 2026-06-01 08:05
+    session showed the dot drifting past the cone (residual rotational
+    momentum + ship sway + target moving relative to nose as the ship coasts
+    forward), ED silently aborting the charge, and the bot falling into a
+    wrong recovery path.
+
+    Each loop iteration calls `event_waiter(until_event, settle_s)` as a
+    short-timeout poll — `settle_s` IS the blocking window (no separate
+    sleeper call). If it returns True the loop exits True. If False, take a
+    `samples`-median compass read; if in-front and within `align_tol`, no
+    correction. Otherwise apply ONE micro-correction via `_correct` from
+    `align.py`. The outer `timeout_s` is the wall-clock budget.
+
+    Defaults are deliberately tighter / gentler than the acquire-loop in
+    `orient_compass`: `align_tol=0.07` (vs `[vision].align_tol`), `gain=0.3`
+    (vs orient's 2.0), `max_press=0.10` (vs 0.70). This is a MAINTENANCE
+    hold, not an acquisition swing — micro-nudges only.
+
+    Fails closed (returns False, logs) when vision or event_waiter is
+    unwired. Raises ValueError on samples<1 or timeout_s<=0 — those would
+    silently degrade to no-op loops, which is exactly the misconfig we
+    don't want to ship.
+
+    Retry interaction: on timeout the procedure's on_required_fail trips
+    retry_from. If retry_from lands back at `engage_jump` while the FSD is
+    still mid-charge, `engage_jump`'s `not fsd_charging` precondition
+    returns False and triggers another retry, bounded by `max_retries`.
+    The FSD will either fire StartJump (next attempt's hold_alignment
+    catches it) or fully abort (clearing the flag). Acceptable.
+    """
+    if samples < 1:
+        raise ValueError(f"hold_alignment: samples must be >= 1, got {samples}")
+    if timeout_s <= 0:
+        raise ValueError(f"hold_alignment: timeout_s must be > 0, got {timeout_s}")
+    if ctx.compass_reader is None or ctx.frame_grabber is None:
+        ctx.log("HoldAlignmentNoVision", {})
+        return False
+    if ctx.event_waiter is None:
+        ctx.log("HoldAlignmentNoWaiter", {})
+        return False
+
+    from ..executor.align import _correct, _measure
+
+    start = ctx.clock()
+    iterations = 0
+    while ctx.clock() - start < timeout_s:
+        if ctx.event_waiter(until_event, settle_s):
+            ctx.log("HoldAlignmentDone", {"reason": "event", "iters": iterations})
+            return True
+        read = _measure(ctx.compass_reader, ctx.frame_grabber, samples)
+        iterations += 1
+        if not read.found:
+            continue
+        if read.in_front and read.magnitude <= align_tol:
+            continue   # within maintenance tolerance, no correction needed
+        _correct(ctx.sender, read, gain=gain, min_press=min_press,
+                 max_press=max_press, deadzone=align_tol / 2)
+    ctx.log("HoldAlignmentDone", {"reason": "timeout", "iters": iterations})
+    return False
+
+
 STEP_REGISTRY.update({
     "sc_assist_orbit": step_sc_assist_orbit,
     "nav_panel_target": step_nav_panel_target,
     "orient_compass": step_orient_compass,
     "pitch_compass": step_pitch_compass,
+    "hold_alignment": step_hold_alignment,
 })
