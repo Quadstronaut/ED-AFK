@@ -24,23 +24,28 @@ generate until you add it. If a key is bound to more than one action,
 lint refuses to generate. Bot ≠ player: this preset is loaded only when
 the bot is active. Fly with a different ED preset.
 
-| Action                      | Key | Used by                              |
-| ----------------------------| ----| -------------------------------------|
-| HyperSuperCombination       |     | engage_jump                          |
-| Supercruise                 |     | engage_supercruise, smack_recovery   |
-| SelectTarget                |     | target_ahead                         |
-| TargetNextRouteSystem       |     | target_next_route                    |
-| SetSpeedZero                |     | set_throttle pct=0                   |
-| SetSpeed25                  |     | set_throttle pct=25                  |
-| SetSpeed50                  |     | set_throttle pct=50 (smack_recovery) |
-| SetSpeed75                  |     | set_throttle pct=75                  |
-| SetSpeed100                 |     | set_throttle pct=100 (jump)          |
-| PitchUpButton               |     | orient_compass, pitch_compass        |
-| PitchDownButton             |     | orient_compass                       |
-| YawLeftButton               |     | orient_compass                       |
-| YawRightButton              |     | orient_compass                       |
-| ExplorationFSSDiscoveryScan |     | honk parallel track                  |
-| FocusLeftPanel              |     | nav_panel_target, sc_assist_orbit    |
-| UI_Select                   |     | nav_panel_target, sc_assist_orbit    |
-| UI_Right                    |     | sc_assist_orbit                      |
-| DeployHeatSink              |     | heat_guard                           |
+The **Default** column shows ED's stock binding from
+`ControlSchemes/ClassicKeyboardOnly.binds` (the pure-keyboard scheme — closest
+match for a no-mouse bot). `—` = intentionally unbound by Frontier in that
+scheme. Use it as a reference, not a constraint.
+
+| Action                      | Key | Used by                              | Default         |
+| ----------------------------| ----| -------------------------------------| ----------------|
+| HyperSuperCombination       |     | engage_jump                          | Key_J           |
+| Supercruise                 |     | engage_supercruise, smack_recovery   | —               |
+| SelectTarget                |     | target_ahead                         | Key_T           |
+| TargetNextRouteSystem       |     | target_next_route                    | —               |
+| SetSpeedZero                |     | set_throttle pct=0                   | —               |
+| SetSpeed25                  |     | set_throttle pct=25                  | —               |
+| SetSpeed50                  |     | set_throttle pct=50 (smack_recovery) | —               |
+| SetSpeed75                  |     | set_throttle pct=75                  | —               |
+| SetSpeed100                 |     | set_throttle pct=100 (jump)          | —               |
+| PitchUpButton               |     | orient_compass, pitch_compass        | Key_X           |
+| PitchDownButton             |     | orient_compass                       | Key_S           |
+| YawLeftButton               |     | orient_compass                       | —               |
+| YawRightButton              |     | orient_compass                       | —               |
+| ExplorationFSSDiscoveryScan |     | honk parallel track                  | Mouse_3         |
+| FocusLeftPanel              |     | nav_panel_target, sc_assist_orbit    | Key_1           |
+| UI_Select                   |     | nav_panel_target, sc_assist_orbit    | Key_Enter       |
+| UI_Right                    |     | sc_assist_orbit                      | Key_RightArrow  |
+| DeployHeatSink              |     | heat_guard                           | Key_E           |
