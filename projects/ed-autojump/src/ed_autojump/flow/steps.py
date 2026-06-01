@@ -76,7 +76,11 @@ def step_engage_jump(ctx: StepContext) -> bool:
         return False
     if not _press(ctx, "SetSpeed100"):
         return False
-    return _press(ctx, "HyperSuperCombination")
+    # Granular FSD: the combined HyperSuperCombination toggle is retired in
+    # favour of distinct Supercruise(J)/Hyperspace(K) binds. engage_jump always
+    # has the next ROUTE SYSTEM targeted (target_next_route), so it fires the
+    # hyperspace jump directly. SC engage is the separate engage_supercruise step.
+    return _press(ctx, "Hyperspace")
 
 
 def step_engage_supercruise(ctx: StepContext, *, timeout_s: float = 30.0) -> bool:

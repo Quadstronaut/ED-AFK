@@ -37,4 +37,4 @@ def test_arrival_aborts_without_jump_when_orient_fails():
     # The JUMP key must never fire when orient fails. (SetSpeed100 IS expected
     # earlier — it's the legitimate fly-out throttle before the orient gate —
     # so we assert on the jump combo, not the throttle.)
-    assert "HyperSuperCombination" not in sender.actions()   # NEVER jumped
+    assert "Hyperspace" not in sender.actions()   # NEVER jumped

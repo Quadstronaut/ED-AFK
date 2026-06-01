@@ -27,8 +27,8 @@ _GOOD_MARKDOWN = """
 
 | Action                      | Key            | Notes |
 |-----------------------------|----------------|-------|
-| HyperSuperCombination       | Key_J          |       |
-| Supercruise                 | Key_K          |       |
+| Hyperspace                  | Key_K          |       |
+| Supercruise                 | Key_J          |       |
 | SelectTarget                | Key_N          |       |
 | TargetNextRouteSystem       | Key_H          |       |
 | SetSpeedZero                | Key_Numpad_0   |       |
@@ -54,7 +54,7 @@ def test_parse_extracts_all_rows():
     """Header + separator skipped; every data row captured action->key."""
     out = parse_keymap(_GOOD_MARKDOWN)
     assert set(out) == REQUIRED_ACTIONS
-    assert out["HyperSuperCombination"] == "Key_J"
+    assert out["Hyperspace"] == "Key_K"
     assert out["DeployHeatSink"] == "Key_V"
 
 
@@ -161,9 +161,9 @@ def test_generate_writes_binds_file(tmp_path):
     out = generate(keymap_path=keymap, binds_path=binds)
     assert binds.exists()
     text = binds.read_text(encoding="utf-8")
-    assert '<HyperSuperCombination>' in text
+    assert '<Hyperspace>' in text
     assert '<DeployHeatSink>' in text
-    assert out["HyperSuperCombination"] == "Key_J"
+    assert out["Hyperspace"] == "Key_K"
 
 
 def test_generate_check_only_does_not_write(tmp_path):

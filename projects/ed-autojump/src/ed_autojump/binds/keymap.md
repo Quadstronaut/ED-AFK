@@ -31,8 +31,8 @@ scheme. Use it as a reference, not a constraint.
 
 | Action                      | Key            | Used by                                  | Default        |
 | ----------------------------| ---------------| -----------------------------------------| ---------------|
-| HyperSuperCombination       | Key_J          | engage_jump                              | Key_J          |
-| Supercruise                 | Key_K          | engage_supercruise, smack_recovery       | —              |
+| Hyperspace                  | Key_K          | engage_jump (granular hyperspace jump)   | —              |
+| Supercruise                 | Key_J          | engage_supercruise, smack_recovery       | —              |
 | SelectTarget                | Key_T          | target_ahead                             | Key_T          |
 | TargetNextRouteSystem       | Key_H          | target_next_route                        | —              |
 | SetSpeedZero                | Key_X          | set_throttle pct=0                       | —              |

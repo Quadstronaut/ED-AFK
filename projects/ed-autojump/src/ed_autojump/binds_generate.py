@@ -41,9 +41,9 @@ _VALID_KEYS: frozenset[str] = frozenset(KEY_TO_SCANCODE) | frozenset(EXTENDED_KE
 # add it here. The linter requires every name in REQUIRED_ACTIONS to
 # appear in keymap.md, so lint will fail until both are in sync.
 REQUIRED_ACTIONS: frozenset[str] = frozenset({
-    # flow/steps.py: step_engage_jump
-    "HyperSuperCombination",
-    # flow/steps.py: step_engage_supercruise, procedures/smack_recovery.toml
+    # flow/steps.py: step_engage_jump (granular hyperspace jump, Key_K)
+    "Hyperspace",
+    # flow/steps.py: step_engage_supercruise, procedures/smack_recovery.toml (Key_J)
     "Supercruise",
     # flow/steps.py: step_target_ahead
     "SelectTarget",

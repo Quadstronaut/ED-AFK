@@ -24,7 +24,7 @@ def test_engage_jump_throttles_then_jumps_when_clear():
     sender = FakeSender()
     ctx = StepContext(sender=sender, status_supplier=lambda: _status())
     assert STEP_REGISTRY["engage_jump"](ctx) is True
-    assert sender.actions() == ["SetSpeed100", "HyperSuperCombination"]
+    assert sender.actions() == ["SetSpeed100", "Hyperspace"]
 
 
 def test_engage_jump_refuses_when_flag_blocks():

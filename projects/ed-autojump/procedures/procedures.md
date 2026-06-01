@@ -76,7 +76,7 @@ ignored (loader passes the inline table straight through as `**params`).
 
 | action | params | what it does |
 |---|---|---|
-| `engage_jump` | none | Check status flags (docked, FSD charging/cooldown/mass-locked, overheating) → throttle 100 → `HyperSuperCombination`. Fails closed on any blocking flag. |
+| `engage_jump` | none | Check status flags (docked, FSD charging/cooldown/mass-locked, overheating) → throttle 100 → `Hyperspace` (Key_K, granular jump). Fails closed on any blocking flag. |
 | `engage_supercruise` | `timeout_s: float = 30.0` | If already in SC, no-op. Else press `Supercruise` and wait for `SupercruiseEntry` event (up to `timeout_s`). |
 
 ### Journal / timing gates
@@ -99,7 +99,7 @@ These fail closed if vision (compass reader + frame grabber) is unwired.
 
 ## Conventions
 
-- **Bind names** match Elite's binds file action names (`ExplorationFSSDiscoveryScan`, `HyperSuperCombination`, `PitchUpButton`, etc.). The sender resolves the name to a scancode via the active preset; unbound → step fails.
+- **Bind names** match Elite's binds file action names (`ExplorationFSSDiscoveryScan`, `Hyperspace`, `Supercruise`, `PitchUpButton`, etc.). The sender resolves the name to a scancode via the active preset; unbound → step fails.
 - **Event names** match Elite journal event names verbatim (`FSSDiscoveryScan`, `SupercruiseEntry`, `StartJump`, `FSDJump`, `Docked`, etc.).
 - **A False from a step never throttles or jumps.** Failure either aborts (if `required`) or is logged and skipped (if not). The `engage_*` steps additionally check status flags before sending input.
 - **Times are seconds, always floats.** `pct` is an integer (`0`/`25`/`50`/`75`/`100`).

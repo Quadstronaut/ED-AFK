@@ -20,7 +20,8 @@ from .config import Config
 
 
 CRITICAL_ACTIONS = (
-    "HyperSuperCombination",   # the engage-jump key — bot can't fly without it
+    "Hyperspace",   # the engage-jump key (Key_K) — bot can't fly without it.
+                    # Combined HyperSuperCombination toggle is retired (now unbound).
     "SetSpeedZero",
     "SetSpeed25",
     "SetSpeed50",
