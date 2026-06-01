@@ -261,6 +261,33 @@ def build_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[], Any]]]:
 
 
 # ---------------------------------------------------------------------------
+# Widget-ring FINE alignment factory
+# ---------------------------------------------------------------------------
+
+def build_widget_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[], Any]]]:
+    """Construct (WidgetRingReader, centre_crop_grabber.grab) for the FINE
+    alignment stage, or (None, None) if widget-ring is off / unavailable.
+
+    Returns the BOUND `.grab` callable (NOT the ScreenGrabber object) — a
+    ScreenGrabber is not callable, and every call site does grabber(); this
+    mirrors build_vision. The grabber is its OWN ScreenGrabber over the 1080p
+    centre crop (cfg.vision.widget_crop); it never reuses the compass grabber.
+    NEVER raises (missing cv2/numpy → off, same as build_vision)."""
+    v = cfg.vision
+    if not getattr(v, "widget_ring_alignment", False):
+        return None, None
+    try:
+        from .widget_ring import WidgetRingReader
+
+        reader = WidgetRingReader()
+        grabber = ScreenGrabber(tuple(v.widget_crop), backend=v.capture_backend)
+        return reader, grabber.grab
+    except Exception as e:  # noqa: BLE001 — degrade to off, never crash a run.
+        log.warning("widget_ring_alignment on but unavailable (%s); fine pass off", e)
+        return None, None
+
+
+# ---------------------------------------------------------------------------
 # Sun-region grabber factory
 # ---------------------------------------------------------------------------
 
