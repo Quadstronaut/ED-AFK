@@ -227,9 +227,16 @@ class WidgetRingReader:
    (dp=1.2, minDist=80, param1=100, param2=22, minRadius=18, maxRadius=90).
    For each candidate, in descending accumulator order, accept the first that
    passes BOTH gates:
-   - **Annulus fill**: ≥ `_ANNULUS_MIN_FILL` of the pixels in the band
-     `[0.80r, 1.20r]` are orange (confirms a *ring*, rejects a filled orange
-     blob and the widget dot, which is far smaller than minRadius).
+   - **Hollow-ness** (impl correction AA): of the orange pixels inside the
+     candidate disc (≤1.2r), the fraction in the ring band `[0.80r, 1.20r]`
+     vs the hole (<0.8r) is ≥ `_ANNULUS_MIN_FILL` (0.55). A true ring is ≈1.0
+     (hollow centre); a FILLED disc is ≈0.36 (orange centre). This rejects a
+     filled blob and the widget dot (smaller than minRadius). *Why not "orange
+     ÷ band-area": a realistic ~3 px reticle ring fills only ~25 % of the
+     0.4r-wide band, so that naive metric would reject real rings. In-band ÷
+     (in-band + in-core) is thickness-robust — same band, same 0.55 threshold,
+     corrected denominator. Empirically verified on synthetic rings (r=50,
+     t=3 → fill≈1.0) and discs (r=40 → fill≈0.36).*
    - **Circularity**: `cv2.findContours(mask, cv2.RETR_EXTERNAL,
      cv2.CHAIN_APPROX_SIMPLE)`. `RETR_EXTERNAL` returns only outer boundaries,
      so the reticle ring yields ONE contour (its inner hole is not a separate
@@ -609,3 +616,9 @@ v2→v3 blockers A–K and v3 council blockers L–S are resolved and unchanged 
 | N1 | §2.5 crop-margin math wrong (clips 6 px at r=90) | implementer (nit) | §2.5: reworded — Hough votes on centre; annulus ≥88 % ≫ 0.55 |
 | N2 | annulus band samples off-crop near edge | holistic (nit) | §2.5: acknowledged, fail-closed → compass re-run; keep `CROP_H=600` |
 | N3 | §6 understated smack retry (whole escape-vector spawn) | holistic (nit) | §6: smack `retry_from=pitch_compass` re-runs full spawn, bounded `max_retries=3` |
+
+### Implementation-discovered corrections (TDD; to ratify at review gate)
+
+| id | issue (found while implementing) | resolution |
+|----|----------------------------------|------------|
+| AA | annulus "orange ÷ band-area" rejects realistic thin rings (~3 px ring fills only ~25 % of the 0.4r band; threshold 0.55 unreachable) | §4.1: redefine fill = in-band ÷ (in-band + in-core) orange — ring≈1.0, filled-disc≈0.36; same band, same 0.55 threshold, thickness-robust. Empirically verified. |
