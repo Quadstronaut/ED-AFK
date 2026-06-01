@@ -47,9 +47,14 @@ def test_resolve_profile_unknown_commander_raises():
 def test_cred_path_for_uses_localappdata_layout(monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Test\AppData\Local")
     p = cred_path_for("account2")
-    # PureWindowsPath both sides: production now returns PureWindowsPath so
-    # the Windows-style %LOCALAPPDATA% value parses correctly on any OS.
-    assert p == PureWindowsPath(r"C:\Users\Test\AppData\Local\min-ed-launcher\.frontier-account2.cred")
+    # Compare via PureWindowsPath on both sides: cred_path_for is a Windows-
+    # layout helper, and Path() on a non-Windows host turns the backslash
+    # value into a single-segment PosixPath. Normalizing through
+    # PureWindowsPath (which treats both `/` and `\` as separators) makes
+    # the assertion express "same Windows path" regardless of host OS.
+    assert PureWindowsPath(p) == PureWindowsPath(
+        r"C:\Users\Test\AppData\Local\min-ed-launcher\.frontier-account2.cred"
+    )
 
 
 def test_has_cred_true_when_file_exists(tmp_path, monkeypatch):
