@@ -9,9 +9,11 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
+  { action = "orient_compass", required = true },
+  { action = "engage_jump", required = false },
   { action = "target_ahead" },
-  { action = "pitch_compass", until = "edge", required = true },
   { action = "set_throttle", pct = 100 },
+  { action = "pitch_compass", until = "edge", required = true },
   { action = "engage_supercruise", required = true },
   { action = "set_throttle", pct = 100 },
   { action = "wait", s = 10.0 },

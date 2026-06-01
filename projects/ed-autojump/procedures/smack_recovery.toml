@@ -8,6 +8,7 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
+  { action = "set_throttle", pct = 33 },
   { action = "target_ahead" },
   { action = "pitch_compass", until = "behind", required = true },
   { action = "wait_cooldown", since = "drop", s = 45.0 },
