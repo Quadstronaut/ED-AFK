@@ -8,12 +8,17 @@ pass. No step lands without a test asserting its contract.
 
 ## Guiding constraints (from the council, do not violate)
 
-- **Implementation order (council Z):** `steps.py` (define + register) →
-  `context.py` (3 fields) → `dispatcher.py` (3 params) → `config.py` (2 fields)
-  → `capture.py` (`build_widget_vision`) → `cli.py` (build + wire) → **TOML
-  inserts LAST**. The TOML reference to `orient_widget_ring` must never exist
-  before the step is in `STEP_REGISTRY`, or `validate_procedure` exits 2 on
-  every CLI run. Each commit leaves the tree green.
+- **Implementation order (council Z + plan-gate fix):** `widget_ring.py` →
+  **`context.py` (3 fields)** → `steps.py` (define step + register + tests) →
+  `dispatcher.py` (3 params) → `config.py` (2 fields) → `capture.py`
+  (`build_widget_vision`) → `cli.py` (build + wire) → **TOML inserts LAST**.
+  Two hard constraints: (a) the TOML reference to `orient_widget_ring` must never
+  exist before the step is in `STEP_REGISTRY`, or `validate_procedure` exits 2;
+  (b) **context.py's 3 StepContext fields must land before steps.py's tests**,
+  which construct `StepContext(widget_ring_enabled=…, …)` — otherwise that commit
+  fails its own suite with `TypeError` (council holistic plan-gate blocker).
+  Registration still precedes the TOML inserts under this order, so the fatal
+  registry hazard stays closed. Each commit leaves the tree green.
 - **`build_widget_vision` returns the bound `.grab` callable (council X)** —
   `(WidgetRingReader, grabber.grab)`, never the `ScreenGrabber` object.
 - **Config home is `VisionConfig` fields, TOML `[vision]` (council W).**
@@ -66,7 +71,25 @@ dist30 False, dist≈63.6 False), 20 verify happy 4/5, 21 verify sad 1/5.
 
 Commit: `feat(vision): widget-ring reader (HSV orange + Hough + annulus/circularity)`.
 
-## Step 2 — `step_orient_widget_ring` + helpers in `flow/steps.py`
+## Step 2 — `flow/context.py`: 3 new StepContext fields (BEFORE the step)
+
+(Council holistic plan-gate fix: context fields must precede the step tests.)
+**Append after the `record` field** (the actual last field — NOT after
+`compass_samples`, which would split the live-state-suppliers block; council
+implementer nit):
+```python
+# widget-ring fine-align vision (None when off -> the step fails closed)
+widget_ring_enabled: bool = False
+widget_ring_reader: Optional[Any] = None
+widget_frame_grabber: Optional[Callable[[], Any]] = None  # centre-crop .grab
+```
+Defaults keep every existing construction site green. No new test here — the
+step tests in Step 3 construct `StepContext(widget_ring_enabled=…, …)`; run the
+full suite after this commit to confirm no regression.
+
+Commit: `feat(flow): StepContext widget-ring fields`.
+
+## Step 3 — `step_orient_widget_ring` + helpers in `flow/steps.py`
 
 Add `step_orient_widget_ring`, `_hold_for`, `_correct_widget_ring` verbatim from
 spec §4.2. **Register in the existing `STEP_REGISTRY.update({...})` block** at the
@@ -79,7 +102,8 @@ Helpers are module-private, NOT shared with `align._correct`/`_press_for`
 False)` flag gate; flag-off → `return True` (no-op, reader never touched);
 flag-on + no reader/grabber → log `WidgetRingNoVision`, `return False`;
 `KeyError` from `sender.press` caught INSIDE the loop → log `BindMissing`,
-continue.
+continue. (The context fields from Step 2 already exist, so these tests
+construct a `StepContext` with the new kwargs and the commit stays green.)
 
 **Tests `tests/flow/test_orient_widget_ring.py` (spec tests 12–19):** a
 `_FakeRingReader` queuing `WidgetRingRead`s; shared `FakeSender`; fake
@@ -91,20 +115,6 @@ clock/sleeper. 12 noop-true-when-flag-off (zero presses, reader never called),
 KeyError → `BindMissing`, times out False, no crash).
 
 Commit: `feat(flow): orient_widget_ring fine step + registration`.
-
-## Step 3 — `flow/context.py`: 3 new StepContext fields
-
-Append after `compass_samples`:
-```python
-widget_ring_enabled: bool = False
-widget_ring_reader: Optional[Any] = None
-widget_frame_grabber: Optional[Callable[[], Any]] = None  # centre-crop .grab
-```
-Defaults keep every existing construction site green. No new test (covered by
-step tests 12–13 constructing StepContext with these kwargs); run the full
-suite to confirm no regression.
-
-Commit: `feat(flow): StepContext widget-ring fields`.
 
 ## Step 4 — `flow/dispatcher.py`: 3 new FlowRunner params
 
@@ -145,14 +155,22 @@ Commit: `feat(vision): build_widget_vision factory (returns bound .grab)`.
 
 ## Step 7 — `cli.py`: build + verify + wire
 
-Inside `if args.engage_keys:`, after the existing `build_vision` block, add the
-spec §4.3 block: `build_widget_vision(cfg)` when `cfg.vision.widget_ring_alignment`;
-`return 2` if reader/grabber None (vision unavailable) OR
-`verify_widget_rendered` False (with the exact preflight message). Pass
-`widget_ring_enabled/_reader/_frame_grabber` into the `FlowRunner(...)` call.
-Import `verify_widget_rendered` from `.vision.widget_ring`. `sys` already imported
-(used at line 361). No unit test for the CLI block (integration-tested via the
-existing CLI smoke + the procedure test below); manual `--help`/`doctor` sanity.
+**Scoping fix (council architect + implementer plan-gate blocker):** the
+`FlowRunner(...)` call at ~line 376 is OUTSIDE the `if args.engage_keys:` block,
+so the two locals must be initialised at the **outer** scope first, mirroring the
+existing `compass_reader = frame_grabber = None` at cli.py line 334:
+```python
+widget_ring_reader = widget_frame_grabber = None   # outer scope, before the if
+```
+Then INSIDE `if args.engage_keys:`, after the existing `build_vision` block, add
+the spec §4.3 block: `build_widget_vision(cfg)` when
+`cfg.vision.widget_ring_alignment`; `return 2` if reader/grabber None (vision
+unavailable) OR `verify_widget_rendered` False (with the exact preflight
+message). Pass `widget_ring_enabled=cfg.vision.widget_ring_alignment,
+widget_ring_reader=…, widget_frame_grabber=…` into the `FlowRunner(...)` call.
+Import `verify_widget_rendered` from `.vision.widget_ring`. `sys` already
+imported. No unit test for the CLI block (integration-tested via the existing CLI
+smoke + the procedure test below); manual `--help`/`doctor` sanity.
 
 Commit: `feat(cli): wire widget-ring fine pass behind preflight gate`.
 
@@ -167,11 +185,16 @@ Now that the step is registered, insert into both procedures (spec §4.3):
   (escape vector) untouched** (§3 / Blocker F).
 
 **Test 22 `tests/flow/test_orient_widget_ring.py` (or integration):**
-`load_procedures(PROC_DIR)`; assert `arrival` has `orient_widget_ring`
-immediately after `orient_compass`; with flag off, running the procedure presses
-the SAME keys as the existing `test_arrival_aborts_without_jump_when_orient_fails`
-baseline (new step no-ops). Re-run `tests/flow/test_integration.py` — must still
-pass (flag defaults off → no behavioural change).
+`load_procedures(PROC_DIR)`; assert (a) `arrival` has `orient_widget_ring`
+immediately after `orient_compass` (structural). Then (b) — to actually
+EXERCISE the no-op path, not vacuously (council holistic nit): run `arrival`
+with a compass reader that SUCCEEDS (centred dot, like `test_integration`'s
+`FakeReader` default) and `widget_ring_enabled=False`; assert the procedure
+reaches and passes the `orient_widget_ring` step (it no-ops True) and proceeds to
+`engage_jump` — i.e. the inserted step did not block the flow. Re-run
+`tests/flow/test_integration.py` unchanged — must still pass (flag defaults off →
+no behavioural change; the abort baseline still aborts at `orient_compass` before
+the new step, which is fine: test 22(b) covers the reached-and-no-op case).
 
 Commit: `feat(procedures): insert orient_widget_ring fine step after compass`.
 
