@@ -8,6 +8,14 @@
 # vector during the SC charge even though no body is selected. Once SC
 # entry confirms, throttle up, lock the next route star, fly 13s to clear
 # the arrival star, re-orient, jump (log-gated on StartJump).
+#
+# step kinds (tag at start of each step comment):
+#   tap     atomic keypress, no precondition, no wait
+#   gated   keypress with Status.json precondition (fails closed on bad flag)
+#   wait    passive block on journal event or clock — no input sent
+#   hold    key down → event → key up; used in parallel honk track
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 [on_required_fail]
 retry_from = "pitch_compass"
 max_retries = 3
@@ -15,22 +23,22 @@ backoff_s = 2.0
 
 steps = [
   # ── Real-space recovery during the smack cooldown ─────────────────────
-  { action = "set_throttle", pct = 50 },                                                    # 0
-  { action = "nav_panel_target" },                                                           # 1 row 0 = arrival star
-  { action = "pitch_compass", until = "behind", required = true },                           # 2
-  { action = "wait_cooldown", since = "drop", s = 45.0 },                                    # 3
+  { action = "set_throttle", pct = 50 },                                                    # tap    | 0
+  { action = "nav_panel_target" },                                                           # macro  | 1 EXCLUSIVE — row 0 = arrival star
+  { action = "pitch_compass", until = "behind", required = true },                           # vision | 2 EXCLUSIVE — pitch star behind
+  { action = "wait_cooldown", since = "drop", s = 45.0 },                                    # wait   | 3 smack cooldown
 
   # ── Fire FSD inside the exclusion zone to spawn the escape vector ─────
-  { action = "target_ahead" },                                                                # 4 deselect
-  { action = "press", bind = "Supercruise" },                                                 # 5 FSD lit inside exclusion -> escape vector spawns
-  { action = "orient_compass", required = true },                                             # 6 home on escape vector DURING the SC charge
-  { action = "wait_for_event", event = "SupercruiseEntry", timeout_s = 20.0, required = true }, # 7
+  { action = "target_ahead" },                                                                # tap    | 4 deselect
+  { action = "press", bind = "Supercruise" },                                                 # tap    | 5 FSD lit inside exclusion → escape vector spawns
+  { action = "orient_compass", required = true },                                             # vision | 6 EXCLUSIVE — home on escape vector during SC charge
+  { action = "wait_for_event", event = "SupercruiseEntry", timeout_s = 20.0, required = true }, # wait   | 7
 
   # ── In supercruise: clear the star, target route, jump ────────────────
-  { action = "set_throttle", pct = 100 },                                                     # 8
-  { action = "target_next_route" },                                                           # 9
-  { action = "wait", s = 13.0 },                                                              # 10 fly clear of the arrival star
-  { action = "orient_compass", required = true },                                             # 11
-  { action = "engage_jump", required = true },                                                # 12a press FSD combo
-  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },      # 12b confirm via journal
+  { action = "set_throttle", pct = 100 },                                                     # tap    | 8
+  { action = "target_next_route" },                                                           # tap    | 9
+  { action = "wait", s = 13.0 },                                                              # wait   | 10 fly clear of arrival star
+  { action = "orient_compass", required = true },                                             # vision | 11 EXCLUSIVE
+  { action = "engage_jump", required = true },                                                # gated  | 12a FSD combo
+  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },      # wait   | 12b confirm via journal
 ]

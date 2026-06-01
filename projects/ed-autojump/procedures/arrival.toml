@@ -1,5 +1,13 @@
 # Runs on every LIVE FSDJump (you arrive in supercruise). Orbit AROUND the star
 # so a next-hop hidden behind it becomes reachable, THEN orient + jump.
+#
+# step kinds (tag at start of each step comment):
+#   tap     atomic keypress, no precondition, no wait
+#   gated   keypress with Status.json precondition (fails closed on bad flag)
+#   wait    passive block on journal event or clock — no input sent
+#   hold    key down → event → key up; used in parallel honk track
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 parallel_tracks = ["honk"]
 
 [on_required_fail]
@@ -8,13 +16,13 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  { action = "set_throttle", pct = 0 },
-  { action = "target_ahead" },
-  { action = "sc_assist_orbit" },
-  { action = "wait", s = 13.0 },
-  { action = "target_next_route" },
-  { action = "set_throttle", pct = 100 },
-  { action = "wait", s = 13.0 },
-  { action = "orient_compass", required = true },
-  { action = "engage_jump", required = true },
+  { action = "set_throttle", pct = 0 },             # tap    | 0
+  { action = "target_ahead" },                       # tap    | 1
+  { action = "sc_assist_orbit" },                    # macro  | 2 EXCLUSIVE — nav panel macro
+  { action = "wait", s = 13.0 },                     # wait   | 3 let orbit acquire
+  { action = "target_next_route" },                  # tap    | 4
+  { action = "set_throttle", pct = 100 },            # tap    | 5
+  { action = "wait", s = 13.0 },                     # wait   | 6 clear of arrival star
+  { action = "orient_compass", required = true },    # vision | 7
+  { action = "engage_jump", required = true },       # gated  | 8 FSD combo
 ]

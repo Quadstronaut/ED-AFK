@@ -3,7 +3,15 @@
 # not time-gated — the key comes up the instant the scan confirms.
 # max_hold_s in the step is a safety backstop (default ~30s) so a missing
 # event can't deadlock the track; it should never fire in normal use.
+#
+# step kinds (tag at start of each step comment):
+#   tap     atomic keypress, no precondition, no wait
+#   gated   keypress with Status.json precondition (fails closed on bad flag)
+#   wait    passive block on journal event or clock — no input sent
+#   hold    key down → event → key up; used in parallel honk track
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 parallel = true
 steps = [
-  { action = "hold_until_event", bind = "ExplorationFSSDiscoveryScan", event = "FSSDiscoveryScan" },
+  { action = "hold_until_event", bind = "ExplorationFSSDiscoveryScan", event = "FSSDiscoveryScan" },  # hold | 0 the honk itself
 ]
