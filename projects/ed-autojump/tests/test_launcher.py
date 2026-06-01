@@ -7,8 +7,7 @@ actually invoke the launcher binary.
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
 import pytest
@@ -45,14 +44,12 @@ def test_resolve_profile_unknown_commander_raises():
         resolve_profile("NotARealCmdr", cfg)
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="Windows LOCALAPPDATA layout — backslash path semantics need PureWindowsPath on Linux",
-)
 def test_cred_path_for_uses_localappdata_layout(monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Test\AppData\Local")
     p = cred_path_for("account2")
-    assert p == Path(r"C:\Users\Test\AppData\Local\min-ed-launcher\.frontier-account2.cred")
+    # PureWindowsPath both sides: production now returns PureWindowsPath so
+    # the Windows-style %LOCALAPPDATA% value parses correctly on any OS.
+    assert p == PureWindowsPath(r"C:\Users\Test\AppData\Local\min-ed-launcher\.frontier-account2.cred")
 
 
 def test_has_cred_true_when_file_exists(tmp_path, monkeypatch):

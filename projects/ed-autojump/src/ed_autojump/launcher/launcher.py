@@ -21,7 +21,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterable, Optional
 
 from ..config import LauncherConfig
@@ -89,21 +89,23 @@ class Profile:
     cred_path: Path
 
 
-def cred_path_for(profile_slug: str) -> Path:
+def cred_path_for(profile_slug: str) -> PureWindowsPath:
     """Return the DPAPI-encrypted .cred path MEL uses for a given slug.
 
     Layout: `%LOCALAPPDATA%\\min-ed-launcher\\.frontier-<slug>.cred`.
-    The wizard checks existence before launch; this function is pure
-    (doesn't touch disk) so callers can build paths regardless of whether
-    the file exists yet.
+    Returns a `PureWindowsPath` so the backslash-separated `%LOCALAPPDATA%`
+    value is parsed correctly regardless of host OS (a bare `Path()` on
+    Linux is `PosixPath` and treats `\\` as a filename character). Pure on
+    purpose — doesn't touch disk; callers wrap with `Path(...)` for real
+    filesystem ops.
     """
     localappdata = os.environ.get("LOCALAPPDATA", "")
-    return Path(localappdata) / "min-ed-launcher" / f".frontier-{profile_slug}.cred"
+    return PureWindowsPath(localappdata) / "min-ed-launcher" / f".frontier-{profile_slug}.cred"
 
 
 def has_cred(profile_slug: str) -> bool:
     """True if the .cred file exists on disk for this profile slug."""
-    return cred_path_for(profile_slug).is_file()
+    return Path(cred_path_for(profile_slug)).is_file()
 
 
 def resolve_profile(commander: str, cfg: LauncherConfig) -> Profile:
@@ -113,7 +115,7 @@ def resolve_profile(commander: str, cfg: LauncherConfig) -> Profile:
             f"unknown commander {commander!r}; known: {sorted(cfg.profiles)}"
         )
     slug = cfg.profiles[commander]
-    return Profile(commander=commander, profile_slug=slug, cred_path=cred_path_for(slug))
+    return Profile(commander=commander, profile_slug=slug, cred_path=Path(cred_path_for(slug)))
 
 
 # --- spec + args ---------------------------------------------------------
