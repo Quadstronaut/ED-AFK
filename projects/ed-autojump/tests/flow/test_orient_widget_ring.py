@@ -4,10 +4,16 @@ integration (test 22). No game, no real sleeps. A _FakeRingReader queues
 WidgetRingReads; the shared FakeSender records presses.
 """
 
-from ed_autojump.flow import StepContext
+from pathlib import Path
+from types import SimpleNamespace
+
+from ed_autojump.flow import StepContext, load_procedures, run_procedure
 from ed_autojump.flow.steps import step_orient_widget_ring
 from ed_autojump.vision.widget_ring import WidgetRingRead
+from ed_autojump.vision.compass import CompassRead
 from tests.flow import FakeSender
+
+PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
 
 
 class _FakeRingReader:
@@ -168,5 +174,44 @@ def test_bind_missing_is_caught():
     assert any(t == "BindMissing" for t, _ in logged)
     assert "YawRightButton" not in sender.actions()  # never recorded (raised)
 
-# NOTE: test 22 (procedure integration) lands with the TOML insert (Step 8),
-# since it asserts orient_widget_ring is present in arrival.toml.
+
+# ---------------------------------------------------------------------------
+# 22. procedure integration: step inserted after orient_compass, no-ops when off
+# ---------------------------------------------------------------------------
+
+class _OkCompassReader:
+    """Compass reader that always reports the dot centred (orient succeeds)."""
+
+    def read(self, frame):
+        return CompassRead(found=True, offset_x=0.0, offset_y=0.0,
+                           in_front=True, confidence=1.0)
+
+
+def _arrival_status():
+    return SimpleNamespace(docked=False, in_supercruise=True, fsd_charging=False,
+                           fsd_cooldown=False, fsd_mass_locked=False,
+                           overheating=False)
+
+
+def test_arrival_has_widget_ring_after_compass():
+    procs = load_procedures(PROC_DIR)
+    actions = [s.action for s in procs["arrival"].steps]
+    # (a) structural: orient_widget_ring immediately follows orient_compass
+    i = actions.index("orient_compass")
+    assert actions[i + 1] == "orient_widget_ring"
+
+    # (b) exercise the no-op path (not vacuously): compass SUCCEEDS, flag OFF ->
+    # the inserted step is REACHED, no-ops True, and the flow proceeds to fire
+    # the jump. Proves the insert didn't block the flow.
+    sender = FakeSender()
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None,
+        compass_reader=_OkCompassReader(),
+        frame_grabber=lambda: object(), compass_samples=1,
+        status_supplier=_arrival_status,
+        align_kwargs={"max_iters": 2, "timeout_s": 999, "settle_s": 0.0},
+        widget_ring_enabled=False,  # no-op fine step
+    )
+    result = run_procedure(procs["arrival"], ctx)
+    assert result.aborted is False
+    assert "Hyperspace" in sender.actions()  # reached + fired the jump

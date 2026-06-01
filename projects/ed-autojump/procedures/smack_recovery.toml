@@ -38,7 +38,8 @@ steps = [
   { action = "set_throttle", pct = 100 },                                                     # tap    | 8
   { action = "target_next_route" },                                                           # tap    | 9
   { action = "wait", s = 13.0 },                                                              # wait   | 10 fly clear of arrival star
-  { action = "orient_compass", required = true },                                             # vision | 11 EXCLUSIVE
-  { action = "engage_jump", required = true },                                                # gated  | 12a FSD combo
-  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },      # wait   | 12b confirm via journal
+  { action = "orient_compass", required = true },                                             # vision | 11 EXCLUSIVE coarse
+  { action = "orient_widget_ring", required = true },                                         # vision | 12 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },                                                # gated  | 13a FSD jump
+  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },      # wait   | 13b confirm via journal
 ]

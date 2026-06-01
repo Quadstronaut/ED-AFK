@@ -23,6 +23,7 @@ steps = [
   { action = "target_next_route" },                  # tap    | 4
   { action = "set_throttle", pct = 100 },            # tap    | 5
   { action = "wait", s = 13.0 },                     # wait   | 6 clear of arrival star
-  { action = "orient_compass", required = true },    # vision | 7
-  { action = "engage_jump", required = true },       # gated  | 8 FSD combo
+  { action = "orient_compass", required = true },        # vision | 7 coarse
+  { action = "orient_widget_ring", required = true },    # vision | 8 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },           # gated  | 9 FSD jump
 ]
