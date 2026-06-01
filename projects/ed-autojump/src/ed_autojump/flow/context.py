@@ -29,6 +29,13 @@ class StepContext:
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 
+    # widget-ring fine-align vision (None when off -> the step fails closed).
+    # widget_frame_grabber is the CENTRE-CROP .grab — distinct from
+    # frame_grabber, which is the compass-region crop.
+    widget_ring_enabled: bool = False
+    widget_ring_reader: Optional[Any] = None
+    widget_frame_grabber: Optional[Callable[[], Any]] = None
+
     def log(self, outcome_type: str, payload: Any) -> None:
         if self.record is not None:
             self.record(outcome_type, payload)
