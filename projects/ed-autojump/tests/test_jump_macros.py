@@ -18,7 +18,7 @@ from ed_autojump.keys import RecordingSender, parse_binds
 
 
 def _binds():
-    src = Path(__file__).parent.parent / "src/ed_autojump/binds/ED-AFK.4.2.binds"
+    src = Path(__file__).parent / "fixtures" / "ED-AFK.legacy.binds"
     return parse_binds(src)
 
 

@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 def _binds():
-    return parse_binds(Path(__file__).parent.parent / "src/ed_autojump/binds/ED-AFK.4.2.binds")
+    return parse_binds(Path(__file__).parent / "fixtures" / "ED-AFK.legacy.binds")
 
 
 # --- PanicSwitch ---------------------------------------------------------

@@ -20,15 +20,22 @@ Two layers of defence:
 
 The test fails fast on either: missing binding, or AST-discovered action
 that isn't in our known set (so removing an action also forces an update).
+
+NOTE: completeness of the LIVE preset is now enforced at generation time by
+`binds_generate.REQUIRED_ACTIONS` (see `tests/test_binds_generate.py`).
+The two tests here that loaded the live preset have been replaced by a single
+test that checks the generated XML enumerates every REQUIRED_ACTION as a tag.
 """
 
 from __future__ import annotations
 
 import ast
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 
+from ed_autojump.binds_generate import REQUIRED_ACTIONS
 from ed_autojump.executor.jump import (
     DEFAULT_CLASS_PITCH_S,
     DEFAULT_CLASS_POST_PITCH_THROTTLE,
@@ -37,7 +44,9 @@ from ed_autojump.keys import parse_binds
 
 
 EXECUTOR_DIR = Path(__file__).parent.parent / "src" / "ed_autojump" / "executor"
-BINDS_PATH = Path(__file__).parent.parent / "src" / "ed_autojump" / "binds" / "ED-AFK.4.2.binds"
+LIVE_BINDS_PATH = Path(__file__).parent.parent / "src" / "ed_autojump" / "binds" / "ED-AFK.4.2.binds"
+# Populated legacy fixture used by tests that need real key bindings.
+FIXTURE_BINDS_PATH = Path(__file__).parent / "fixtures" / "ED-AFK.legacy.binds"
 
 
 def _scan_press_actions(source: str) -> set[str]:
@@ -77,40 +86,25 @@ def _all_executor_actions() -> set[str]:
 # Bind-coverage tests -------------------------------------------------------
 
 
-def test_every_executor_action_has_a_keyboard_binding():
-    """Critical safety: every action the bot can dispatch must be bound.
-    Failure of this test means an overnight run would KeyError on that
-    action mid-flight."""
-    binds = parse_binds(BINDS_PATH)
-    actions = _all_executor_actions()
-    assert actions, "AST scan found zero actions — scanner is broken"
-    missing = [a for a in actions if binds.get(a) is None or not binds.get(a).key]
+def test_required_actions_all_tagged_in_live_binds():
+    """Every name in binds_generate.REQUIRED_ACTIONS must appear as a tag in
+    the generated live .binds file.
+
+    The live preset is intentionally sparse (all keys blank — user fills
+    them in via keymap.md).  What matters is that the generator emits an
+    XML element for each required action so ED's preset system knows the
+    action slot exists.  This is enforced at generation time by
+    lint_keymap(), and this test catches any regression where a required
+    action is dropped from the generated XML structure.
+    """
+    tree = ET.parse(LIVE_BINDS_PATH)
+    root = tree.getroot()
+    rendered_tags = {child.tag for child in root}
+    missing = REQUIRED_ACTIONS - rendered_tags
     assert not missing, (
-        f"{len(missing)} executor actions have no keyboard binding in "
-        f"ED-AFK.4.2.binds: {sorted(missing)}"
+        f"Live ED-AFK.4.2.binds is missing XML tags for required actions: "
+        f"{sorted(missing)} — run `python -m ed_autojump.binds_generate` to regenerate."
     )
-
-
-def test_critical_actions_present_explicitly():
-    """Belt-and-braces: regardless of AST scanning, these MUST be bound."""
-    binds = parse_binds(BINDS_PATH)
-    must_have = {
-        "HyperSuperCombination",        # engage next jump
-        "SetSpeedZero",
-        "SetSpeed25",
-        "SetSpeed50",
-        "SetSpeed75",
-        "SetSpeed100",
-        "PitchUpButton",
-        "ExplorationFSSDiscoveryScan",  # honk
-        "ExplorationFSSEnter",
-        "ExplorationFSSQuit",
-        "PlayerHUDModeToggle",          # DSS entry
-        "CycleFireGroupNext",
-        "PrimaryFire",
-    }
-    missing = [a for a in must_have if binds.get(a) is None or not binds.get(a).key]
-    assert not missing, f"critical actions unbound: {missing}"
 
 
 def test_class_pitch_table_covers_known_star_classes():
