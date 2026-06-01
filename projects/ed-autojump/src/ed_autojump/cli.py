@@ -49,6 +49,19 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("restore-binds", help="restore the player's StartPreset")
 
+    sub_pull = sub.add_parser(
+        "pull-binds",
+        help="show diff (or apply) the active in-game preset back to the repo",
+    )
+    sub_pull.add_argument(
+        "--apply", action="store_true",
+        help="overwrite the bundled repo preset with the live in-game preset",
+    )
+    sub_pull.add_argument(
+        "--preset", metavar="NAME", default=None,
+        help="pull from this preset name instead of the active StartPreset",
+    )
+
     sub_run = sub.add_parser(
         "run",
         help="run the bot main loop (Phase 12 — minimal: tail + record, no key sending yet)",
@@ -690,6 +703,43 @@ def cmd_restore_binds(args) -> int:
     return 0
 
 
+def cmd_pull_binds(args) -> int:
+    from .pull_binds import format_diff, pull_binds
+
+    cfg = load_config(args.config if args.config.is_file() else None)
+    bindings_dir = cfg.paths.binds_dir_expanded()
+
+    try:
+        diff, live_path, repo_path = pull_binds(
+            preset_name=args.preset or None,
+            bindings_dir=bindings_dir,
+            apply=args.apply,
+        )
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"live:  {live_path}")
+    print(f"repo:  {repo_path}")
+    print()
+
+    if diff.is_empty():
+        print("No differences — repo preset is already up to date.")
+        return 0
+
+    print(format_diff(diff))
+
+    if args.apply:
+        print()
+        print(f"Applied: repo preset overwritten with live preset.")
+    else:
+        total = len(diff.added) + len(diff.removed) + len(diff.changed)
+        print()
+        print(f"{total} difference(s) found. Re-run with --apply to update the repo preset.")
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     cmd = args.command
@@ -701,6 +751,7 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": cmd_doctor,
         "install-binds": cmd_install_binds,
         "restore-binds": cmd_restore_binds,
+        "pull-binds": cmd_pull_binds,
         "run": cmd_run,
         "launch": cmd_launch,
         "setup-frontier-creds": cmd_setup_creds,
