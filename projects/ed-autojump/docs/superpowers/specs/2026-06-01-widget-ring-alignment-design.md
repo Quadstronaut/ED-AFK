@@ -416,9 +416,13 @@ nudges are tiny and the FSD spool budget is short).
   keys are **fields on the existing `VisionConfig` dataclass** (`config.py`,
   the `VisionConfig` near line 214) — *not* a new TOML section:
   ```python
-  widget_ring_alignment: bool = False
+  widget_ring_alignment: bool = True   # ON by default (operator, 2026-06-03)
   widget_crop: tuple[int, int, int, int] = (510, 240, 900, 600)  # x, y, w, h
   ```
+  (Default flipped to **True** per operator decision 2026-06-03 — the original
+  `False` was an unrequested carry-over from the v3 spec. Compass alignment is
+  still independently gated by `enabled`/`region`, so this only takes effect
+  once vision is calibrated and on.)
   TOML key is therefore `[vision].widget_ring_alignment` (and
   `[vision].widget_crop`). Every consumer reads `cfg.vision.widget_ring_alignment`
   and `cfg.vision.widget_crop`. This pins the access path so the CLI and factory
@@ -442,20 +446,24 @@ nudges are tiny and the FSD spool budget is short).
   the existing `if args.engage_keys:` block, **after** the `build_vision(cfg)`
   call (which today sits ~line 337) and **before** the `FlowRunner(...)`
   construction (~lines 376–388), add:
+  The preflight **WARNS, it does not abort** (operator decision 2026-06-03): a
+  missing widget or unavailable vision prints a WARNING and the run proceeds —
+  the `required=true` fine step then fails closed per jump until the widget is
+  visible (gating the jump at runtime rather than at launch).
   ```python
   widget_ring_reader = widget_frame_grabber = None
   if cfg.vision.widget_ring_alignment:
       from .vision.capture import build_widget_vision
+      from .vision.widget_ring import verify_widget_rendered
       widget_ring_reader, widget_frame_grabber = build_widget_vision(cfg)
       if widget_ring_reader is None or widget_frame_grabber is None:
-          print("widget_ring_alignment=on but vision is unavailable "
-                "(install the [vision] extra)", file=sys.stderr)
-          return 2
-      if not verify_widget_rendered(widget_ring_reader, widget_frame_grabber):
-          print("mouse widget not detected — enable HUD mouse widget in "
-                "'point' mode (see ED-AFK preset) before running with "
-                "widget_ring_alignment=on", file=sys.stderr)
-          return 2
+          print("WARNING: widget_ring_alignment=on but vision is unavailable "
+                "(install the [vision] extra) — fine pass fails closed each "
+                "jump until wired.", file=sys.stderr)
+      elif not verify_widget_rendered(widget_ring_reader, widget_frame_grabber):
+          print("WARNING: mouse widget not detected — enable HUD mouse widget "
+                "in 'point' mode. Fine pass fails closed until visible.",
+                file=sys.stderr)
   ```
   Then add to the existing `FlowRunner(...)` call:
   ```python
@@ -577,7 +585,7 @@ All synchronous, no game, no real sleeps. Fakes: a `_FakeRingReader` queuing
 ### `verify_widget_rendered` tests
 
 20. `test_verify_widget_happy` — 4-of-5 crops yield a centre widget → True.
-21. `test_verify_widget_sad` — 1-of-5 → False (drives the preflight abort).
+21. `test_verify_widget_sad` — 1-of-5 → False (drives the preflight WARNING).
 
 ### Procedure integration
 

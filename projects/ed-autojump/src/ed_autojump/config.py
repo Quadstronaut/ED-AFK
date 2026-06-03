@@ -252,10 +252,12 @@ class VisionConfig:
     timeout_s: float = 45.0
     # Reads per measurement; >1 enables temporal-median spike rejection.
     align_samples: int = 7
-    # Widget-ring FINE alignment (additive after orient_compass). OFF by
-    # default; needs the HUD mouse widget in "point" mode. widget_crop is the
-    # 1080p centre rect (x, y, w, h) the WidgetRingReader captures.
-    widget_ring_alignment: bool = False
+    # Widget-ring FINE alignment (additive after orient_compass). ON by default
+    # (operator decision 2026-06-03). Needs the HUD mouse widget in "point"
+    # mode; if it's absent the fine step fails closed per jump (required=true),
+    # so a real run needs the widget visible. The CLI preflight only WARNS, it
+    # does not abort. widget_crop is the 1080p centre rect (x, y, w, h).
+    widget_ring_alignment: bool = True
     widget_crop: tuple[int, int, int, int] = (510, 240, 900, 600)
 
 

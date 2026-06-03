@@ -350,24 +350,27 @@ def cmd_run(args) -> int:
                   "steered. Run `ed-autojump calibrate-compass` and set "
                   "[vision].enabled = true to enable orientation.")
 
-        # Widget-ring FINE pass (additive after orient_compass). Off by default;
-        # when on, it MUST detect the HUD mouse widget at preflight or we abort
-        # — a fine pass that can't see the widget would just time out every jump.
+        # Widget-ring FINE pass (additive after orient_compass). ON by default.
+        # The preflight WARNS but never aborts (operator decision): a missing
+        # widget or absent vision just makes the required fine step fail closed
+        # per jump, rather than blocking launch.
         if cfg.vision.widget_ring_alignment:
             from .vision.capture import build_widget_vision
             from .vision.widget_ring import verify_widget_rendered
             widget_ring_reader, widget_frame_grabber = build_widget_vision(cfg)
             if widget_ring_reader is None or widget_frame_grabber is None:
-                print("widget_ring_alignment=on but vision is unavailable "
-                      "(install the [vision] extra)", file=sys.stderr)
-                return 2
-            if not verify_widget_rendered(widget_ring_reader, widget_frame_grabber):
-                print("mouse widget not detected — enable HUD mouse widget in "
-                      "'point' mode (see ED-AFK preset) before running with "
-                      "widget_ring_alignment=on", file=sys.stderr)
-                return 2
-            print(f"vision: widget-ring FINE pass ON "
-                  f"(crop={tuple(cfg.vision.widget_crop)})")
+                print("WARNING: widget_ring_alignment=on but vision is "
+                      "unavailable (install the [vision] extra) — the fine "
+                      "pass will fail closed each jump until vision is wired.",
+                      file=sys.stderr)
+            elif not verify_widget_rendered(widget_ring_reader, widget_frame_grabber):
+                print("WARNING: mouse widget not detected — enable the HUD "
+                      "mouse widget in 'point' mode (see ED-AFK preset). The "
+                      "fine pass fails closed (required=true gates the jump) "
+                      "until the widget is visible.", file=sys.stderr)
+            else:
+                print(f"vision: widget-ring FINE pass ON "
+                      f"(crop={tuple(cfg.vision.widget_crop)})")
 
     from .flow import FlowRunner, load_procedures
     from .flow.loader import validate_procedure
