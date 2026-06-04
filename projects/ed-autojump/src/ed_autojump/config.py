@@ -262,6 +262,37 @@ class VisionConfig:
 
 
 @dataclass
+class OverlayConfig:
+    """EDMCOverlay in-game status overlay (cosmetic; fail-soft).
+
+    The bot writes execution info to EDMCOverlay's TCP server (raw socket,
+    127.0.0.1:5010). It first waits `connect_timeout_s` for an already-running
+    server (EDMC starts it); if still down and `launch_if_absent`, it locates
+    and launches `EDMCOverlay.exe` itself. If neither works it goes quiet — the
+    overlay never blocks or crashes a flight.
+
+    exe_path: explicit override to EDMCOverlay.exe; "" = auto-detect
+    (%LOCALAPPDATA% → %APPDATA% → fixed-drive sweep). x/y are virtual
+    1280x1024 overlay coords; (20,40) is the safe top-left margin.
+    """
+
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 5010
+    exe_path: str = ""                  # "" = auto-detect
+    connect_timeout_s: float = 30.0     # wait for an already-running server (A)
+    launch_if_absent: bool = True       # else launch EDMCOverlay.exe (B)
+    launch_settle_s: float = 2.0        # pause after Popen before reconnecting
+    launch_connect_timeout_s: float = 10.0
+    keepalive_s: float = 4.0            # re-send slots this often (< ttl)
+    x: int = 20
+    y: int = 40
+    color: str = "yellow"
+    size: str = "normal"               # "normal" | "large"
+    ttl: int = 6                       # seconds; > keepalive_s so it never blinks
+
+
+@dataclass
 class PathsConfig:
     journal_dir: str = r"%USERPROFILE%\Saved Games\Frontier Developments\Elite Dangerous"
     binds_dir: str = r"%LOCALAPPDATA%\Frontier Developments\Elite Dangerous\Options\Bindings"
@@ -291,6 +322,7 @@ class Config:
     menu_nav: MenuNavConfig = field(default_factory=MenuNavConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     nav: NavConfig = field(default_factory=NavConfig)
+    overlay: OverlayConfig = field(default_factory=OverlayConfig)
 
 
 def _merge(section_obj: object, table: dict) -> None:
@@ -318,7 +350,7 @@ def load_config(path: str | Path | None = None) -> Config:
     for section_name in (
         "ship", "routing", "exploration", "safety", "input",
         "binds", "hud", "cv", "eddn", "paths", "launcher", "menu_nav",
-        "vision", "nav",
+        "vision", "nav", "overlay",
     ):
         if section_name in raw:
             _merge(getattr(cfg, section_name), raw[section_name])

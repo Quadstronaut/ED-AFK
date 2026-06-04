@@ -399,6 +399,15 @@ def cmd_run(args) -> int:
         timeout_s=cfg.vision.timeout_s,
     )
 
+    # EDMCOverlay status overlay (cosmetic, fail-soft). build_overlay returns
+    # None when [overlay].enabled = false; start() spins a daemon thread that
+    # connects (or launches EDMCOverlay.exe) without ever blocking the flight.
+    from .overlay import build_overlay
+    overlay = build_overlay(cfg)
+    if overlay is not None:
+        overlay.start()
+        print("overlay: EDMCOverlay status ON (connecting in background)")
+
     runner = FlowRunner(
         procedures=procedures,
         sender=sender,
@@ -411,6 +420,7 @@ def cmd_run(args) -> int:
         widget_ring_enabled=cfg.vision.widget_ring_alignment,
         widget_ring_reader=widget_ring_reader,
         widget_frame_grabber=widget_frame_grabber,
+        overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
         tail=JournalTail(journal_dir),
         panic_switch=panic,
@@ -470,6 +480,8 @@ def cmd_run(args) -> int:
     finally:
         if listener is not None:
             listener.stop()
+        if overlay is not None:
+            overlay.close()
         # Release held keys best-effort; close recorder if one is open.
         try:
             sender.release_all()

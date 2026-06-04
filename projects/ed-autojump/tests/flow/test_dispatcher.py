@@ -138,6 +138,35 @@ def test_make_context_threads_widget_ring_fields():
     assert ctx.widget_frame_grabber is grab
 
 
+class _FakeOverlay:
+    def __init__(self):
+        self.events = []
+        self.steps = []
+
+    def event(self, text):
+        self.events.append(text)
+
+    def step(self, proc, action, idx, total):
+        self.steps.append((proc, action, idx, total))
+
+
+def test_overlay_threads_into_context_and_jump_event():
+    sender = FakeSender()
+    ov = _FakeOverlay()
+    procs = {"arrival": Procedure(name="arrival", steps=(Step("target_next_route"),))}
+    r = FlowRunner(
+        procedures=procs, sender=sender, clock=lambda: 0.0, sleeper=lambda s: None,
+        status_supplier=lambda: SimpleNamespace(
+            docked=False, in_supercruise=True, fsd_charging=False,
+            fsd_cooldown=False, fsd_mass_locked=False, overheating=False),
+        overlay=ov,
+    )
+    assert r._make_context().overlay is ov                 # threaded through
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Sol"))
+    assert ov.events == ["Jump 1: Sol"]                    # counter + system
+    assert ("arrival", "target_next_route", 1, 1) in ov.steps  # per-step status
+
+
 def test_make_context_widget_ring_defaults_off():
     """Default construction leaves the fine pass disabled and unwired."""
     r = FlowRunner(procedures={}, sender=FakeSender(), clock=lambda: 0.0,

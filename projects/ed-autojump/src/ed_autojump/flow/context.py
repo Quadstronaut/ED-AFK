@@ -36,6 +36,10 @@ class StepContext:
     widget_ring_reader: Optional[Any] = None
     widget_frame_grabber: Optional[Callable[[], Any]] = None
 
+    # cosmetic EDMCOverlay status writer (None -> no overlay). Duck-typed:
+    # .step(proc, action, idx, total). Fail-soft; never blocks a step.
+    overlay: Optional[Any] = None
+
     def log(self, outcome_type: str, payload: Any) -> None:
         if self.record is not None:
             self.record(outcome_type, payload)

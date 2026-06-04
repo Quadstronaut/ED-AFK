@@ -39,6 +39,13 @@ def run_procedure(
     n = len(proc.steps)
     while i < n:
         step = proc.steps[i]
+        if ctx.overlay is not None:
+            # cosmetic; the writer is fail-soft but guard anyway so a broken
+            # overlay can never abort a procedure.
+            try:
+                ctx.overlay.step(proc.name, step.action, i + 1, n)
+            except Exception:  # noqa: BLE001
+                pass
         fn = reg.get(step.action)
         ok = False if fn is None else bool(fn(ctx, **step.params))
         result.steps.append(StepResult(step.action, ok))

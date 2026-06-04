@@ -31,6 +31,7 @@ class FlowRunner:
         widget_ring_enabled: bool = False,
         widget_ring_reader: Optional[Any] = None,
         widget_frame_grabber: Optional[Callable[[], Any]] = None,
+        overlay: Optional[Any] = None,
         record: Optional[Callable[[str, Any], None]] = None,
         tail: Optional[Any] = None,
         status_reader: Optional[Any] = None,
@@ -50,6 +51,7 @@ class FlowRunner:
         self.widget_ring_enabled = widget_ring_enabled
         self.widget_ring_reader = widget_ring_reader
         self.widget_frame_grabber = widget_frame_grabber
+        self.overlay = overlay
         self.record = record
         self.tail = tail
         self.status_reader = status_reader
@@ -62,6 +64,7 @@ class FlowRunner:
         self._caught_up = False
         self._startup_done = False
         self._last_eject_t: float = 0.0
+        self._jumps = 0
         self.stop_requested = False
 
     # ---- public state accessors ------------------------------------------
@@ -81,6 +84,7 @@ class FlowRunner:
             widget_ring_enabled=self.widget_ring_enabled,
             widget_ring_reader=self.widget_ring_reader,
             widget_frame_grabber=self.widget_frame_grabber,
+            overlay=self.overlay,
             status_supplier=lambda: self._latest_status,
             event_time=self.event_time,
             event_waiter=self._wait_for_event,
@@ -111,6 +115,14 @@ class FlowRunner:
         """Run the procedure mapped to a LIVE event."""
         name = getattr(ev, "event", None)
         if name == "FSDJump":
+            self._jumps += 1
+            if self.overlay is not None:
+                system = getattr(ev, "star_system", None) or getattr(ev, "StarSystem", None)
+                try:
+                    self.overlay.event(f"Jump {self._jumps}"
+                                       + (f": {system}" if system else ""))
+                except Exception:  # noqa: BLE001
+                    pass
             self._run("arrival")
         elif name == "SupercruiseExit" and getattr(ev, "body_type", None) == "Star":
             self._event_times["drop"] = self.clock()
