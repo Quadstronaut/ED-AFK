@@ -29,7 +29,6 @@ the [vision] extra installed.
 
 from __future__ import annotations
 
-import math
 from typing import Optional, Tuple
 
 from .compass import CompassRead, _clamp_unit
@@ -210,10 +209,19 @@ class CyanDotReader:
         offset_y = _clamp_unit((center_y - by) / radius)
 
         # --- 5. Filled vs hollow ------------------------------------------
-        dot_radius = max(2.0, math.sqrt(best_area / math.pi))
-        # Sample a small disc at the blob centre. A filled dot is cyan there; a
-        # hollow ring has a dark hole, so its centre cyan-density is ~0.
-        inner_r = 0.45 * dot_radius
+        # Sample a disc at the blob centroid sized to the dot's PHYSICAL size
+        # (~0.12 x compass radius — both the solid dot and the hollow ring are
+        # ~3-4 px at ring r~25). A solid dot fills it; a hollow form cannot:
+        # a COMPLETE faint ring's centroid is its dark hole, and an ARC
+        # FRAGMENT (what the cyan mask keeps of the real faint ring) is a
+        # 1-2 px-thin curve that covers only a sliver of the disc.
+        #
+        # MUST NOT scale by blob area (the pre-2026-06-06 bug): a 4 px arc
+        # fragment shrank the sample to <1 px ON the arc itself, so the real
+        # behind-dot read as filled/front — the behind-flip never fired and
+        # orient ping-ponged at max_press to timeout (session_123734;
+        # fixture compass_behind_hollow_top.png is the live frame).
+        inner_r = max(2.0, 0.12 * radius)
 
         # Build a boolean mask for pixels within inner_r of the centroid.
         ys, xs = np.ogrid[:h, :w]

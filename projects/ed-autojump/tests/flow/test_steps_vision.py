@@ -66,3 +66,36 @@ def test_orient_compass_returns_alignment_result():
     ctx, _ = _ctx(reader)
     # tight tol so a centred dot counts as aligned in one measure
     assert STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=2, timeout_s=999) is True
+
+
+def test_orient_compass_logs_per_iteration_telemetry():
+    """Every align iteration lands in the session recording as OrientIter —
+    reads were invisible in session_123734 and the oscillation could only be
+    root-caused because ED happened to still be running (2026-06-06)."""
+    reader = FakeReader([_ahead(-0.6), _ahead(0.0)])   # one press, then aligned
+    ctx, _ = _ctx(reader)
+    logged = []
+    ctx.record = lambda kind, payload: logged.append((kind, payload))
+    assert STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=5, timeout_s=999) is True
+    iters = [p for k, p in logged if k == "OrientIter"]
+    assert len(iters) == 2
+    assert iters[0]["action"] == "PitchDownButton"     # dot low -> pitch down
+    assert iters[1]["aligned"] is True
+
+
+def test_orient_compass_dumps_frames_when_sink_wired():
+    reader = FakeReader([_ahead(0.0)])
+    ctx, _ = _ctx(reader)
+    saved = []
+    ctx.frame_sink = lambda name, frame: saved.append(name)
+    assert STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=2, timeout_s=999) is True
+    assert len(saved) == 1                              # 1 iter x samples=1
+    assert "i00" in saved[0]                            # name carries iteration
+
+
+def test_orient_compass_no_sink_no_crash():
+    """frame_sink is optional — None must not break the align loop."""
+    reader = FakeReader([_ahead(0.0)])
+    ctx, _ = _ctx(reader)
+    assert ctx.frame_sink is None
+    assert STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=2, timeout_s=999) is True

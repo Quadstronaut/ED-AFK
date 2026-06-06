@@ -51,6 +51,13 @@ class StepContext:
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 
+    # diagnostic frame sink (name, frame) -> None. cli wires it to write the
+    # orient loop's compass crops as PNGs next to the session jsonl, so a
+    # failing orient is replayable offline against the reader (2026-06-06:
+    # the oscillation could only be root-caused because ED happened to still
+    # be running with the ship parked). None -> frames are not retained.
+    frame_sink: Optional[Callable[[str, Any], None]] = None
+
     # widget-ring fine-align vision. widget_frame_grabber is the CENTRE-CROP
     # .grab — distinct from frame_grabber, which is the compass-region crop.
     # widget_ring_on_miss: "degrade" (default — a miss skips the fine pass,

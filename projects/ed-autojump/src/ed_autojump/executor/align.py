@@ -28,7 +28,7 @@ from __future__ import annotations
 import statistics
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from ..vision.compass import CompassRead, CompassReader
 
@@ -41,7 +41,14 @@ class AlignOutcome:
     reason: str  # "aligned" | "timeout" | "max_iters"
 
 
-def _measure(reader: Any, capture: Callable[[], Any], samples: int) -> CompassRead:
+def _measure(
+    reader: Any,
+    capture: Callable[[], Any],
+    samples: int,
+    *,
+    raw_out: Optional[list] = None,
+    frames_out: Optional[list] = None,
+) -> CompassRead:
     """Take ``samples`` consecutive reads and return a median-filtered result.
 
     With ``samples == 1`` the single read is returned unchanged (identical to
@@ -53,11 +60,29 @@ def _measure(reader: Any, capture: Callable[[], Any], samples: int) -> CompassRe
       - Otherwise return a synthetic read whose offset_x / offset_y are the
         statistical medians of the found reads, in_front is a majority vote,
         and confidence is the mean — this rejects single-frame cyan-UI spikes.
+
+    ``raw_out`` / ``frames_out``: optional lists that collect the per-sample
+    CompassReads / captured frames — diagnostic taps for align telemetry
+    (the 2026-06-06 oscillation was undiagnosable from the recording because
+    reads were never logged). No-cost when omitted.
     """
     if samples == 1:
-        return reader.read(capture())
+        frame = capture()
+        if frames_out is not None:
+            frames_out.append(frame)
+        read = reader.read(frame)
+        if raw_out is not None:
+            raw_out.append(read)
+        return read
 
-    reads = [reader.read(capture()) for _ in range(samples)]
+    reads = []
+    for _ in range(samples):
+        frame = capture()
+        if frames_out is not None:
+            frames_out.append(frame)
+        reads.append(reader.read(frame))
+    if raw_out is not None:
+        raw_out.extend(reads)
     found_reads = [r for r in reads if r.found]
 
     # Require a STRICT majority to be found; ties count as not_found.
@@ -80,8 +105,9 @@ def _press_for(offset: float, gain: float, min_press: float, max_press: float) -
 
 
 def _correct(sender: Any, read: CompassRead, *, gain: float, min_press: float,
-             max_press: float, deadzone: float) -> None:
-    """One correction step toward the dot.
+             max_press: float, deadzone: float) -> Optional[tuple]:
+    """One correction step toward the dot. Returns ``(action, hold)`` for the
+    press it sent, or ``None`` when the dominant axis is inside the deadzone.
 
     Behind-flip: when the target is behind (hollow dot), pitch HARD toward
     the dot's vertical side — down if the dot is low (offset_y < 0), up if
@@ -97,19 +123,24 @@ def _correct(sender: Any, read: CompassRead, *, gain: float, min_press: float,
     if not read.in_front:
         # Behind: flip the target over the nearest pole to the front by
         # pitching hard toward the dot's vertical side. No yaw while behind.
-        sender.press("PitchDownButton" if read.offset_y < 0 else "PitchUpButton",
-                     hold=max_press)
-        return
+        action = "PitchDownButton" if read.offset_y < 0 else "PitchUpButton"
+        sender.press(action, hold=max_press)
+        return (action, max_press)
     # In front: yaw and pitch are coupled on the tilted disc, so correct only
     # the DOMINANT axis each step (the larger error) to avoid the two fighting.
     if abs(read.offset_x) >= abs(read.offset_y):
         if abs(read.offset_x) > deadzone:
-            sender.press("YawRightButton" if read.offset_x > 0 else "YawLeftButton",
-                         hold=_press_for(read.offset_x, gain, min_press, max_press))
+            action = "YawRightButton" if read.offset_x > 0 else "YawLeftButton"
+            hold = _press_for(read.offset_x, gain, min_press, max_press)
+            sender.press(action, hold=hold)
+            return (action, hold)
     else:
         if abs(read.offset_y) > deadzone:
-            sender.press("PitchUpButton" if read.offset_y > 0 else "PitchDownButton",
-                         hold=_press_for(read.offset_y, gain, min_press, max_press))
+            action = "PitchUpButton" if read.offset_y > 0 else "PitchDownButton"
+            hold = _press_for(read.offset_y, gain, min_press, max_press)
+            sender.press(action, hold=hold)
+            return (action, hold)
+    return None
 
 
 def align_to_target(
@@ -129,6 +160,8 @@ def align_to_target(
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
     samples: int = 7,
+    on_iter: Optional[Callable[[dict], None]] = None,
+    frame_sink: Optional[Callable[[int, list], None]] = None,
 ) -> AlignOutcome:
     """Drive pitch/yaw until the compass dot is centred and in front.
 
@@ -152,6 +185,15 @@ def align_to_target(
       enough for each move to fully complete before the next read.
     - Converges front cases in 3–4 iterations, full behind→front ~15 iters,
       monotonic with no oscillation (validated 2026-05-24, real hardware).
+
+    Telemetry (ADDED 2026-06-06 — the 12:37 oscillation was undiagnosable
+    from the session recording because reads were never logged):
+    - ``on_iter(payload)``: one dict per iteration — median read, raw
+      per-sample reads, and the press chosen (action None = no press:
+      aligned, or dominant axis inside the deadzone).
+    - ``frame_sink(i, frames)``: the iteration's captured frames, so a
+      failing orient can be replayed offline against the reader. Frames are
+      only retained when a sink is wired.
     """
     start = clock()
     last = CompassRead.not_found()
@@ -160,20 +202,47 @@ def align_to_target(
         if clock() - start > timeout_s:
             return AlignOutcome(aligned=False, iterations=i, final=last, reason="timeout")
 
-        read = _measure(reader, capture, samples)
+        raw: Optional[list] = [] if on_iter is not None else None
+        frames: Optional[list] = [] if frame_sink is not None else None
+        read = _measure(reader, capture, samples, raw_out=raw, frames_out=frames)
         last = read
+        if frame_sink is not None:
+            frame_sink(i, frames)
 
-        if not read.found:
+        aligned_now = read.found and read.in_front and read.magnitude <= align_tol
+
+        action: Optional[str] = None
+        hold: Optional[float] = None
+        if aligned_now:
+            pass                                   # no press — we're done
+        elif not read.found:
             # Can't see the dot — rotate a little to bring it into view.
-            sender.press("YawRightButton", hold=search_press)
-            sleeper(settle_s)
-            continue
+            action, hold = "YawRightButton", search_press
+            sender.press(action, hold=hold)
+        else:
+            pressed = _correct(sender, read, gain=gain, min_press=min_press,
+                               max_press=max_press, deadzone=deadzone)
+            if pressed is not None:
+                action, hold = pressed
 
-        if read.in_front and read.magnitude <= align_tol:
+        if on_iter is not None:
+            on_iter({
+                "i": i,
+                "found": read.found,
+                "in_front": read.in_front,
+                "ox": round(read.offset_x, 4),
+                "oy": round(read.offset_y, 4),
+                "mag": round(read.magnitude, 4),
+                "action": action,
+                "hold": hold,
+                "aligned": aligned_now,
+                "raw": [[r.found, r.in_front,
+                         round(r.offset_x, 4), round(r.offset_y, 4)]
+                        for r in (raw or [])],
+            })
+
+        if aligned_now:
             return AlignOutcome(aligned=True, iterations=i, final=read, reason="aligned")
-
-        _correct(sender, read, gain=gain, min_press=min_press,
-                 max_press=max_press, deadzone=deadzone)
         sleeper(settle_s)
 
     return AlignOutcome(aligned=False, iterations=max_iters, final=last, reason="max_iters")

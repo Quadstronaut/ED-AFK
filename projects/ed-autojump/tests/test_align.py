@@ -297,6 +297,58 @@ def test_measure_strict_majority_even_samples_tie_is_not_found():
     assert result.found is False, "50/50 tie must be treated as not_found"
 
 
+def test_on_iter_reports_every_iteration_with_action_and_raw_reads():
+    """on_iter fires once per loop iteration with the median read, the press
+    chosen, and the raw per-sample reads — the recording gap that made the
+    2026-06-06 12:37 oscillation undiagnosable from the session jsonl."""
+    sim = _Sim(ox=0.8, oy=0.0, in_front=True)
+    payloads = []
+    out = _run(sim, samples=3, on_iter=payloads.append)
+    assert out.aligned is True
+    # one payload per iteration, including the final aligned one (action None)
+    assert len(payloads) == out.iterations + 1
+    first, last = payloads[0], payloads[-1]
+    assert first["i"] == 0
+    assert first["found"] is True and first["in_front"] is True
+    assert first["action"] == "YawRightButton" and first["hold"] > 0
+    assert len(first["raw"]) == 3            # [found, in_front, ox, oy] per sample
+    assert first["raw"][0][0] is True
+    assert last["action"] is None and last["aligned"] is True
+
+
+def test_on_iter_reports_behind_flip_at_max_press():
+    sim = _Sim(ox=0.0, oy=0.9, in_front=False)
+    payloads = []
+    out = _run(sim, on_iter=payloads.append)
+    assert out.aligned is True
+    assert payloads[0]["in_front"] is False
+    assert payloads[0]["action"] == "PitchUpButton"
+    assert payloads[0]["hold"] == 0.70       # behind-flip is always max_press
+
+
+def test_on_iter_reports_search_when_not_found():
+    sim = _Sim(found=False)
+    payloads = []
+    _run(sim, max_iters=2, on_iter=payloads.append)
+    assert len(payloads) == 2
+    assert payloads[0]["found"] is False
+    assert payloads[0]["action"] == "YawRightButton"
+    assert payloads[0]["hold"] == 0.2        # search_press default
+
+
+def test_frame_sink_receives_all_sample_frames_per_iteration():
+    """frame_sink(i, frames) gets the captured frames so failing orients can
+    be replayed offline against the reader. Only called when provided."""
+    sim = _Sim(ox=0.8, oy=0.0, in_front=True)
+    sunk = []
+    out = _run(sim, samples=3, capture=lambda: object(),
+               frame_sink=lambda i, frames: sunk.append((i, list(frames))))
+    assert out.aligned is True
+    assert len(sunk) == out.iterations + 1
+    assert sunk[0][0] == 0
+    assert len(sunk[0][1]) == 3              # one frame per sample
+
+
 def test_measure_strict_majority_odd_samples_4_of_7_is_found():
     """samples=7, exactly 4 found (>50%) -> returns a real read (same as before fix)."""
     reads = [

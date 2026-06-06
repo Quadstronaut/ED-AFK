@@ -262,6 +262,43 @@ def test_faint_hollow_ring_is_behind():
     assert r.in_front is False, "dim hollow ring → target behind"
 
 
+def test_hollow_ring_arc_fragment_is_behind():
+    """An ARC FRAGMENT of the hollow ring must still classify as behind.
+
+    On real frames the faint hollow ring only PARTIALLY passes the cyan mask
+    — a few-pixel arc, not a complete circle. The arc's centroid lies ON the
+    arc, so the old area-scaled inner-fill test sampled cyan and called it
+    filled/front. That misclassification drove the 2026-06-06 12:37 orient
+    oscillation (behind-flip never fired; max-press ping-pong to timeout).
+    """
+    img = _blank2()
+    _with_ring(img, 70, 70)
+    # Top arc of a would-be r=4 hollow ring at the ring's upper rim — only
+    # ~120° of perimeter, mimicking what the mask keeps of the real ring.
+    cv2.ellipse(img, (70, 46), (4, 4), 0, 200, 340, CYAN_BGR, thickness=1)
+
+    reader = CyanDotReader(use_ring_detect=True)
+    r = reader.read(img)
+    assert r.found is True
+    assert r.in_front is False, "arc fragment of hollow ring → target behind"
+
+
+def test_real_frame_behind_hollow_top_is_behind():
+    """REAL captured frame (2026-06-06, ship parked mid-oscillation): hollow
+    target-behind dot at the compass's upper rim. The production reader said
+    in_front=True on this exact frame — the bug behind the orient ping-pong.
+    Ground truth verified by eye: hollow ring → target BEHIND."""
+    from pathlib import Path
+    frame = cv2.imread(str(Path(__file__).parent / "fixtures" / "compass_behind_hollow_top.png"))
+    assert frame is not None, "fixture missing"
+
+    reader = CyanDotReader(use_ring_detect=True)
+    r = reader.read(frame)
+    assert r.found is True
+    assert r.in_front is False, "hollow dot misread as front (2026-06-06 bug)"
+    assert r.offset_y > 0.3, "dot sits near the TOP rim"
+
+
 # ---------------------------------------------------------------------------
 # build_compass_reader wiring smoke test
 # ---------------------------------------------------------------------------

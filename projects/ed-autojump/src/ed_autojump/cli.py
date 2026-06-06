@@ -264,6 +264,23 @@ def cmd_run(args) -> int:
         recorder = Recorder(session_path)
         print(f"recording -> {session_path}")
 
+    # Orient frame dumps — every align iteration's compass crops as PNGs next
+    # to the session jsonl, so a failed orient is replayable offline against
+    # the reader (2026-06-06: the 12:37 oscillation was only root-causable
+    # because ED happened to still be running with the ship parked).
+    # Fail-soft: a diagnostic write must never touch the flight.
+    frame_sink = None
+    if recorder is not None:
+        _frames_dir = session_path.with_name(session_path.stem + "_frames")
+
+        def frame_sink(name: str, frame, _d=_frames_dir) -> None:
+            try:
+                import cv2
+                _d.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(str(_d / f"{name}.png"), frame)
+            except Exception:
+                pass
+
     # Sender selection. Real key dispatch requires the binds preset.
     if args.engage_keys:
         from .keys import DirectInputSender
@@ -439,6 +456,7 @@ def cmd_run(args) -> int:
         widget_ring_on_miss=cfg.vision.widget_ring_on_miss,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
+        frame_sink=frame_sink,
         tail=JournalTail(journal_dir),
         panic_switch=panic,
     )

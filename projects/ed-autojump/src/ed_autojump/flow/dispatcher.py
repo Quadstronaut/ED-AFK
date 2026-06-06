@@ -83,6 +83,7 @@ class FlowRunner:
         widget_ring_on_miss: str = "degrade",
         overlay: Optional[Any] = None,
         record: Optional[Callable[[str, Any], None]] = None,
+        frame_sink: Optional[Callable[[str, Any], None]] = None,
         tail: Optional[Any] = None,
         status_reader: Optional[Any] = None,
         navroute_reader: Optional[Any] = None,
@@ -104,6 +105,7 @@ class FlowRunner:
         self.widget_ring_on_miss = widget_ring_on_miss
         self.overlay = overlay
         self.record = record
+        self.frame_sink = frame_sink
         self.tail = tail
         self.status_reader = status_reader
         self.navroute_reader = navroute_reader
@@ -213,6 +215,7 @@ class FlowRunner:
             fsd_target_supplier=self._fsd_target_state,
             navroute_supplier=self._navroute_state,
             record=self.record,
+            frame_sink=self.frame_sink,
         )
         ctx._tail_handle = handle   # for _run's unsubscribe; None without a tail
         return ctx

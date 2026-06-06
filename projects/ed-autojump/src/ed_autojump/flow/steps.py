@@ -363,6 +363,17 @@ def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
     from ..executor.align import align_to_target
     kwargs = dict(ctx.align_kwargs)
     kwargs.update(align_overrides)
+
+    # Diagnostic frame dump (ADDED 2026-06-06): name carries a clock stamp so
+    # the orients of one run don't collide. Only retained when cli wired a sink.
+    frame_sink = None
+    if ctx.frame_sink is not None:
+        t0 = int(ctx.clock())
+
+        def frame_sink(i: int, frames: list) -> None:
+            for si, frame in enumerate(frames):
+                ctx.frame_sink(f"orient_{t0}_i{i:02d}_s{si}", frame)
+
     outcome = align_to_target(
         ctx.compass_reader,
         ctx.sender,
@@ -370,6 +381,8 @@ def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
         clock=ctx.clock,
         sleeper=ctx.sleeper,
         samples=ctx.compass_samples,
+        on_iter=lambda p: ctx.log("OrientIter", p),
+        frame_sink=frame_sink,
         **kwargs,
     )
     ctx.log("Orient", {"aligned": outcome.aligned, "reason": outcome.reason,
