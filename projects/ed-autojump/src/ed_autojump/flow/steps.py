@@ -150,7 +150,7 @@ def step_engage_jump(ctx: StepContext) -> bool:
 def step_engage_supercruise(
     ctx: StepContext, *, poll_s: float = 0.8, max_charge_s: float = 60.0,
     presses: int = 1, between_press_s: float = 8.0,
-    until_charging: bool = False,
+    until_charging: bool = False, press: bool = True,
 ) -> bool:
     """Press Supercruise, then gate on game signals — no success-window clock.
 
@@ -179,16 +179,18 @@ def step_engage_supercruise(
     SC entry. A post-smack charge spawns an ESCAPE VECTOR and holds until
     the ship ALIGNS with it (screen-confirmed 14:56: cyan "ALIGN WITH
     ESCAPE VECTOR" marker; 9 minutes of full-throttle burn never engaged
-    because ED wanted attitude, not distance). The caller follows with
-    orient_compass (the vector renders as the compass dot) + hold_alignment
-    until SupercruiseEntry.
+    because ED wanted attitude, not distance).
+
+    `press=False` (ADDED 2026-06-06 run 10): gate-only mode — the charge is
+    ALREADY live (a prior until_charging step got it) and the ship was just
+    aligned; pressing again would CANCEL it. Pure wait for entry/dropped.
     """
     st = ctx.status_supplier()
     if st is not None and getattr(st, "in_supercruise", False):
         return True  # already in SC; nothing to engage
 
     for attempt in range(max(1, presses)):
-        if not _press(ctx, "Supercruise"):
+        if press and not _press(ctx, "Supercruise"):
             return False
         if ctx.event_waiter is None:
             return True  # no journal wiring (unit tests) -> proceed

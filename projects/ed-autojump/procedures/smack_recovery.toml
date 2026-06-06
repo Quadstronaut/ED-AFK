@@ -43,19 +43,21 @@ steps = [
   { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 2 EXCLUSIVE â€” pitch star behind
   { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown â€” FsdCooldown flag-gated, no timer
 
-  # â”€â”€ Get a LIVE charge, then fly its ESCAPE VECTOR until SC entry â”€â”€â”€â”€â”€â”€â”€
-  # REDESIGN v3 (2026-06-06 run 9, screen-confirmed 14:56): a post-smack SC
-  # charge spawns a cyan ESCAPE VECTOR and HOLDS until the ship ALIGNS with
-  # it -- 9 minutes of full-throttle burn never engaged because ED wanted
-  # attitude, not distance. But the press can also be REFUSED outright (run
-  # 6: no FsdCharging, no event) -- so: re-press every 8s until a charge is
-  # LIVE (never re-press during one; that cancels it), THEN orient onto the
-  # vector (it renders as the compass dot) and hold until SupercruiseEntry.
+  # â”€â”€ Get a LIVE charge, align ANTI-STAR, wait for SC entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # REDESIGN v4 (2026-06-06 run 10): the post-smack charge HOLDS until the
+  # ship aligns with the spawned ESCAPE VECTOR (screen-confirmed 14:56), but
+  # the vector does NOT render on the nav compass -- v3's orient read a bare
+  # dash (no target = no hologram) and failed. The vector points radially
+  # AWAY from the star, so with the star KEPT TARGETED, "aligned with the
+  # vector" == "star dead astern" -- the proven pitch_compass machinery.
+  # No deselect: the star lock IS the alignment reference; target_next_route
+  # replaces it after entry. Presses can still be REFUSED outright (run 6),
+  # so re-press until a charge is LIVE; never during one (cancels it); and
+  # the entry wait presses NOTHING.
   { action = "set_throttle", pct = 100 },                                                     # tap    | 4a full burn AWAY (star astern)
-  { action = "target_ahead" },                                                                # tap    | 4b deselect the star
   { action = "engage_supercruise", required = true, until_charging = true, presses = 30, between_press_s = 8.0, max_charge_s = 240.0 },  # gated  | 5 press until a charge is LIVE
-  { action = "orient_compass", required = true },                                             # vision | 6 EXCLUSIVE â€” align with the spawned escape vector
-  { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 7 hold the vector until SC entry â€” event/state-gated
+  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.15, timeout_s = 75.0, max_iters = 40 },                 # vision | 6 fine: star DEAD astern = vector aligned
+  { action = "engage_supercruise", required = true, press = false, max_charge_s = 240.0 },    # gated  | 7 wait for entry -- no press (charge is live)
 
   # â”€â”€ In supercruise: clear the star, target route, jump â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   { action = "set_throttle", pct = 100 },                                                     # tap    | 8

@@ -341,3 +341,16 @@ def test_engage_supercruise_until_charging_returns_on_live_charge():
                                              until_charging=True)
     assert ok is True
     assert sender.actions().count("Supercruise") == 2   # refused once, then took
+
+
+def test_engage_supercruise_press_false_waits_without_pressing():
+    """v4 entry-wait (run 10): the charge is already LIVE (a prior
+    until_charging step got it) and the ship was just aligned anti-star --
+    pressing again would CANCEL the charge. Gate-only: entry via flag."""
+    sender = FakeSender()
+    status = _ExclusionStatus(refuse_polls=0)    # charging now, SC at read 3
+    ctx = _climb_ctx(sender, status)
+    ok = STEP_REGISTRY["engage_supercruise"](ctx, poll_s=1.0, max_charge_s=60.0,
+                                             press=False)
+    assert ok is True
+    assert "Supercruise" not in sender.actions()
