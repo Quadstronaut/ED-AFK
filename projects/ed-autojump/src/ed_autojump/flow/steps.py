@@ -67,12 +67,21 @@ def step_target_next_route(
     2026-06-06 — the filter existed since v1 with no caller; until now
     nothing stopped a plotted route through a neutron star.
 
-    Event-gated: waits for a NEW FSDTarget journal event (seq advances past
-    the pre-press snapshot). Dangerous class -> False and the procedure's
-    required-fail policy takes over — FAIL CLOSED, the ship never jumps at
-    it. `watchdog_s` is the operator-sanctioned stuck-state class (no
-    FSDTarget at all = no route plotted / press lost). Without journal
-    wiring (unit tests) the press alone is the step."""
+    State-gated, two confirmations (2026-06-06 dead run: the hop had been
+    locked since route plot, the press emitted NO new FSDTarget, and the
+    event-only gate watchdogged out and aborted the whole run):
+      1. a NEW FSDTarget journal event (seq advances past the pre-press
+         snapshot) — carries StarClass directly; or
+      2. Status.Destination already locked on an ONWARD route hop —
+         StarClass looked up by SystemAddress in NavRoute.json. route[0]
+         is the system we're sitting in, so a match there is a local-body
+         lock, not the next hop — never confirmed.
+    Dangerous class -> False on either path and the procedure's required-
+    fail policy takes over — FAIL CLOSED, the ship never jumps at it.
+    Unknown class (off-route Destination, no NavRoute) also fails closed
+    via the watchdog. `watchdog_s` is the operator-sanctioned stuck-state
+    class (no route plotted / press lost). Without journal wiring (unit
+    tests) the press alone is the step."""
     seq0, _ = ctx.fsd_target_supplier()
     if not _press(ctx, "TargetNextRouteSystem"):
         return False
@@ -97,8 +106,25 @@ def step_target_next_route(
             if sc and is_dangerous(sc):
                 ctx.log("TargetDangerRefused", {"star_class": sc})
                 return False
-            ctx.log("TargetConfirmed", {"star_class": sc})
+            ctx.log("TargetConfirmed", {"star_class": sc, "via": "event"})
             return True
+        # Already-locked path: no event will ever come. Status.Destination
+        # names the locked system; NavRoute supplies its StarClass.
+        st = ctx.status_supplier()
+        dest = getattr(st, "destination", None) if st is not None else None
+        dest_addr = getattr(dest, "system", 0) if dest is not None else 0
+        if dest_addr:
+            nav = ctx.navroute_supplier()
+            hops = getattr(nav, "route", None) if nav is not None else None
+            for wp in (hops or [])[1:]:          # [0] = origin, see docstring
+                if getattr(wp, "system_address", None) == dest_addr:
+                    sc = getattr(wp, "star_class", "") or ""
+                    if sc and is_dangerous(sc):
+                        ctx.log("TargetDangerRefused", {"star_class": sc})
+                        return False
+                    ctx.log("TargetConfirmed",
+                            {"star_class": sc, "via": "status+navroute"})
+                    return True
 
 
 def step_engage_jump(ctx: StepContext) -> bool:

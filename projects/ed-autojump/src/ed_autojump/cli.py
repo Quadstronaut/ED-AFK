@@ -487,6 +487,16 @@ def cmd_run(args) -> int:
                 f"{cfg.safety.panic_hotkey}); Ctrl+C in this terminal still trips panic."
             )
         listener.start()
+        # Foreground ED before the first keypress. SendInput delivers to
+        # whatever window has focus — without this, launching `run` from a
+        # terminal sends the whole flight into the terminal. WIRED 2026-06-06:
+        # the helper existed but only the --launch path called it.
+        if args.engage_keys:
+            from .launcher.focus import focus_ed_window
+            print("[run] focusing ED window before key dispatch...")
+            if not focus_ed_window():
+                print("[run] WARN: could not focus EliteDangerous64.exe — "
+                      "keys may go to the wrong window")
         runner.run_live(duration_s=args.duration)
         return 0
     except KeyboardInterrupt:

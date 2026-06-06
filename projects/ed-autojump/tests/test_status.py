@@ -54,6 +54,25 @@ def test_status_overheating_and_low_fuel():
     assert st.low_fuel
 
 
+def test_status_destination_parses_locked_fsd_target():
+    # Verbatim shape from the live 2026-06-06 Status.json: the locked next
+    # route hop. target_next_route's already-targeted path reads this.
+    obj = {
+        "Flags": StatusFlags.InMainShip.value,
+        "Destination": {"System": 491463379283, "Body": 0, "Name": "HIP 11156"},
+    }
+    st = parse_status(obj)
+    assert st.destination is not None
+    assert st.destination.system == 491463379283
+    assert st.destination.body == 0
+    assert st.destination.name == "HIP 11156"
+
+
+def test_status_destination_absent_is_none():
+    st = parse_status({"Flags": 0})
+    assert st.destination is None
+
+
 def test_status_reader_returns_none_when_unchanged(tmp_path: Path):
     p = tmp_path / "Status.json"
     p.write_text(json.dumps({"Flags": 0}), encoding="utf-8")

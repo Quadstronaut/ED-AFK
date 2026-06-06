@@ -60,6 +60,75 @@ def test_target_next_route_refuses_danger_class(cls):
     assert sender.actions() == ["TargetNextRouteSystem"]  # pressed once, then refused
 
 
+def _already_targeted_ctx(sender, *, dest_system=42, star_class="K", route=None):
+    """The 2026-06-06 dead-run shape: the hop was locked when the route was
+    plotted (hours before the bot started), so the press emits NO new
+    FSDTarget — seq never advances. Status.Destination + NavRoute.json's
+    StarClass are the only confirmation available."""
+    now = [0.0]
+    def waiter(ev, t):
+        now[0] += t
+        return False
+    if route is None:
+        route = [SimpleNamespace(system_address=7, star_class="G"),   # origin
+                 SimpleNamespace(system_address=dest_system, star_class=star_class)]
+    st = SimpleNamespace(destination=SimpleNamespace(system=dest_system, body=0,
+                                                     name="HIP 11156"))
+    ctx = StepContext(
+        sender=sender,
+        clock=lambda: now[0],
+        sleeper=lambda s: None,
+        event_waiter=waiter,
+        fsd_target_supplier=lambda: (0, None),       # no event, ever
+        status_supplier=lambda: st,
+        navroute_supplier=lambda: SimpleNamespace(route=route),
+    )
+    return ctx, now
+
+
+def test_target_next_route_passes_when_already_targeted():
+    """Regression (2026-06-06 dead run): hop already locked -> no new
+    FSDTarget event exists to wait for. The step must confirm via
+    Status.Destination + NavRoute star class instead of watchdogging out."""
+    sender = FakeSender()
+    ctx, now = _already_targeted_ctx(sender, star_class="F")
+    assert STEP_REGISTRY["target_next_route"](ctx) is True
+    assert sender.actions() == ["TargetNextRouteSystem"]
+    assert now[0] < 60.0   # confirmed by state, not the watchdog
+
+
+@pytest.mark.parametrize("cls", ["N", "DA", "H", "W"])
+def test_target_next_route_refuses_danger_already_targeted(cls):
+    """Danger filter must also cover the state-confirmed path."""
+    sender = FakeSender()
+    ctx, _ = _already_targeted_ctx(sender, star_class=cls)
+    assert STEP_REGISTRY["target_next_route"](ctx) is False
+
+
+def test_target_next_route_fails_closed_when_destination_off_route():
+    """Destination set but its address isn't an onward route hop (manual
+    off-route target / no usable star class) -> unknown class -> fail closed
+    via the watchdog, never confirm blind."""
+    sender = FakeSender()
+    ctx, now = _already_targeted_ctx(sender, dest_system=999,
+                                     route=[SimpleNamespace(system_address=7,
+                                                            star_class="G")])
+    assert STEP_REGISTRY["target_next_route"](ctx) is False
+    assert now[0] >= 60.0
+
+
+def test_target_next_route_ignores_route_origin_match():
+    """route[0] is the system we're sitting IN — a Destination matching it is
+    a local-body lock, not the next hop. Must not confirm."""
+    sender = FakeSender()
+    ctx, now = _already_targeted_ctx(
+        sender, dest_system=7,
+        route=[SimpleNamespace(system_address=7, star_class="G"),
+               SimpleNamespace(system_address=42, star_class="K")])
+    assert STEP_REGISTRY["target_next_route"](ctx) is False
+    assert now[0] >= 60.0
+
+
 def test_target_next_route_watchdog_when_no_fsdtarget():
     """No FSDTarget ever (no route plotted / press lost) -> the 60s
     stuck-state watchdog fails the step instead of waiting forever."""

@@ -42,6 +42,12 @@ class StepContext:
     # one. Wired by FlowRunner; the default means "no journal wiring".
     fsd_target_supplier: Callable[[], tuple] = lambda: (0, None)
 
+    # Latest parsed NavRoute.json (or None). target_next_route uses it to
+    # danger-check a hop that was ALREADY locked before the bot started —
+    # that press emits no new FSDTarget event, so Status.Destination +
+    # the route's StarClass are the only confirmation (2026-06-06 dead run).
+    navroute_supplier: Callable[[], Optional[Any]] = lambda: None
+
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 

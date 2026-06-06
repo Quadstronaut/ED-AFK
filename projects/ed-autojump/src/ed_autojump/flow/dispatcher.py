@@ -211,6 +211,7 @@ class FlowRunner:
             should_abort=self._should_abort,
             exclusive_guard=self._exclusive_input,
             fsd_target_supplier=self._fsd_target_state,
+            navroute_supplier=self._navroute_state,
             record=self.record,
         )
         ctx._tail_handle = handle   # for _run's unsubscribe; None without a tail
@@ -306,6 +307,17 @@ class FlowRunner:
 
     def _fsd_target_state(self) -> tuple:
         return (self._fsd_target_seq, self._latest_fsd_target)
+
+    def _navroute_state(self) -> Optional[Any]:
+        """Latest parsed NavRoute.json. poll() refreshes on mtime change and
+        returns None when unchanged — fall through to .current so steps
+        always see the last good parse. WIRED 2026-06-06: the reader had
+        been constructed and stored since v1 with no consumer."""
+        r = self.navroute_reader
+        if r is None:
+            return None
+        nr = r.poll()
+        return nr if nr is not None else r.current
 
     def _poll_status(self) -> None:
         with self._status_lock:

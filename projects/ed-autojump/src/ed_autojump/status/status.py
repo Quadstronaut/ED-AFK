@@ -86,6 +86,16 @@ class _Fuel(BaseModel):
     fuel_reservoir: float = Field(default=0.0, alias="FuelReservoir")
 
 
+class _Destination(BaseModel):
+    """Status.json `Destination` — the currently locked target. For an FSD
+    route hop: System = the hop's SystemAddress, Body = 0. A local body
+    lock shows the CURRENT system's address instead."""
+    model_config = ConfigDict(extra="allow")
+    system: int = Field(default=0, alias="System")
+    body: int = Field(default=0, alias="Body")
+    name: str = Field(default="", alias="Name")
+
+
 class Status(BaseModel):
     """Parsed Status.json. All fields optional — file is sparse."""
 
@@ -102,6 +112,7 @@ class Status(BaseModel):
     cargo: Optional[float] = Field(default=None, alias="Cargo")
     legal_state: Optional[str] = Field(default=None, alias="LegalState")
     body_name: Optional[str] = Field(default=None, alias="BodyName")
+    destination: Optional[_Destination] = Field(default=None, alias="Destination")
     heat: Optional[float] = Field(default=None, alias="Heat")
     altitude: Optional[float] = Field(default=None, alias="Altitude")
     heading: Optional[int] = Field(default=None, alias="Heading")
