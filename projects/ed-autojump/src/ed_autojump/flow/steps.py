@@ -602,6 +602,7 @@ def step_pitch_compass(
 
     start = ctx.clock()
     misses = 0   # consecutive not_found beats
+    fronts = 0   # consecutive in_front beats (until="behind" only)
     for i in range(max_iters):
         if ctx.clock() - start > timeout_s:
             ctx.log("PitchCompassTimeout", {"until": until, "iters": i})
@@ -615,7 +616,15 @@ def step_pitch_compass(
         # genuinely out of view and the sweep should resume.
         misses = misses + 1 if not read.found else 0
         transient_miss = (not read.found) and misses < 3
-        action = None if (at_gate or transient_miss) else _press_for(read)
+        # Front-flicker damping (run 12, session_151622): a single FRONT
+        # read amid behind-convergence — with NO press in between — is a
+        # filled/hollow classifier flicker, and the 1.0s flip it fired
+        # wrecked the pose. The flip needs 2 CONSECUTIVE front beats.
+        fronts = fronts + 1 if (read.found and read.in_front) else 0
+        front_flicker = (until == "behind" and read.found
+                         and read.in_front and fronts < 2)
+        action = (None if (at_gate or transient_miss or front_flicker)
+                  else _press_for(read))
         hold = None if action is None else _hold_for(read)
         # Per-iteration telemetry (ADDED 2026-06-06: the 13:45 spin was 25
         # opaque presses — reads were invisible, same gap orient had).

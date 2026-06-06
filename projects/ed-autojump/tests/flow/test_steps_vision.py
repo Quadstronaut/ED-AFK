@@ -233,8 +233,9 @@ def test_pitch_behind_centering_uses_proportional_taps():
 
 def test_pitch_front_flip_keeps_full_power():
     """The front->behind flip phase NEEDS the big press (~140 deg traverse);
-    only the behind-centering phase gets taps."""
-    reader = FakeReader([_ahead(-0.7), _behind_at(0.05, 0.1)])
+    only the behind-centering phase gets taps. Two front reads: the flicker
+    damping (run 12) holds on a single front beat by design."""
+    reader = FakeReader([_ahead(-0.7), _ahead(-0.7), _behind_at(0.05, 0.1)])
     ctx, sender = _ctx(reader)
     ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
                                         pitch_hold=1.0, settle_s=0.0,
@@ -370,3 +371,32 @@ def test_nav_panel_target_restores_focus_before_macro():
     assert ok is True
     assert sender.actions()[0] == "UI_Back"
     assert sender.actions()[1] == "FocusLeftPanel"
+
+
+def test_pitch_single_front_flicker_holds_position():
+    """Run 12 fine phase (session_151622): behind mag 0.29 converging, one
+    not_found beat, then a single FRONT read at (0.73,-0.08) WITH NO PRESS
+    in between -- a filled/hollow classifier flicker, not physics -- fired
+    the 1.0s front-flip and wrecked the pose. During until=behind, the flip
+    press needs 2 CONSECUTIVE front reads; a single one holds position."""
+    reader = FakeReader([_behind_at(-0.3, 0.1),
+                         _ahead(0.7),                 # flicker -- hold
+                         _behind_at(-0.1, 0.05)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=6, timeout_s=999)
+    assert ok is True
+    assert sender.actions() == ["YawRightButton"]      # no flip press fired
+
+
+def test_pitch_consecutive_front_reads_flip():
+    """A REAL front dot persists -> the flip fires on the second beat."""
+    reader = FakeReader([_ahead(0.6), _ahead(0.62), _behind_at(-0.1, 0.05)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=6, timeout_s=999)
+    assert ok is True
+    assert sender.holds[0] == ("PitchUpButton", 1.0)   # flip on beat 2
+    assert len(sender.actions()) == 1
