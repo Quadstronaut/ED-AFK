@@ -142,3 +142,71 @@ def test_orient_compass_guard_inert_when_starting_in_normal_space():
         in_supercruise=False)
     assert STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=5,
                                            timeout_s=999, settle_s=0.0) is True
+
+
+def _behind_at(ox, oy):
+    return CompassRead(found=True, offset_x=ox, offset_y=oy, in_front=False,
+                       confidence=1.0)
+
+
+def test_pitch_behind_far_left_yaws_right():
+    """2026-06-06 13:45 spin loop: smack_recovery's pitch_compass pressed
+    PitchUp 25x with the star behind at ox=-0.86 -- pitch moves the dot
+    VERTICALLY and can never close a horizontal offset, so the 'behind +
+    mag<=0.25' gate was unreachable and the ship looped forever. Behind-
+    hemisphere dynamics are MIRRORED: dot left (ox<0) -> YawRight drives it
+    to centre while staying behind."""
+    reader = FakeReader([_behind_at(-0.9, 0.2), _behind_at(-0.1, 0.1)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=5, timeout_s=999)
+    assert ok is True
+    assert sender.actions() == ["YawRightButton"]
+
+
+def test_pitch_behind_far_right_yaws_left():
+    reader = FakeReader([_behind_at(0.9, 0.2), _behind_at(0.1, 0.1)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=5, timeout_s=999)
+    assert ok is True
+    assert sender.actions() == ["YawLeftButton"]
+
+
+def test_pitch_behind_high_pitches_down():
+    # behind + dot above centre: PitchDown reduces behind-oy (mirrored law)
+    reader = FakeReader([_behind_at(0.05, 0.6), _behind_at(0.05, 0.1)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=5, timeout_s=999)
+    assert ok is True
+    assert sender.actions() == ["PitchDownButton"]
+
+
+def test_pitch_behind_low_pitches_up():
+    reader = FakeReader([_behind_at(0.05, -0.6), _behind_at(0.05, -0.1)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=5, timeout_s=999)
+    assert ok is True
+    assert sender.actions() == ["PitchUpButton"]
+
+
+def test_pitch_compass_logs_per_iteration_telemetry():
+    """The 13:45 spin was 25 opaque presses -- pitch_compass now logs
+    PitchIter rows like orient does."""
+    reader = FakeReader([_ahead(0.0), _ahead(-0.7)])
+    ctx, _ = _ctx(reader)
+    logged = []
+    ctx.record = lambda kind, payload: logged.append((kind, payload))
+    STEP_REGISTRY["pitch_compass"](ctx, until="edge", edge_frac=0.6,
+                                   pitch_hold=1.0, settle_s=0.0,
+                                   max_iters=5, timeout_s=999)
+    iters = [p for k, p in logged if k == "PitchIter"]
+    assert len(iters) == 2
+    assert iters[0]["action"] == "PitchUpButton"
+    assert iters[1]["action"] is None            # gate reached, no press

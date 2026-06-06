@@ -443,18 +443,54 @@ def step_pitch_compass(
         # "edge": dot near the rim (≈90° off the nose)
         return read.magnitude >= edge_frac
 
+    def _press_for(read) -> str:
+        """Choose the press that closes on the gate.
+
+        'edge' keeps the original pure-pitch sweep. 'behind' is TWO-AXIS as
+        of 2026-06-06 13:45 (the spin loop): smack_recovery's pitch-only
+        version pressed PitchUp 25x with the star behind at ox=-0.86 —
+        pitch moves the dot VERTICALLY, so a horizontal offset made the
+        'behind + mag<=center_frac' gate unreachable and the ship looped
+        forever (the smack had assumed the star starts dead-ahead; the
+        13:26 orient thrash had yawed it aside).
+
+        Behind-hemisphere compass dynamics are MIRRORED versus the front
+        laws (vector algebra, confirmed against align.py's behind-flip
+        whose PitchUp INCREASES a behind dot's oy): to drive a behind dot
+        to centre, press the OPPOSITE of the front law — dot left (ox<0)
+        -> YawRight, dot above (oy>0) -> PitchDown. Dominant axis first.
+        A front dot still gets PitchUp: flip it over the top to behind."""
+        if not read.found:
+            return "PitchUpButton"              # blind sweep until it appears
+        if until == "edge" or read.in_front:
+            return "PitchUpButton"
+        ox, oy = read.offset_x, read.offset_y
+        if abs(ox) >= abs(oy):
+            return "YawRightButton" if ox < 0 else "YawLeftButton"
+        return "PitchDownButton" if oy > 0 else "PitchUpButton"
+
     start = ctx.clock()
     for i in range(max_iters):
         if ctx.clock() - start > timeout_s:
             ctx.log("PitchCompassTimeout", {"until": until, "iters": i})
             return False
         read = _measure(ctx.compass_reader, ctx.frame_grabber, ctx.compass_samples)
-        if _at_gate(read):
+        at_gate = _at_gate(read)
+        action = None if at_gate else _press_for(read)
+        # Per-iteration telemetry (ADDED 2026-06-06: the 13:45 spin was 25
+        # opaque presses — reads were invisible, same gap orient had).
+        ctx.log("PitchIter", {
+            "i": i, "until": until, "found": read.found,
+            "in_front": read.in_front, "ox": round(read.offset_x, 4),
+            "oy": round(read.offset_y, 4), "mag": round(read.magnitude, 4),
+            "action": action, "hold": None if action is None else pitch_hold,
+        })
+        if at_gate:
             ctx.log("PitchCompassDone", {"until": until, "iters": i,
                                          "offset_y": read.offset_y,
                                          "in_front": read.in_front})
             return True
-        ctx.sender.press("PitchUpButton", hold=pitch_hold)
+        ctx.sender.press(action, hold=pitch_hold)
         ctx.sleeper(settle_s)
     ctx.log("PitchCompassMaxIters", {"until": until})
     return False
