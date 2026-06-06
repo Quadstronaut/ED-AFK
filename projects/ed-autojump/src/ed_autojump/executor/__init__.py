@@ -1,11 +1,8 @@
-"""State-driven key macros: honk, jump."""
+"""State-driven key macros: honk, jump danger filter, star escape."""
 
 from .honk import HonkOutcome, perform_honk
 from .jump import (
-    ChargeOutcome,
-    ChargeResult,
     EscapeOutcome,
-    handle_start_jump,
     perform_star_escape,
     should_refuse_target,
 )
@@ -16,10 +13,7 @@ __all__ = [
     "perform_honk",
     "EventDriver",
     "Outcome",
-    "ChargeOutcome",
-    "ChargeResult",
     "EscapeOutcome",
-    "handle_start_jump",
     "perform_star_escape",
     "should_refuse_target",
 ]

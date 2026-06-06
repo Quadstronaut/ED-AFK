@@ -7,9 +7,7 @@ from pathlib import Path
 import pytest
 
 from ed_autojump.executor.jump import (
-    ChargeOutcome,
     EscapeOutcome,
-    handle_start_jump,
     perform_star_escape,
     should_refuse_target,
 )
@@ -43,43 +41,16 @@ def test_should_refuse_target_safe(cls: str):
     assert should_refuse_target(target) is False
 
 
-# --- StartJump:Hyperspace -> SetSpeedZero (req 7 critical correctness) ----
+# --- handle_start_jump is DELETED (operator ground truth 2026-06-06) ------
+# The jump needs FULL throttle through charge/countdown/witchspace; ED
+# auto-dethrottles on arrival. SetSpeedZero-on-StartJump would stall jumps.
 
 
-def test_start_jump_hyperspace_safe_class_zeros_throttle():
-    sender = RecordingSender(_binds())
-    ev = parse_event(
-        '{"timestamp":"2026-01-10T03:00:00Z","event":"StartJump",'
-        '"JumpType":"Hyperspace","StarSystem":"X","SystemAddress":1,"StarClass":"K"}'
-    )
-    res = handle_start_jump(ev, sender)
-    assert res.outcome == ChargeOutcome.THROTTLED_ZERO
-    assert res.star_class == "K"
-    assert sender.actions() == ["SetSpeedZero"]
-
-
-def test_start_jump_hyperspace_danger_class_refused():
-    sender = RecordingSender(_binds())
-    ev = parse_event(
-        '{"timestamp":"2026-01-10T03:00:00Z","event":"StartJump",'
-        '"JumpType":"Hyperspace","StarSystem":"X","SystemAddress":1,"StarClass":"DA"}'
-    )
-    res = handle_start_jump(ev, sender)
-    assert res.outcome == ChargeOutcome.REFUSED_DANGER
-    assert res.star_class == "DA"
-    # Defense in depth: throttle still zeroed.
-    assert sender.actions() == ["SetSpeedZero"]
-
-
-def test_start_jump_supercruise_is_noop():
-    sender = RecordingSender(_binds())
-    ev = parse_event(
-        '{"timestamp":"2026-01-10T03:00:00Z","event":"StartJump",'
-        '"JumpType":"Supercruise","Taxi":false}'
-    )
-    res = handle_start_jump(ev, sender)
-    assert res.outcome == ChargeOutcome.NO_HYPERSPACE_EVENT
-    assert sender.events == []
+def test_handle_start_jump_is_deleted():
+    import ed_autojump.executor as executor
+    import ed_autojump.executor.jump as jump_mod
+    assert not hasattr(jump_mod, "handle_start_jump")
+    assert "handle_start_jump" not in executor.__all__
 
 
 # --- Star-exit escape macro (req 7) ---------------------------------------
@@ -150,8 +121,10 @@ def test_escape_macro_unknown_class_falls_back():
 
 def test_jump_sequence_through_fixture(sample_journal: Path):
     """
-    Walk the bundled sample journal. Each StartJump:Hyperspace must trigger
-    SetSpeedZero; each FSDJump must trigger PitchUp + throttle.
+    Walk the bundled sample journal. Each StartJump:Hyperspace caches the
+    star class (throttle is NEVER touched at StartJump — full throttle
+    through the jump, ED auto-dethrottles on arrival); each FSDJump must
+    trigger the PitchUp + throttle escape macro.
     """
     binds = _binds()
     sender = RecordingSender(binds)
@@ -169,15 +142,14 @@ def test_jump_sequence_through_fixture(sample_journal: Path):
     for ev in tail.replay_file(sample_journal):
         if isinstance(ev, StartJump):
             cached_class = ev.star_class or cached_class
-            handle_start_jump(ev, sender)
             starts += 1
         elif isinstance(ev, FSDJump):
             perform_star_escape(ev, sender, cached_star_class=cached_class)
             jumps += 1
 
     assert starts >= 1 and jumps >= 1
-    # Every Hyperspace start should produce a SetSpeedZero.
-    assert sender.actions().count("SetSpeedZero") == starts
+    # NO SetSpeedZero at StartJump — that would stall the jump.
+    assert sender.actions().count("SetSpeedZero") == 0
     # Every FSDJump produces a PitchUp + throttle pair.
     assert sender.actions().count("PitchUpButton") == jumps
 

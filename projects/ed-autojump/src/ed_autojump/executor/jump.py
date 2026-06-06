@@ -1,10 +1,13 @@
 """
-Req 1 + 7 — jump + star-exit escape.
+Req 1 + 7 — jump danger filter + star-exit escape.
 
-Critical correctness landmines (SPEC §9.1, §9.2):
+Critical correctness landmines (SPEC §9.2 + operator ground truth 2026-06-06):
 
-- Throttle to zero on `StartJump:Hyperspace`, NOT after `FSDJump`. By the
-  time FSDJump fires, you may already be heating up against the star.
+- THROTTLE IS NEVER TOUCHED AFTER ENGAGING THE JUMP. The jump needs full
+  throttle to fire; zeroing it mid-charge/countdown stalls the jump
+  ("more speed required"). On arrival ED's own safety auto-dethrottles —
+  there is nothing for us to do. (The old SPEC §9.1 "zero throttle on
+  StartJump" rule was WRONG and its handle_start_jump macro is deleted.)
 - Filter destination StarClass against the danger list on the prior
   `FSDTarget` event. The in-game plotter routes through D*/N/H/W* without
   warning (user's own journal: V886 Centauri:DA).
@@ -15,7 +18,6 @@ Critical correctness landmines (SPEC §9.1, §9.2):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum, auto
 from typing import Callable, Iterable, Optional
 
 from ..fsd.danger import is_dangerous
@@ -49,44 +51,11 @@ DEFAULT_CLASS_POST_PITCH_THROTTLE: dict[str, str] = {
 }
 
 
-class ChargeOutcome(Enum):
-    THROTTLED_ZERO = auto()
-    REFUSED_DANGER = auto()
-    NO_HYPERSPACE_EVENT = auto()
-
-
-@dataclass
-class ChargeResult:
-    outcome: ChargeOutcome
-    star_class: Optional[str] = None
-
-
-def handle_start_jump(
-    ev: StartJump,
-    sender: Sender,
-    *,
-    danger_classes: Optional[Iterable[str]] = None,
-) -> ChargeResult:
-    """
-    Called when a StartJump event arrives. For hyperspace jumps:
-    - if StarClass is in the danger set, refuse (the jump is already
-      committed at this point, but we still don't engage further macros);
-    - otherwise immediately zero the throttle (SetSpeedZero).
-
-    Supercruise StartJumps have no StarClass; we don't touch throttle.
-    """
-    if ev.jump_type != "Hyperspace":
-        return ChargeResult(outcome=ChargeOutcome.NO_HYPERSPACE_EVENT)
-
-    sc = ev.star_class or ""
-    danger = frozenset(danger_classes) if danger_classes is not None else None
-    if sc and is_dangerous(sc, danger):
-        # Throttle to zero anyway — defence in depth.
-        sender.press("SetSpeedZero", hold=0.05)
-        return ChargeResult(outcome=ChargeOutcome.REFUSED_DANGER, star_class=sc)
-
-    sender.press("SetSpeedZero", hold=0.05)
-    return ChargeResult(outcome=ChargeOutcome.THROTTLED_ZERO, star_class=sc)
+# handle_start_jump (SetSpeedZero on StartJump) is DELETED, not deprecated.
+# It encoded a jump-killing behavior — the FSD needs full throttle through
+# the whole sequence, and ED auto-dethrottles on arrival. It was unwired but
+# exported; this session proved unwired-but-present code eventually gets
+# wired (hold_alignment), so the landmine goes.
 
 
 def should_refuse_target(
