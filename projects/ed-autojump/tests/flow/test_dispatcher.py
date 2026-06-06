@@ -177,6 +177,71 @@ def test_make_context_widget_ring_defaults_off():
     assert ctx.widget_frame_grabber is None
 
 
+def test_heat_tick_pauses_while_input_exclusive():
+    """Spec 2026-06-06: a UI macro owning input suppresses the heatsink tap;
+    release resumes it on the next tick."""
+    r, sender, _ = _heat_runner(overheating=True, clock=lambda: 100.0)
+    with r._exclusive_input():
+        r._heat_tick()
+    assert sender.actions() == []          # paused — nothing pressed
+    r._heat_tick()                          # guard released
+    assert sender.actions() == ["DeployHeatSink"]
+
+
+def test_exclusive_guard_is_a_counter_not_a_bool():
+    """Nested/parallel holders: releasing one must not clear the other."""
+    r, _, _ = _heat_runner(overheating=False, clock=lambda: 0.0)
+    with r._exclusive_input():
+        with r._exclusive_input():
+            assert r.input_exclusive() is True
+        assert r.input_exclusive() is True   # outer holder still active
+    assert r.input_exclusive() is False
+
+
+def test_interpreter_wraps_exclusive_steps_in_guard():
+    """sc_assist_orbit / nav_panel_target run inside ctx.exclusive_guard —
+    held during the step, released after, even though the step presses keys."""
+    from contextlib import contextmanager
+    from ed_autojump.flow.interpreter import run_procedure
+    from ed_autojump.flow.context import StepContext
+
+    held_during: list[bool] = []
+    state = {"held": False}
+
+    @contextmanager
+    def guard():
+        state["held"] = True
+        try:
+            yield
+        finally:
+            state["held"] = False
+
+    def spy_step(ctx, **params):
+        held_during.append(state["held"])
+        return True
+
+    proc = Procedure(name="p", steps=(
+        Step("sc_assist_orbit"), Step("target_ahead")))
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None,
+                      exclusive_guard=guard)
+    registry = {"sc_assist_orbit": spy_step, "target_ahead": spy_step}
+    run_procedure(proc, ctx, registry=registry)
+    assert held_during == [True, False]     # macro held it, tap did not
+    assert state["held"] is False           # released at the end
+
+
+def test_heat_watchdog_loop_exits_on_stop_and_panic():
+    import threading
+    r, sender, _ = _heat_runner(overheating=False, clock=lambda: 0.0)
+    stop = threading.Event()
+    stop.set()
+    r._heat_watchdog_loop(stop)             # returns immediately, no hang
+    r2, _, _ = _heat_runner(overheating=False, clock=lambda: 0.0)
+    r2.stop_requested = True
+    r2._heat_watchdog_loop(threading.Event())  # _should_abort path
+    assert sender.actions() == []
+
+
 class _FakeTail:
     """Yields scripted event batches, one batch per .step() call."""
     def __init__(self, batches):

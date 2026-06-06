@@ -525,6 +525,12 @@ def _correct_widget_ring(sender, read, *, gain_s_per_px, min_press, max_press):
             sender.press("PitchDownButton" if dy > 0 else "PitchUpButton", hold=hold)
 
 
+# Steps that OWN input: multi-key UI macros where a stray concurrent keypress
+# (e.g. the heat watchdog's DeployHeatSink) could desync the panel UI state.
+# The interpreter wraps these in ctx.exclusive_guard; the heat watchdog skips
+# its tick while any is running (spec 2026-06-06-heat-watchdog-design).
+INPUT_EXCLUSIVE_ACTIONS = frozenset({"sc_assist_orbit", "nav_panel_target"})
+
 STEP_REGISTRY.update({
     "sc_assist_orbit": step_sc_assist_orbit,
     "nav_panel_target": step_nav_panel_target,

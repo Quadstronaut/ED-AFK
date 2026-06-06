@@ -9,7 +9,7 @@ from typing import Any, Callable, Optional
 
 from .context import StepContext
 from .model import Procedure
-from .steps import STEP_REGISTRY
+from .steps import INPUT_EXCLUSIVE_ACTIONS, STEP_REGISTRY
 
 
 @dataclass
@@ -56,7 +56,15 @@ def run_procedure(
             except Exception:  # noqa: BLE001
                 pass
         fn = reg.get(step.action)
-        ok = False if fn is None else bool(fn(ctx, **step.params))
+        if fn is None:
+            ok = False
+        elif step.action in INPUT_EXCLUSIVE_ACTIONS and ctx.exclusive_guard is not None:
+            # UI macro owns input for its duration — the heat watchdog pauses
+            # so a DeployHeatSink tap can't desync the panel state.
+            with ctx.exclusive_guard():
+                ok = bool(fn(ctx, **step.params))
+        else:
+            ok = bool(fn(ctx, **step.params))
         result.steps.append(StepResult(step.action, ok))
         ctx.log("Step", {"procedure": proc.name, "action": step.action, "ok": ok})
 

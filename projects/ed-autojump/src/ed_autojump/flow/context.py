@@ -33,6 +33,10 @@ class StepContext:
     # signal, and the operator's backstop now that wall-clock gates are banned.
     should_abort: Callable[[], bool] = lambda: False
 
+    # factory returning a context manager that marks "a UI macro owns input"
+    # for its duration (heat watchdog pauses). None when no watchdog is wired.
+    exclusive_guard: Optional[Callable[[], Any]] = None
+
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 

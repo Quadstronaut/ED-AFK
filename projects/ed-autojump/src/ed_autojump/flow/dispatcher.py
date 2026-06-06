@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
 from .context import StepContext
@@ -117,6 +118,13 @@ class FlowRunner:
         # Single tail consumer + fan-out (see _TailHub). None without a tail.
         self._hub: Optional[_TailHub] = (
             _TailHub(tail, on_event=self._on_tail_event) if tail is not None else None)
+        # Status.json is read from the main loop, honk waiters, and the heat
+        # watchdog thread — serialise the reader.
+        self._status_lock = threading.Lock()
+        # >0 while a UI macro owns input (heat watchdog pauses). Counter, not
+        # a bool, so a parallel track can't clear the main track's hold.
+        self._exclusive_lock = threading.Lock()
+        self._exclusive_count = 0
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
@@ -148,6 +156,24 @@ class FlowRunner:
         return self.panic_switch is not None and getattr(
             self.panic_switch, "tripped", False)
 
+    # ---- exclusive-input guard (heat watchdog pauses) ----------------------
+    @contextmanager
+    def _exclusive_input(self):
+        """Mark 'a UI macro owns input' for the body's duration. The heat
+        watchdog skips ticks while any holder is active (spec
+        2026-06-06-heat-watchdog-design)."""
+        with self._exclusive_lock:
+            self._exclusive_count += 1
+        try:
+            yield
+        finally:
+            with self._exclusive_lock:
+                self._exclusive_count -= 1
+
+    def input_exclusive(self) -> bool:
+        with self._exclusive_lock:
+            return self._exclusive_count > 0
+
     # ---- context construction --------------------------------------------
     def _make_context(self) -> StepContext:
         # Each context gets its OWN hub subscription so concurrent waiters
@@ -170,6 +196,7 @@ class FlowRunner:
             event_time=self.event_time,
             event_waiter=lambda name, t, _h=handle: self._wait_for_event(_h, name, t),
             should_abort=self._should_abort,
+            exclusive_guard=self._exclusive_input,
             record=self.record,
         )
         ctx._tail_handle = handle   # for _run's unsubscribe; None without a tail
@@ -262,10 +289,33 @@ class FlowRunner:
         return
 
     def _poll_status(self) -> None:
-        if self.status_reader is not None:
-            st = self.status_reader.poll()
-            if st is not None:
-                self._latest_status = st
+        with self._status_lock:
+            if self.status_reader is not None:
+                st = self.status_reader.poll()
+                if st is not None:
+                    self._latest_status = st
+
+    # ---- heat watchdog -----------------------------------------------------
+    def _heat_tick(self) -> None:
+        """One watchdog tick: skip while a UI macro owns input, else poll
+        status and run the reactive heatsink check."""
+        if self.input_exclusive():
+            return
+        self._poll_status()
+        self.heat_guard()
+
+    def _heat_watchdog_loop(self, stop: threading.Event, tick_s: float = 1.0) -> None:
+        """Flight-only heat protection (spec 2026-06-06): a daemon thread so
+        OverHeating during long steps (alignment holds, star escapes,
+        fly-outs, scooping) gets a heatsink WITHOUT waiting for the procedure
+        to end. EDAPGui runs its heat/SCO monitor the same way. Exits on
+        stop, panic, or stop_requested — after a panic the operator owns the
+        ship, no input from us."""
+        while not stop.is_set():
+            if self._should_abort():
+                return
+            self._heat_tick()
+            self.sleeper(tick_s)
 
     def heat_guard(self) -> None:
         """Reactive heatsink eject. Fires DeployHeatSink the moment the
@@ -311,13 +361,18 @@ class FlowRunner:
         if self.tail is None or self._hub is None:
             raise RuntimeError("run_live requires a journal tail")
         main_handle = self._hub.subscribe()
+        # Heat protection lives on its own thread (covers long steps too);
+        # the inline heat_guard call is gone — single owner, no double-fire.
+        watchdog_stop = threading.Event()
+        watchdog = threading.Thread(
+            target=self._heat_watchdog_loop, args=(watchdog_stop,), daemon=True)
+        watchdog.start()
         deadline = self.clock() + duration_s
         try:
             while not self.stop_requested and self.clock() < deadline:
                 if self.panic_switch is not None and getattr(self.panic_switch, "tripped", False):
                     break
                 self._poll_status()
-                self.heat_guard()
                 # Events pumped by in-procedure waiters land in this queue
                 # too, so an FSDJump arriving DURING a procedure dispatches
                 # right after it returns (previously a waiter swallowed it
@@ -332,4 +387,5 @@ class FlowRunner:
                     if self._caught_up:
                         self.dispatch(ev)
         finally:
+            watchdog_stop.set()
             self._hub.unsubscribe(main_handle)
