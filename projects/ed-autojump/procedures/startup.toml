@@ -1,4 +1,10 @@
-# Fresh load: ship sits at a star in normal space.
+# Fresh load: ship sits at a star in NORMAL SPACE. That scene only — a bot
+# restarted while the ship is already IN SUPERCRUISE is routed to arrival.toml
+# instead (dispatcher._maybe_startup, 2026-06-06): an in-supercruise restart
+# sits nose-on at its last arrival star, and this procedure's throttle-100-
+# then-orient dove straight into the scoop zone (FuelScoop 13:26:17 ->
+# SupercruiseExit Body=Star 13:26:21 — the star smack). arrival.toml orbits
+# the star and clears it BEFORE throttling up.
 #
 # First attempt: throttle up, lock the next route star, orient on compass
 # (coarse) then widget ring (fine), fire the FSD, then hold_alignment â€” a

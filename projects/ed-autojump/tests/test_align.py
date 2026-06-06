@@ -364,3 +364,21 @@ def test_measure_strict_majority_odd_samples_4_of_7_is_found():
     result = _measure(reader, lambda: None, samples=7)
     assert result.found is True, "4-of-7 is a strict majority and must pass"
     assert result.offset_x == 0.2
+
+
+def test_abort_check_stops_loop_with_its_reason():
+    """2026-06-06 13:26 star smack: the ship emergency-dropped out of
+    supercruise 10s into orient and the loop kept steering glare garbage in
+    normal space for 35 more seconds. abort_check is polled every iteration;
+    a truthy string ends the loop immediately as that failure reason."""
+    sim = _Sim(ox=0.8, oy=0.0, in_front=True)   # would converge if allowed
+    calls = [0]
+
+    def sc_lost():
+        calls[0] += 1
+        return "supercruise_lost" if calls[0] >= 2 else None
+
+    out = _run(sim, abort_check=sc_lost)
+    assert out.aligned is False
+    assert out.reason == "supercruise_lost"
+    assert out.iterations <= 2                   # died fast, not at timeout

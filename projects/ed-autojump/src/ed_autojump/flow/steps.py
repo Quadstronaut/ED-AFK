@@ -356,6 +356,32 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
         return False
 
 
+def _supercruise_lost_guard(ctx: StepContext):
+    """Abort-check factory for long vision loops (2026-06-06 13:26 star
+    smack): the ship emergency-dropped out of supercruise 10s into orient
+    (FuelScoop -> SupercruiseExit Body=Star) and the loop kept steering
+    normal-space glare garbage for 35 more seconds, then the recovery pressed
+    Supercruise into the smack cooldown.
+
+    ASYMMETRIC by design: arms only when the step STARTS in supercruise —
+    losing it mid-step (smack, interdiction) always invalidates the step.
+    smack_recovery's escape-vector orient starts in NORMAL space and must run
+    unguarded (gaining supercruise there is success, handled by the next
+    step's gate). Returns None (no guard) when status is unwired or the
+    ship isn't in supercruise at step start."""
+    st0 = ctx.status_supplier()
+    if st0 is None or not getattr(st0, "in_supercruise", False):
+        return None
+
+    def check() -> "str | None":
+        st = ctx.status_supplier()
+        if st is not None and not getattr(st, "in_supercruise", True):
+            return "supercruise_lost"
+        return None
+
+    return check
+
+
 def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
     if ctx.compass_reader is None or ctx.frame_grabber is None:
         ctx.log("OrientNoVision", {})
@@ -383,6 +409,7 @@ def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
         samples=ctx.compass_samples,
         on_iter=lambda p: ctx.log("OrientIter", p),
         frame_sink=frame_sink,
+        abort_check=_supercruise_lost_guard(ctx),
         **kwargs,
     )
     ctx.log("Orient", {"aligned": outcome.aligned, "reason": outcome.reason,
@@ -608,9 +635,20 @@ def step_orient_widget_ring(
     # so one run's orients don't collide; only active when cli wired a sink.
     t0 = int(ctx.clock()) if ctx.frame_sink is not None else 0
 
+    # Losing supercruise mid-step (smack, interdiction) is NOT a vision miss:
+    # degrade would walk the flow on to engage_jump in normal space inside the
+    # exclusion zone. Fail closed REGARDLESS of on_miss so the procedure
+    # unwinds and the queued smack_recovery dispatch can run.
+    sc_guard = _supercruise_lost_guard(ctx)
+
     start = ctx.clock()
     iterations = 0
     while ctx.clock() - start < timeout_s:
+        if sc_guard is not None:
+            why = sc_guard()
+            if why:
+                ctx.log("WidgetRingAbort", {"why": why, "iters": iterations})
+                return False
         frames = [] if ctx.frame_sink is not None else None
         reads = []
         for _ in range(samples):

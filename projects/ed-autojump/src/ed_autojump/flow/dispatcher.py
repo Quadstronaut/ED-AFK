@@ -386,6 +386,16 @@ class FlowRunner:
         self._startup_done = True
         if getattr(st, "docked", False):
             return  # docked on load -> nothing to escape
+        if getattr(st, "in_supercruise", False):
+            # Restart mid-route (2026-06-06 13:26 star smack): a bot launched
+            # while the ship is ALREADY in supercruise is sitting at its last
+            # arrival star, nose-on — the ARRIVAL scene, not the fresh-load
+            # scene startup.toml was written for. startup's throttle-100-
+            # then-orient dove straight into the scoop zone (FuelScoop
+            # 13:26:17 -> SupercruiseExit Body=Star 13:26:21). arrival.toml
+            # orbits the star and clears it BEFORE throttling up.
+            self._run("arrival")
+            return
         self._run("startup")
 
     def request_stop(self) -> None:

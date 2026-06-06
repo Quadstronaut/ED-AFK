@@ -47,6 +47,51 @@ def test_supercruise_exit_not_star_is_ignored():
     assert sender.actions() == []
 
 
+def _startup_runner(sender, *, in_supercruise, docked=False):
+    """Runner with distinguishable single-step startup/arrival procedures:
+    startup presses SelectTarget (target_ahead), arrival presses
+    TargetNextRouteSystem (target_next_route)."""
+    procs = {
+        "startup": Procedure(name="startup", steps=(Step("target_ahead"),)),
+        "arrival": Procedure(name="arrival", steps=(Step("target_next_route"),)),
+    }
+    return FlowRunner(
+        procedures=procs, sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None,
+        status_supplier=lambda: SimpleNamespace(
+            docked=docked, in_supercruise=in_supercruise, fsd_charging=False,
+            fsd_cooldown=False, fsd_mass_locked=False, overheating=False),
+    )
+
+
+def test_startup_in_supercruise_runs_arrival_instead():
+    """2026-06-06 13:26 star smack: a bot restarted while the ship was ALREADY
+    in supercruise sat at its last arrival star, nose-on — startup's
+    throttle-100-then-orient dove it into the scoop zone (FuelScoop 13:26:17
+    -> SupercruiseExit Body=Star 13:26:21). In-supercruise restart IS the
+    arrival scene: orbit the star and clear it BEFORE throttling."""
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=True)
+    r._maybe_startup()
+    assert sender.actions() == ["TargetNextRouteSystem"]   # arrival ran
+    assert r._startup_done is True
+
+
+def test_startup_in_normal_space_runs_startup():
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=False)
+    r._maybe_startup()
+    assert sender.actions() == ["SelectTarget"]            # startup ran
+
+
+def test_startup_docked_runs_nothing():
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=False, docked=True)
+    r._maybe_startup()
+    assert sender.actions() == []
+    assert r._startup_done is True
+
+
 def _heat_runner(*, overheating, clock, sender=None, cooldown=10.0, record=None):
     """FlowRunner with a mutable status whose `overheating` we control."""
     sender = sender or FakeSender()

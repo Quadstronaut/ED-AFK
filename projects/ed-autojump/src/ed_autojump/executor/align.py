@@ -162,6 +162,7 @@ def align_to_target(
     samples: int = 7,
     on_iter: Optional[Callable[[dict], None]] = None,
     frame_sink: Optional[Callable[[int, list], None]] = None,
+    abort_check: Optional[Callable[[], Optional[str]]] = None,
 ) -> AlignOutcome:
     """Drive pitch/yaw until the compass dot is centred and in front.
 
@@ -194,6 +195,12 @@ def align_to_target(
     - ``frame_sink(i, frames)``: the iteration's captured frames, so a
       failing orient can be replayed offline against the reader. Frames are
       only retained when a sink is wired.
+
+    ``abort_check`` (ADDED 2026-06-06 — the 13:26 star smack): polled every
+    iteration; a truthy string aborts the loop immediately with that string
+    as the outcome reason. The caller wires the flight-state precondition
+    (e.g. "supercruise_lost") — after the ship emergency-dropped at a star,
+    this loop kept steering normal-space glare garbage for 35s to timeout.
     """
     start = clock()
     last = CompassRead.not_found()
@@ -201,6 +208,10 @@ def align_to_target(
     for i in range(max_iters):
         if clock() - start > timeout_s:
             return AlignOutcome(aligned=False, iterations=i, final=last, reason="timeout")
+        if abort_check is not None:
+            why = abort_check()
+            if why:
+                return AlignOutcome(aligned=False, iterations=i, final=last, reason=why)
 
         raw: Optional[list] = [] if on_iter is not None else None
         frames: Optional[list] = [] if frame_sink is not None else None

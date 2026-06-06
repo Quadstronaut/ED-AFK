@@ -99,3 +99,46 @@ def test_orient_compass_no_sink_no_crash():
     ctx, _ = _ctx(reader)
     assert ctx.frame_sink is None
     assert STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=2, timeout_s=999) is True
+
+
+class _FlipStatus:
+    """Status supplier: in_supercruise True for the first `n_true` reads,
+    then False (the 13:26 emergency drop, mid-orient)."""
+
+    def __init__(self, n_true):
+        self.n = n_true
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        from types import SimpleNamespace
+        return SimpleNamespace(in_supercruise=self.calls <= self.n)
+
+
+def test_orient_compass_fails_closed_when_supercruise_lost():
+    """2026-06-06 13:26: SupercruiseExit at the star 10s into orient; the loop
+    steered normal-space glare garbage for 35 more seconds. A step that began
+    in supercruise must DIE the moment the flag drops, not at timeout."""
+    reader = FakeReader([_ahead(-0.6)] * 50)   # never aligns on its own
+    ctx, sender = _ctx(reader)
+    logged = []
+    ctx.record = lambda kind, payload: logged.append((kind, payload))
+    ctx.status_supplier = _FlipStatus(n_true=2)  # in SC at start, drops fast
+    ok = STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=50,
+                                         timeout_s=999, settle_s=0.0)
+    assert ok is False
+    orient = [p for k, p in logged if k == "Orient"][-1]
+    assert orient["reason"] == "supercruise_lost"
+    assert len(sender.actions()) <= 3            # stopped pressing immediately
+
+
+def test_orient_compass_guard_inert_when_starting_in_normal_space():
+    """smack_recovery's escape-vector orient runs in NORMAL space (during the
+    SC charge). The guard arms only when the step STARTS in supercruise —
+    a normal-space start must orient exactly as before."""
+    reader = FakeReader([_ahead(-0.6), _ahead(0.0)])   # one press, then aligned
+    ctx, _ = _ctx(reader)
+    ctx.status_supplier = lambda: __import__("types").SimpleNamespace(
+        in_supercruise=False)
+    assert STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=5,
+                                           timeout_s=999, settle_s=0.0) is True

@@ -267,6 +267,44 @@ def test_frame_sink_receives_all_sample_frames():
 
 
 # ---------------------------------------------------------------------------
+# 19e. supercruise lost mid-step -> fail closed EVEN under degrade
+# ---------------------------------------------------------------------------
+
+class _FlipStatus:
+    """in_supercruise True for the first `n_true` reads, then False."""
+
+    def __init__(self, n_true):
+        self.n = n_true
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        return SimpleNamespace(in_supercruise=self.calls <= self.n)
+
+
+def test_supercruise_lost_fails_closed_even_in_degrade_mode():
+    """2026-06-06 13:26 star smack: losing supercruise mid-step is NOT a
+    vision miss — degrade would walk the flow on to engage_jump in normal
+    space inside the exclusion zone. Fail the required step so the procedure
+    unwinds and the queued smack_recovery dispatch can run."""
+    logged = []
+    sender = FakeSender()
+    reader = _FakeRingReader([_read(80, 0)])     # never aligns on its own
+    ctx = StepContext(
+        sender=sender, clock=_Clock(), sleeper=lambda s: None,
+        widget_ring_enabled=True, widget_ring_reader=reader,
+        widget_frame_grabber=lambda: object(),
+        widget_ring_on_miss="degrade",           # the config default
+        status_supplier=_FlipStatus(n_true=2),
+        record=lambda t, p: logged.append((t, p)),
+    )
+    assert step_orient_widget_ring(ctx, timeout_s=999, samples=1) is False
+    assert any(t == "WidgetRingAbort" and p["why"] == "supercruise_lost"
+               for t, p in logged)
+    assert len(sender.actions()) <= 3            # stopped pressing immediately
+
+
+# ---------------------------------------------------------------------------
 # 22. procedure integration: step inserted after orient_compass, no-ops when off
 # ---------------------------------------------------------------------------
 
