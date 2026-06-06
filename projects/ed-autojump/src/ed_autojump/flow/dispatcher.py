@@ -80,6 +80,7 @@ class FlowRunner:
         widget_ring_enabled: bool = False,
         widget_ring_reader: Optional[Any] = None,
         widget_frame_grabber: Optional[Callable[[], Any]] = None,
+        widget_ring_on_miss: str = "degrade",
         overlay: Optional[Any] = None,
         record: Optional[Callable[[str, Any], None]] = None,
         tail: Optional[Any] = None,
@@ -100,6 +101,7 @@ class FlowRunner:
         self.widget_ring_enabled = widget_ring_enabled
         self.widget_ring_reader = widget_ring_reader
         self.widget_frame_grabber = widget_frame_grabber
+        self.widget_ring_on_miss = widget_ring_on_miss
         self.overlay = overlay
         self.record = record
         self.tail = tail
@@ -201,6 +203,7 @@ class FlowRunner:
             widget_ring_enabled=self.widget_ring_enabled,
             widget_ring_reader=self.widget_ring_reader,
             widget_frame_grabber=self.widget_frame_grabber,
+            widget_ring_on_miss=self.widget_ring_on_miss,
             overlay=self.overlay,
             status_supplier=self._fresh_status,
             event_time=self.event_time,

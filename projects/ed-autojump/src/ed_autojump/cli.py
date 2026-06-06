@@ -351,23 +351,39 @@ def cmd_run(args) -> int:
                   "[vision].enabled = true to enable orientation.")
 
         # Widget-ring FINE pass (additive after orient_compass). ON by default.
-        # The preflight WARNS but never aborts (operator decision): a missing
-        # widget or absent vision just makes the required fine step fail closed
-        # per jump, rather than blocking launch.
+        # A preflight MISS follows [vision].widget_ring_on_miss (operator
+        # decision 2026-06-06, GitHub issue #1): "degrade" (default) disables
+        # the fine pass FOR THIS RUN so jumps proceed compass-only;
+        # "fail_closed" warns and the required fine step gates every jump
+        # until the widget is detectable. Issue #1 was the degrade-less
+        # version of this: the preflight warned, the pass stayed enabled, and
+        # the bot flew-but-never-jumped.
         if cfg.vision.widget_ring_alignment:
             from .vision.capture import build_widget_vision
             from .vision.widget_ring import verify_widget_rendered
             widget_ring_reader, widget_frame_grabber = build_widget_vision(cfg)
-            if widget_ring_reader is None or widget_frame_grabber is None:
-                print("WARNING: widget_ring_alignment=on but vision is "
-                      "unavailable (install the [vision] extra) — the fine "
-                      "pass will fail closed each jump until vision is wired.",
-                      file=sys.stderr)
-            elif not verify_widget_rendered(widget_ring_reader, widget_frame_grabber):
-                print("WARNING: mouse widget not detected — enable the HUD "
-                      "mouse widget in 'point' mode (see ED-AFK preset). The "
-                      "fine pass fails closed (required=true gates the jump) "
-                      "until the widget is visible.", file=sys.stderr)
+            degrade = cfg.vision.widget_ring_on_miss != "fail_closed"
+            missing = (widget_ring_reader is None
+                       or widget_frame_grabber is None)
+            undetected = (not missing and not verify_widget_rendered(
+                widget_ring_reader, widget_frame_grabber))
+            if missing or undetected:
+                why = ("vision unavailable (install the [vision] extra)"
+                       if missing else
+                       "mouse widget not detected — enable the HUD mouse "
+                       "widget in 'point' mode (see ED-AFK preset)")
+                if degrade:
+                    print(f"WARNING: {why}. Widget-ring fine pass DISABLED "
+                          f"for this run — jumps proceed compass-only. "
+                          f"([vision].widget_ring_on_miss='fail_closed' to "
+                          f"gate jumps on it instead.)", file=sys.stderr)
+                    cfg.vision.widget_ring_alignment = False
+                    widget_ring_reader = None
+                    widget_frame_grabber = None
+                else:
+                    print(f"WARNING: {why}. widget_ring_on_miss='fail_closed' "
+                          f"— the required fine step gates every jump until "
+                          f"the widget is detectable.", file=sys.stderr)
             else:
                 print(f"vision: widget-ring FINE pass ON "
                       f"(crop={tuple(cfg.vision.widget_crop)})")
@@ -420,6 +436,7 @@ def cmd_run(args) -> int:
         widget_ring_enabled=cfg.vision.widget_ring_alignment,
         widget_ring_reader=widget_ring_reader,
         widget_frame_grabber=widget_frame_grabber,
+        widget_ring_on_miss=cfg.vision.widget_ring_on_miss,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
         tail=JournalTail(journal_dir),

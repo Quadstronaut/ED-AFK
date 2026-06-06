@@ -45,12 +45,15 @@ class StepContext:
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 
-    # widget-ring fine-align vision (None when off -> the step fails closed).
-    # widget_frame_grabber is the CENTRE-CROP .grab — distinct from
-    # frame_grabber, which is the compass-region crop.
+    # widget-ring fine-align vision. widget_frame_grabber is the CENTRE-CROP
+    # .grab — distinct from frame_grabber, which is the compass-region crop.
+    # widget_ring_on_miss: "degrade" (default — a miss skips the fine pass,
+    # compass-only jump proceeds; operator decision 2026-06-06, issue #1) or
+    # "fail_closed" (a miss fails the required step, gating the jump).
     widget_ring_enabled: bool = False
     widget_ring_reader: Optional[Any] = None
     widget_frame_grabber: Optional[Callable[[], Any]] = None
+    widget_ring_on_miss: str = "degrade"
 
     # cosmetic EDMCOverlay status writer (None -> no overlay). Duck-typed:
     # .step(proc, action, idx, total). Fail-soft; never blocks a step.

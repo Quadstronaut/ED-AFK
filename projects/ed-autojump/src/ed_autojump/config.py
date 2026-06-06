@@ -254,11 +254,17 @@ class VisionConfig:
     align_samples: int = 7
     # Widget-ring FINE alignment (additive after orient_compass). ON by default
     # (operator decision 2026-06-03). Needs the HUD mouse widget in "point"
-    # mode; if it's absent the fine step fails closed per jump (required=true),
-    # so a real run needs the widget visible. The CLI preflight only WARNS, it
-    # does not abort. widget_crop is the 1080p centre rect (x, y, w, h).
+    # mode. widget_crop is the 1080p centre rect (x, y, w, h).
     widget_ring_alignment: bool = True
     widget_crop: tuple[int, int, int, int] = (510, 240, 900, 600)
+    # What a widget MISS does (operator decision 2026-06-06, GitHub issue #1):
+    #   "degrade"     (default) — fine pass is skipped (compass-only) and the
+    #                 jump proceeds. If we're genuinely off-target the FSD
+    #                 charge aborts and autorecovery maneuvers fix it.
+    #   "fail_closed" — never jump on an unconfirmed fine-orient: preflight
+    #                 warns and the required fine step fails per jump until
+    #                 the widget is detectable.
+    widget_ring_on_miss: str = "degrade"
 
 
 @dataclass
@@ -354,4 +360,11 @@ def load_config(path: str | Path | None = None) -> Config:
     ):
         if section_name in raw:
             _merge(getattr(cfg, section_name), raw[section_name])
+
+    if cfg.vision.widget_ring_on_miss not in ("degrade", "fail_closed"):
+        # A typo here would silently pick one behavior — refuse to launch.
+        raise ValueError(
+            f"[vision].widget_ring_on_miss must be 'degrade' or 'fail_closed', "
+            f"got {cfg.vision.widget_ring_on_miss!r}"
+        )
     return cfg

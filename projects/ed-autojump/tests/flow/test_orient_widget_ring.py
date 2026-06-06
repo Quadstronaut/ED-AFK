@@ -52,7 +52,10 @@ def _read(dx, dy, r=40.0, found=True):
     )
 
 
-def _ctx(sender, reader, *, enabled=True, grabber=lambda: object(), clock=None):
+def _ctx(sender, reader, *, enabled=True, grabber=lambda: object(), clock=None,
+         on_miss="fail_closed"):
+    # Step tests default to fail_closed so miss paths are observable as
+    # False; degrade-mode (the config default) has its own tests below.
     return StepContext(
         sender=sender,
         clock=clock or _Clock(),
@@ -60,6 +63,7 @@ def _ctx(sender, reader, *, enabled=True, grabber=lambda: object(), clock=None):
         widget_ring_enabled=enabled,
         widget_ring_reader=reader,
         widget_frame_grabber=grabber,
+        widget_ring_on_miss=on_miss,
     )
 
 
@@ -77,14 +81,15 @@ def test_noop_true_when_flag_off():
 
 
 # ---------------------------------------------------------------------------
-# 13. flag on, no reader/grabber -> fail closed
+# 13. flag on, no reader/grabber -> miss path (per widget_ring_on_miss)
 # ---------------------------------------------------------------------------
 
 def test_flag_on_no_reader_fails_closed():
     sender = FakeSender()
     ctx = StepContext(sender=sender, sleeper=lambda s: None,
                       widget_ring_enabled=True, widget_ring_reader=None,
-                      widget_frame_grabber=lambda: object())
+                      widget_frame_grabber=lambda: object(),
+                      widget_ring_on_miss="fail_closed")
     assert step_orient_widget_ring(ctx) is False
     assert sender.actions() == []
 
@@ -92,9 +97,21 @@ def test_flag_on_no_reader_fails_closed():
     ctx2 = StepContext(sender=sender2, sleeper=lambda s: None,
                        widget_ring_enabled=True,
                        widget_ring_reader=_FakeRingReader([]),
-                       widget_frame_grabber=None)
+                       widget_frame_grabber=None,
+                       widget_ring_on_miss="fail_closed")
     assert step_orient_widget_ring(ctx2) is False
     assert sender2.actions() == []
+
+
+def test_flag_on_no_reader_degrades_by_default():
+    """Operator decision 2026-06-06 (issue #1): default on_miss='degrade' —
+    a miss SKIPS the fine pass (True) so the compass-only jump proceeds."""
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, sleeper=lambda s: None,
+                      widget_ring_enabled=True, widget_ring_reader=None,
+                      widget_frame_grabber=lambda: object())
+    assert step_orient_widget_ring(ctx) is True   # degraded, not gated
+    assert sender.actions() == []
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +173,15 @@ def test_timeout_fails_closed():
     assert step_orient_widget_ring(ctx, timeout_s=5.0, samples=1) is False
 
 
+def test_timeout_degrades_by_default():
+    """Same no-convergence timeout under the default 'degrade' -> True; a
+    genuinely bad aim is caught by the FSD charge aborting + autorecovery."""
+    sender = FakeSender()
+    reader = _FakeRingReader([_read(80, 0)])  # always off-axis
+    ctx = _ctx(sender, reader, clock=_Clock(step=1.0), on_miss="degrade")
+    assert step_orient_widget_ring(ctx, timeout_s=5.0, samples=1) is True
+
+
 # ---------------------------------------------------------------------------
 # 19. bind missing -> caught, continues, times out without crashing
 # ---------------------------------------------------------------------------
@@ -168,6 +194,7 @@ def test_bind_missing_is_caught():
         sender=sender, clock=_Clock(step=1.0), sleeper=lambda s: None,
         widget_ring_enabled=True, widget_ring_reader=reader,
         widget_frame_grabber=lambda: object(),
+        widget_ring_on_miss="fail_closed",
         record=lambda t, p: logged.append((t, p)),
     )
     assert step_orient_widget_ring(ctx, timeout_s=4.0, samples=1) is False

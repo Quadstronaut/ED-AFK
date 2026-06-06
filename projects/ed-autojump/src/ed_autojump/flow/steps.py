@@ -535,20 +535,30 @@ def step_orient_widget_ring(
 
     Runs immediately AFTER orient_compass (the coarse stage, its own prior step).
     Flag off -> no-op success: compass already oriented, there is nothing to
-    refine and re-running compass would double it. Flag on but unwired -> FAIL
-    CLOSED (never jump on an unconfirmed orient). Sign convention is the locked
-    widget-ring contract (spec §2): delta_y>0 (ring below) -> PitchDown,
-    delta_x>0 (ring right) -> YawRight, NO inversion. NOT shared with align.py.
+    refine and re-running compass would double it.
+
+    MISS behavior is ctx.widget_ring_on_miss (operator decision 2026-06-06,
+    GitHub issue #1): "degrade" (default) -> a miss (no vision wired, widget
+    never found, or no convergence before timeout) SKIPS the fine pass with a
+    log and the compass-only jump proceeds — if we're genuinely off-target the
+    FSD charge aborts and the procedure's autorecovery maneuvers fix it.
+    "fail_closed" -> a miss fails this required step and gates the jump.
+
+    Sign convention is the locked widget-ring contract (spec §2): delta_y>0
+    (ring below) -> PitchDown, delta_x>0 (ring right) -> YawRight, NO
+    inversion. NOT shared with align.py.
     """
     # Flag off -> no-op success (NOT a passthrough — compass is its own prior
     # step now, so passing through would double-run it).
     if not getattr(ctx, "widget_ring_enabled", False):
         return True
 
-    # Flag on but unwired -> fail closed.
+    degrade = getattr(ctx, "widget_ring_on_miss", "degrade") != "fail_closed"
+
+    # Flag on but unwired -> miss.
     if ctx.widget_ring_reader is None or ctx.widget_frame_grabber is None:
-        ctx.log("WidgetRingNoVision", {})
-        return False
+        ctx.log("WidgetRingNoVision", {"degraded": degrade})
+        return degrade
 
     from ..vision.widget_ring import median_of
 
@@ -576,8 +586,8 @@ def step_orient_widget_ring(
         except KeyError as e:
             ctx.log("BindMissing", {"action": str(e), "step": "orient_widget_ring"})
         ctx.sleeper(settle_s)
-    ctx.log("WidgetRingTimeout", {"iters": iterations})
-    return False
+    ctx.log("WidgetRingTimeout", {"iters": iterations, "degraded": degrade})
+    return degrade
 
 
 def _hold_for(delta_px: float, ring_r: float, gain_s_per_px: float,
