@@ -210,3 +210,36 @@ def test_pitch_compass_logs_per_iteration_telemetry():
     assert len(iters) == 2
     assert iters[0]["action"] == "PitchUpButton"
     assert iters[1]["action"] is None            # gate reached, no press
+
+
+def test_pitch_behind_centering_uses_proportional_taps():
+    """2026-06-06 13:53 (session_135247, PitchIter): the dot sat at behind
+    mag 0.39 -- 4/100ths past the 0.25 gate -- and every 1.0s press rotated
+    the ship ~110+ degrees (the behind->front flip at i3->i4 proves >=107 by
+    geometry), blasting through the +/-center_frac window in a deterministic
+    2-cycle. Behind-centering presses must be PROPORTIONAL taps (gain*mag,
+    floored), never the full flip-power pitch_hold."""
+    reader = FakeReader([_behind_at(-0.4, 0.1), _behind_at(-0.1, 0.05)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=5, timeout_s=999)
+    assert ok is True
+    action, hold = sender.holds[0]
+    assert action == "YawRightButton"
+    assert hold < 0.3                      # a tap, nowhere near pitch_hold
+    assert hold >= 0.08                    # but above the actuation floor
+
+
+def test_pitch_front_flip_keeps_full_power():
+    """The front->behind flip phase NEEDS the big press (~140 deg traverse);
+    only the behind-centering phase gets taps."""
+    reader = FakeReader([_ahead(-0.7), _behind_at(0.05, 0.1)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=5, timeout_s=999)
+    assert ok is True
+    action, hold = sender.holds[0]
+    assert action == "PitchUpButton"
+    assert hold == 1.0                     # full pitch_hold for the flip

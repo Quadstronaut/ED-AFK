@@ -427,6 +427,8 @@ def step_pitch_compass(
     settle_s: float = 1.0,
     max_iters: int = 20,
     timeout_s: float = 30.0,
+    behind_gain_s: float = 0.4,      # behind-centering: press seconds per mag
+    behind_min_hold: float = 0.08,   # actuation floor for a tap
 ) -> bool:
     """Compass-gated pitch. PitchUp until the TARGETED star's dot reaches the
     gate, then stop. NEVER throttles. Fails closed without vision."""
@@ -469,6 +471,18 @@ def step_pitch_compass(
             return "YawRightButton" if ox < 0 else "YawLeftButton"
         return "PitchDownButton" if oy > 0 else "PitchUpButton"
 
+    def _hold_for(read) -> float:
+        """Full-power pitch for the sweep/flip phases; PROPORTIONAL taps for
+        behind-centering. 2026-06-06 13:53 (session_135247): a 1.0s press
+        rotates this ship ~110°+ (the behind→front flip at PitchIter i3→i4
+        proves ≥107° by geometry), so with the dot at behind mag 0.39 — a
+        hair past the 0.25 gate — every press blasted through the ±14° gate
+        window in a deterministic 2-cycle. gain·mag taps land inside it."""
+        if not read.found or until == "edge" or read.in_front:
+            return pitch_hold
+        return max(behind_min_hold,
+                   min(pitch_hold, behind_gain_s * read.magnitude))
+
     start = ctx.clock()
     for i in range(max_iters):
         if ctx.clock() - start > timeout_s:
@@ -477,20 +491,21 @@ def step_pitch_compass(
         read = _measure(ctx.compass_reader, ctx.frame_grabber, ctx.compass_samples)
         at_gate = _at_gate(read)
         action = None if at_gate else _press_for(read)
+        hold = None if at_gate else _hold_for(read)
         # Per-iteration telemetry (ADDED 2026-06-06: the 13:45 spin was 25
         # opaque presses — reads were invisible, same gap orient had).
         ctx.log("PitchIter", {
             "i": i, "until": until, "found": read.found,
             "in_front": read.in_front, "ox": round(read.offset_x, 4),
             "oy": round(read.offset_y, 4), "mag": round(read.magnitude, 4),
-            "action": action, "hold": None if action is None else pitch_hold,
+            "action": action, "hold": hold,
         })
         if at_gate:
             ctx.log("PitchCompassDone", {"until": until, "iters": i,
                                          "offset_y": read.offset_y,
                                          "in_front": read.in_front})
             return True
-        ctx.sender.press(action, hold=pitch_hold)
+        ctx.sender.press(action, hold=hold)
         ctx.sleeper(settle_s)
     ctx.log("PitchCompassMaxIters", {"until": until})
     return False

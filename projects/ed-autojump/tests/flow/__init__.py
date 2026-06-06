@@ -11,12 +11,14 @@ class FakeSender:
 
     def __init__(self, unbound=()):
         self.events: list[str] = []
+        self.holds: list[tuple[str, float]] = []   # (action, hold) per press
         self._unbound = set(unbound)
 
     def press(self, action, *, hold=0.05):
         if action in self._unbound:
             raise KeyError(action)
         self.events.append(action)
+        self.holds.append((action, hold))
 
     def key_down(self, action):
         if action in self._unbound:
