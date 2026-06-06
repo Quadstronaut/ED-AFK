@@ -25,7 +25,11 @@ steps = [
   # â”€â”€ Real-space recovery during the smack cooldown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   { action = "set_throttle", pct = 50 },                                                    # tap    | 0
   { action = "nav_panel_target" },                                                           # macro  | 1 EXCLUSIVE â€” row 0 = arrival star
-  { action = "pitch_compass", until = "behind", required = true },                           # vision | 2 EXCLUSIVE â€” pitch star behind
+  # timeout_s/max_iters are FAILSAFE ceilings (the gate is the compass read,
+  # never the clock): run 3 (2026-06-06 13:59) was converging at mag 0.40 when
+  # the default 30s expired â€” proportional taps need ~2.2s/iter and a wrecked
+  # pose can take ~25 iters (flip + center both axes).
+  { action = "pitch_compass", until = "behind", required = true, timeout_s = 75.0, max_iters = 40 },  # vision | 2 EXCLUSIVE â€” pitch star behind
   { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown â€” FsdCooldown flag-gated, no timer
 
   # â”€â”€ Fire FSD inside the exclusion zone to spawn the escape vector â”€â”€â”€â”€â”€

@@ -1,9 +1,12 @@
 """
-Composite reader: pick the primary (YOLO) backend, fall back to OpenCV when
-it sees nothing, and — when require_agreement is on — refuse a read the two
-backends disagree about (the safety gate). Tested with fake readers; no
-models involved.
+Composite reader: pick the primary backend; a present primary's not_found is
+FINAL (no fallback second-guess — see test_primary_not_found_is_final); the
+fallback serves primary-less configs and — when require_agreement is on —
+the cross-check that refuses a read the two backends disagree about. Tested
+with fake readers; no models involved.
 """
+
+from pathlib import Path
 
 from ed_autojump.vision.compass import CompassRead
 from ed_autojump.vision.reader import CompositeCompassReader, build_compass_reader
@@ -28,9 +31,29 @@ def test_primary_found_is_returned():
     assert c.read(None).offset_x == 0.3
 
 
-def test_falls_back_when_primary_finds_nothing():
+def test_primary_not_found_is_final():
+    """2026-06-06 13:59-14:00 (runs 2-3): the OpenCV fallback fired exactly
+    when the validated cyan primary saw nothing — i.e. ONLY in degraded
+    scenes (star glare) — and confidently read a lens flare at mag 1.08 as
+    a front dot, wrecking pitch_compass with full-power flips every few
+    iterations. Selection bias makes a primary-miss fallback a garbage
+    generator: not_found is fail-safe in every consumer (orient searches,
+    pitch sweeps, hold skips); a wrong read STEERS THE SHIP."""
     c = CompositeCompassReader(primary=_Fake(CompassRead.not_found()), fallback=_Fake(_r(ox=0.7)))
-    assert c.read(None).offset_x == 0.7
+    assert c.read(None).found is False
+
+
+def test_real_glare_frame_reads_not_found():
+    """The live artifact frame (session_132609 orient i12 s0): composite
+    used to read (-0.6025, +0.8897) front mag 1.07 off the fallback —
+    OUTSIDE the gimbal ring — while cyan correctly said not_found."""
+    import cv2
+    fixture = Path(__file__).resolve().parent / "fixtures" / \
+        "compass_glare_flare_normal_space.png"
+    frame = cv2.imread(str(fixture))
+    assert frame is not None, f"fixture missing: {fixture}"
+    reader = build_compass_reader(backend="cyan", compass_radius=25.0)
+    assert reader.read(frame).found is False
 
 
 def test_no_primary_uses_fallback():
@@ -76,6 +99,17 @@ def test_agreement_with_only_primary_found_trusts_primary():
         require_agreement=True,
     )
     assert c.read(None).offset_x == 0.5
+
+
+def test_agreement_with_only_fallback_found_fails_safe():
+    """Fallback-only sighting has nothing to agree WITH — same selection-bias
+    trap as the non-agreement primary-miss path. not_found, don't act."""
+    c = CompositeCompassReader(
+        primary=_Fake(CompassRead.not_found()),
+        fallback=_Fake(_r(ox=0.5)),
+        require_agreement=True,
+    )
+    assert c.read(None).found is False
 
 
 def test_build_opencv_backend_reads():

@@ -2,13 +2,22 @@
 Composite compass reader + the factory that builds it from config.
 
 Strategy:
-  - A *primary* YOLO backend (onnxruntime by default, ultralytics opt-in).
-  - An OpenCV colour-free *fallback* that's always available.
-  - If the primary sees nothing on a frame, try the fallback.
+  - A *primary* backend (cyan in production; YOLO variants opt-in).
+  - An OpenCV colour-free *fallback* for primary-LESS configs only
+    (backend="opencv", or a model that failed to load -> primary None).
+  - A present primary's not_found is FINAL (CHANGED 2026-06-06): the old
+    "primary saw nothing -> try the fallback" rule meant the fallback acted
+    exclusively in scenes the validated primary couldn't read — degraded
+    ones — and it confidently read a star-glare lens flare at mag 1.08
+    (outside the gimbal ring) as a front dot, wrecking pitch_compass with
+    full-power flips (runs 2-3, 2026-06-06 13:59). Selection bias makes a
+    primary-miss fallback a garbage generator; not_found fails safe in
+    every consumer, a wrong read steers the ship.
   - If `require_agreement`, demand the two backends agree (same front/behind,
-    offsets close) before trusting a read — disagreement returns
-    `not_found()`, which the align loop treats as "don't act". That makes
-    vision uncertainty fail *safe* (no misaligned jump) rather than risky.
+    offsets close) before trusting a read — disagreement OR a
+    fallback-only sighting returns `not_found()`, which the align loop
+    treats as "don't act". That makes vision uncertainty fail *safe* (no
+    misaligned jump) rather than risky.
 
 The factory degrades gracefully: if onnxruntime/torch or the weights are
 missing, the primary is silently dropped and the OpenCV fallback carries
@@ -54,10 +63,9 @@ class CompositeCompassReader:
         if self.require_agreement and self.fallback is not None:
             return self._reconcile(primary, self.fallback.read(frame))
 
-        if primary.found:
-            return primary
-        # Primary saw nothing — give the fallback a chance.
-        return self.fallback.read(frame) if self.fallback else primary
+        # A present primary's not_found is FINAL — no fallback second-guess
+        # (see module docstring: the glare-flare misread, 2026-06-06).
+        return primary
 
     def _reconcile(self, primary: CompassRead, fallback: CompassRead) -> CompassRead:
         if not primary.found and not fallback.found:
@@ -65,7 +73,9 @@ class CompositeCompassReader:
         if primary.found and not fallback.found:
             return primary          # trust the primary's precise read
         if fallback.found and not primary.found:
-            return fallback
+            # Fallback-only sighting: same selection-bias trap as the
+            # non-agreement path — there is nothing to agree WITH. Fail safe.
+            return CompassRead.not_found()
         # Both found: they must agree to be trusted.
         if primary.in_front != fallback.in_front:
             return CompassRead.not_found()
