@@ -22,7 +22,7 @@ steps = [
   { action = "wait", s = 13.0 },                     # wait   | 3 let orbit acquire
   { action = "target_next_route" },                  # tap    | 4
   { action = "set_throttle", pct = 100 },            # tap    | 5
-  { action = "wait", s = 13.0 },                     # wait   | 6 clear of arrival star
+  { action = "wait", s = 13.0 },                     # wait   | 6 clear of arrival star — TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
   { action = "orient_compass", required = true },        # vision | 7 coarse
   { action = "orient_widget_ring", required = true },    # vision | 8 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },           # gated  | 9 FSD jump

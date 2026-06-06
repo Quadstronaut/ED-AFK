@@ -10,27 +10,49 @@ def test_wait_for_event_is_deleted():
     assert "wait_for_event" not in STEP_REGISTRY
 
 
-def test_wait_cooldown_waits_only_the_remainder():
-    sleeps = []
-    now = [100.0]                       # drop happened at t=100
-    ctx = StepContext(
-        sender=FakeSender(),
-        clock=lambda: now[0],
-        sleeper=lambda s: sleeps.append(s),
-        event_time=lambda name: 100.0 if name == "drop" else None,
-    )
-    now[0] = 130.0                      # 30s already elapsed since the drop
-    assert STEP_REGISTRY["wait_cooldown"](ctx, since="drop", s=45.0) is True
-    assert sleeps == [15.0]             # only the remaining 15s
+def test_wait_cooldown_is_deleted():
+    """REGRESSION GUARD: the fixed-45s cooldown sleep was a guess; the
+    FsdCooldown flag is the game's own answer (no-arbitrary-timed-waits)."""
+    assert "wait_cooldown" not in STEP_REGISTRY
 
 
-def test_wait_cooldown_without_anchor_waits_full():
+def _cooldown_status_seq(states):
+    """Supplier popping scripted fsd_cooldown bools, repeating the last."""
+    from types import SimpleNamespace
+    seq = [SimpleNamespace(fsd_cooldown=v) for v in states]
+    return lambda: seq.pop(0) if len(seq) > 1 else seq[0]
+
+
+def test_wait_cooldown_clear_blocks_until_flag_clears():
     sleeps = []
-    ctx = StepContext(sender=FakeSender(), clock=lambda: 0.0,
+    # Entry guard consumes one read; loop then sees True, True, False.
+    ctx = StepContext(sender=FakeSender(),
                       sleeper=lambda s: sleeps.append(s),
-                      event_time=lambda name: None)
-    assert STEP_REGISTRY["wait_cooldown"](ctx, since="drop", s=45.0) is True
-    assert sleeps == [45.0]
+                      status_supplier=_cooldown_status_seq(
+                          [True, True, True, False]))
+    assert STEP_REGISTRY["wait_cooldown_clear"](ctx) is True
+    assert len(sleeps) == 2             # two polls while the flag was set
+
+
+def test_wait_cooldown_clear_instant_pass_when_already_clear():
+    sleeps = []
+    ctx = StepContext(sender=FakeSender(),
+                      sleeper=lambda s: sleeps.append(s),
+                      status_supplier=_cooldown_status_seq([False]))
+    assert STEP_REGISTRY["wait_cooldown_clear"](ctx) is True
+    assert sleeps == []                 # no waiting at all
+
+
+def test_wait_cooldown_clear_fails_closed_without_status():
+    ctx = StepContext(sender=FakeSender())   # default supplier returns None
+    assert STEP_REGISTRY["wait_cooldown_clear"](ctx) is False
+
+
+def test_wait_cooldown_clear_aborts_on_operator_signal():
+    ctx = StepContext(sender=FakeSender(),
+                      status_supplier=_cooldown_status_seq([True]),
+                      should_abort=lambda: True)
+    assert STEP_REGISTRY["wait_cooldown_clear"](ctx) is False
 
 
 def test_hold_until_event_releases_on_event():

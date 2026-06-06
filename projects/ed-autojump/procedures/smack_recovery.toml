@@ -26,7 +26,7 @@ steps = [
   { action = "set_throttle", pct = 50 },                                                    # tap    | 0
   { action = "nav_panel_target" },                                                           # macro  | 1 EXCLUSIVE — row 0 = arrival star
   { action = "pitch_compass", until = "behind", required = true },                           # vision | 2 EXCLUSIVE — pitch star behind
-  { action = "wait_cooldown", since = "drop", s = 45.0 },                                    # wait   | 3 smack cooldown
+  { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown — FsdCooldown flag-gated, no timer
 
   # ── Fire FSD inside the exclusion zone to spawn the escape vector ─────
   { action = "target_ahead" },                                                                # tap    | 4 deselect
@@ -37,7 +37,7 @@ steps = [
   # ── In supercruise: clear the star, target route, jump ────────────────
   { action = "set_throttle", pct = 100 },                                                     # tap    | 8
   { action = "target_next_route" },                                                           # tap    | 9
-  { action = "wait", s = 13.0 },                                                              # wait   | 10 fly clear of arrival star
+  { action = "wait", s = 13.0 },                                                              # wait   | 10 fly clear of arrival star — TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
   { action = "orient_compass", required = true },                                             # vision | 11 EXCLUSIVE coarse
   { action = "orient_widget_ring", required = true },                                         # vision | 12 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },                                                # gated  | 13a FSD jump

@@ -144,6 +144,22 @@ def test_operator_abort_exits_false_immediately():
     assert sender.actions() == []
 
 
+def test_watchdog_fails_a_minute_long_charge():
+    """OPERATOR-SANCTIONED stuck-state watchdog: charging forever with no
+    commit → fail once max_charge_s elapses ('nothing should take a minute
+    to jump'). Clock advances via the waiter's poll window."""
+    now = [0.0]
+    def waiter(event, timeout_s):
+        now[0] += timeout_s
+        return False
+    reader = _FakeReader([_ahead()] * 1000)
+    ctx, sender = _ctx(reader, waiter, [_status(fsd_charging=True)])
+    ctx.clock = lambda: now[0]
+    ok = STEP_REGISTRY["hold_alignment"](ctx, samples=1, max_charge_s=60.0)
+    assert ok is False
+    assert now[0] >= 60.0
+
+
 # ── Alignment maintenance during the hold ─────────────────────────────────
 def test_corrects_yaw_dominant():
     """in_front=True, |offset_x| > |offset_y| → YawRightButton (offset_x > 0).

@@ -83,13 +83,20 @@ def step_engage_jump(ctx: StepContext) -> bool:
     return _press(ctx, "Hyperspace")
 
 
-def step_engage_supercruise(ctx: StepContext, *, poll_s: float = 0.8) -> bool:
-    """Press Supercruise, then gate PURELY on game signals — no wall clock.
+def step_engage_supercruise(
+    ctx: StepContext, *, poll_s: float = 0.8, max_charge_s: float = 60.0,
+) -> bool:
+    """Press Supercruise, then gate on game signals — no success-window clock.
 
     Success: `SupercruiseEntry` journal event, or the Supercruise status flag
     (state-side confirmation, absorbs journal-write latency). Failure: the
     FsdCharging flag observed true→false without entry (the game aborted the
     charge), or operator abort. `poll_s` is the event-poll cadence, not a gate.
+
+    `max_charge_s` is the OPERATOR-SANCTIONED stuck-state watchdog (2026-06-06:
+    "if it charges for a good minute without jumping, that's a fail") — set far
+    above any real spool, it catches a wedged FSD / unregistered press, never a
+    healthy charge.
     """
     st = ctx.status_supplier()
     if st is not None and getattr(st, "in_supercruise", False):
@@ -99,9 +106,13 @@ def step_engage_supercruise(ctx: StepContext, *, poll_s: float = 0.8) -> bool:
     if ctx.event_waiter is None:
         return True  # no journal wiring (unit tests) -> proceed
     charge_seen = False
+    start = ctx.clock()
     while True:
         if ctx.should_abort():
             ctx.log("EngageSupercruiseDone", {"reason": "abort"})
+            return False
+        if ctx.clock() - start > max_charge_s:
+            ctx.log("EngageSupercruiseDone", {"reason": "watchdog"})
             return False
         if ctx.event_waiter("SupercruiseEntry", poll_s):
             return True
@@ -146,15 +157,27 @@ STEP_REGISTRY.update({
 # any straggler TOML fail validation loudly instead of regressing silently.
 
 
-def step_wait_cooldown(ctx: StepContext, *, since: str, s: float) -> bool:
-    anchor = ctx.event_time(since)
-    if anchor is None:
-        ctx.sleeper(s)            # no anchor known -> wait the full cooldown
-        return True
-    remaining = (anchor + s) - ctx.clock()
-    if remaining > 0:
-        ctx.sleeper(remaining)
-    return True
+# `wait_cooldown` (fixed-seconds cooldown sleep) is DELETED for the same
+# reason: a 45s constant was a guess at when the smack cooldown ends. The
+# FsdCooldown status flag is the game's own answer — see wait_cooldown_clear.
+
+
+def step_wait_cooldown_clear(ctx: StepContext, *, poll_s: float = 0.5) -> bool:
+    """Block until the FsdCooldown status flag clears. STATE-DRIVEN — replaces
+    the fixed-seconds smack-cooldown sleep. Flag already clear -> instant pass
+    (the cooldown ended while earlier steps ran — that's success, not a race).
+    Fails closed without status; exits False on operator abort."""
+    if ctx.status_supplier() is None:
+        ctx.log("WaitCooldownNoStatus", {})
+        return False
+    while True:
+        if ctx.should_abort():
+            ctx.log("WaitCooldownDone", {"reason": "abort"})
+            return False
+        st = ctx.status_supplier()
+        if st is not None and not getattr(st, "fsd_cooldown", False):
+            return True
+        ctx.sleeper(poll_s)
 
 
 def step_hold_until_event(
@@ -194,7 +217,10 @@ def step_hold_until_event(
 
 
 STEP_REGISTRY.update({
-    "wait_cooldown": step_wait_cooldown,
+    "wait_cooldown_clear": step_wait_cooldown_clear,
+    # hold_until_event keeps its max_hold_s: it is a key-RELEASE safety (a
+    # held key forever = jammed input), not a success/failure gate, and the
+    # honk track gates nothing. Operator reviewed and kept it (2026-06-06).
     "hold_until_event": step_hold_until_event,
 })
 
@@ -310,6 +336,7 @@ def step_hold_alignment(
     min_press: float = 0.04,
     max_press: float = 0.10,
     samples: int = 3,
+    max_charge_s: float = 60.0,
 ) -> bool:
     """Hold compass alignment during an FSD spool until `until_event` arrives.
     PURE EVENT-DRIVEN — no wall-clock timeout (no-arbitrary-timed-waits rule).
@@ -330,6 +357,12 @@ def step_hold_alignment(
       3. FsdCooldown appearing before any charge was seen (press refused
          into cooldown) -> False.
       4. ctx.should_abort() — panic switch / stop request -> False.
+      5. `max_charge_s` elapsed with no commit — the OPERATOR-SANCTIONED
+         stuck-state watchdog (2026-06-06: "if it charges for a good minute
+         without jumping, that's a fail. Nothing should take a minute to
+         jump."). At 60s it sits far above any real spool (~15-20s); it
+         catches a wedged FSD or an unregistered keypress, never a healthy
+         charge. This is NOT a return of the banned success-window gate.
 
     `poll_s` is the event-poll blocking window (cadence, NOT a gate). Between
     polls: `samples`-median compass read; in-front and within `align_tol` ->
@@ -361,9 +394,13 @@ def step_hold_alignment(
     success_flag = _HOLD_SUCCESS_FLAG.get(until_event)
     charge_seen = False
     iterations = 0
+    start = ctx.clock()
     while True:
         if ctx.should_abort():
             ctx.log("HoldAlignmentDone", {"reason": "abort", "iters": iterations})
+            return False
+        if ctx.clock() - start > max_charge_s:
+            ctx.log("HoldAlignmentDone", {"reason": "watchdog", "iters": iterations})
             return False
         if ctx.event_waiter(until_event, poll_s):
             ctx.log("HoldAlignmentDone", {"reason": "event", "iters": iterations})

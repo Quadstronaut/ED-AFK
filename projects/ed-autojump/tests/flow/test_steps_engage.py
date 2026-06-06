@@ -69,6 +69,24 @@ def test_engage_supercruise_fails_when_charge_drops_without_entry():
     assert sender.actions() == ["Supercruise"]   # pressed once, never again
 
 
+def test_engage_supercruise_watchdog_fails_stuck_charge():
+    """Press registers nothing (no charge, no entry, no event) → the 60s
+    operator-sanctioned watchdog fails the step instead of waiting forever."""
+    now = [0.0]
+    def waiter(event, timeout_s):
+        now[0] += timeout_s
+        return False
+    sender = FakeSender()
+    ctx = StepContext(
+        sender=sender,
+        clock=lambda: now[0],
+        status_supplier=lambda: _status(),
+        event_waiter=waiter,
+    )
+    assert STEP_REGISTRY["engage_supercruise"](ctx) is False
+    assert now[0] >= 60.0
+
+
 def test_engage_supercruise_timeout_kwarg_is_gone():
     """REGRESSION GUARD: the 30s wall-clock gate was removed with the
     no-arbitrary-timed-waits rule."""

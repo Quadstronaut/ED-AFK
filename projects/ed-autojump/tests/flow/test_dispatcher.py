@@ -177,6 +177,52 @@ def test_make_context_widget_ring_defaults_off():
     assert ctx.widget_frame_grabber is None
 
 
+class _FakeTail:
+    """Yields scripted event batches, one batch per .step() call."""
+    def __init__(self, batches):
+        self._batches = list(batches)
+    def step(self):
+        return self._batches.pop(0) if self._batches else []
+
+
+def test_tail_hub_every_subscriber_sees_every_event():
+    """REGRESSION GUARD for the honk/main waiter race: two concurrent
+    waiters used to split tail events at random (each event consumed by
+    exactly one). The hub broadcasts — both subscribers see the event."""
+    from ed_autojump.flow.dispatcher import _TailHub
+    tail = _FakeTail([[_ev("StartJump")]])
+    hub = _TailHub(tail)
+    a, b = hub.subscribe(), hub.subscribe()
+    got_a = hub.poll(a)                      # this poll pumps the tail
+    got_b = hub.poll(b)                      # b still gets the same event
+    assert [e.event for e in got_a] == ["StartJump"]
+    assert [e.event for e in got_b] == ["StartJump"]
+
+
+def test_tail_hub_unsubscribed_handle_polls_empty():
+    """A track that outlives its join window polls into silence, not a
+    KeyError — its own key-release backstop ends it."""
+    from ed_autojump.flow.dispatcher import _TailHub
+    hub = _TailHub(_FakeTail([[_ev("StartJump")]]))
+    h = hub.subscribe()
+    hub.unsubscribe(h)
+    assert hub.poll(h) == []
+
+
+def test_waiter_no_longer_swallows_dispatchable_events():
+    """An FSDJump pumped while a step's waiter is polling for StartJump must
+    still reach run_live's queue and dispatch the arrival flow afterwards."""
+    from ed_autojump.flow.dispatcher import _TailHub
+    tail = _FakeTail([[_ev("FSDJump", body_type="Star")]])
+    hub = _TailHub(tail)
+    main = hub.subscribe()
+    waiter = hub.subscribe()
+    # The waiter pumps the tail looking for StartJump and doesn't find it...
+    assert not any(e.event == "StartJump" for e in hub.poll(waiter))
+    # ...but the FSDJump is still waiting in the main queue.
+    assert [e.event for e in hub.poll(main)] == ["FSDJump"]
+
+
 def test_parallel_track_runs_alongside_main():
     sender = FakeSender()
     procs = {
