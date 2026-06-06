@@ -75,18 +75,32 @@ class WidgetRingReader:
     # orange in HSV (ED reticle + widget share the HUD orange)
     _ORANGE_HSV_LO = (10, 140, 140)   # H,S,V
     _ORANGE_HSV_HI = (25, 255, 255)
-    # ring acceptance
+    # ring acceptance — three gates, ALL computed directly on the orange mask.
+    # Calibrated on the REAL 2026-06-06 13:07 charging frame (fixture
+    # widget_ring_charging_left_below.png): real reticle vs the text blob right
+    # of it vs a phantom Hough candidate over scattered text:
+    #                  fill    radial_std/r   angular_cov
+    #   real reticle   1.000      0.062          0.917
+    #   text blob      0.608      0.104          0.792
+    #   phantom        0.582      0.118          0.333
     _HOUGH_MIN_R, _HOUGH_MAX_R = 18, 90
     _ANNULUS_LO, _ANNULUS_HI = 0.80, 1.20     # orange band, ×r
-    # "Hollow-ness": of the orange inside the candidate disc (≤1.2r), what
-    # fraction sits in the ring band [0.8r,1.2r] vs the hole (<0.8r). A true
-    # ring is ~1.0 (hollow centre); a FILLED disc is ~0.36 (its centre is
-    # orange). The naive "orange / band-area" metric fails here — a realistic
-    # ~3px reticle ring fills only ~25% of the 0.4r-wide band, so it would be
-    # rejected. In-band/(in-band+in-core) is thickness-robust. [impl correction
-    # AA — same band, same 0.55 threshold, corrected denominator]
-    _ANNULUS_MIN_FILL = 0.55
-    _CIRCULARITY_MIN = 0.75                   # 4πA/p²; perfect circle = 1.0
+    # 1. Hollow-ness: in-band/(in-band+in-core) orange. A true reticle's core
+    # is empty (1.0); a FILLED disc ~0.36; TEXT clouds carry core orange
+    # (~0.6). 0.75 splits real (1.000) from text (0.608) with margin both ways.
+    # (Was 0.55 pre-2026-06-06 — tuned only against filled discs, let text in.)
+    _ANNULUS_MIN_FILL = 0.75
+    # 2. Radial tightness: std of in-band orange radii / r. A thin ring's
+    # pixels hug one radius (real 0.062); junk spreads across the band
+    # (near-uniform = 0.4r/sqrt(12) ≈ 0.115). 0.085 is the midpoint split.
+    _RADIAL_STD_MAX = 0.085
+    # 3. Angular coverage: fraction of 15° sectors holding in-band orange.
+    # The real reticle wraps the centre even with its text-side gap + stem
+    # (0.917); clipped text lines / short arcs don't (phantom 0.333). The 120°
+    # arc a complete ring sometimes degrades to is REJECTED on purpose — a
+    # found=False idle beat is safer than steering on a guess.
+    _ANGULAR_SECTORS = 24
+    _ANGULAR_COVERAGE_MIN = 0.5
     EXPECTED_W, EXPECTED_H = CROP_W, CROP_H   # the guard compares against these
 
     # ------------------------------------------------------------------
@@ -158,8 +172,23 @@ class WidgetRingReader:
     def _find_ring(self, frame, mask, np, cv2) -> Optional[tuple[float, float, float]]:
         """Return (cx, cy, r) of the target reticle ring in CROP coords, or None.
 
-        HoughCircles over the orange mask; accept the first candidate (descending
-        accumulator order) passing BOTH the annulus-fill and circularity gates."""
+        HoughCircles over the orange mask; accept the first candidate
+        (descending accumulator order) passing ALL THREE mask gates: hollow
+        fill, radial tightness, angular coverage.
+
+        The pre-2026-06-06 contour-circularity gate is GONE, for two proven
+        failures on the live 13:07 charging frame (fixture
+        widget_ring_charging_left_below.png):
+          - the REAL reticle is an OPEN arc (gap on the text side + a stem
+            into the info block) — 4πA/p² of a thin open arc is ~0.01, so the
+            gate could NEVER pass the real target;
+          - the gate scored the external contour NEAREST the candidate centre,
+            so a phantom candidate over the target-info text got vouched for
+            by the widget DOT's contour (circ 0.888) — a different object
+            entirely. The fine pass then steered text onto the widget and
+            drove the real target away (WidgetRingTimeout iters=28).
+        The radial/angular gates measure the candidate's OWN band pixels, so
+        no foreign object can pass them on its behalf."""
         circles = cv2.HoughCircles(
             (mask * 255).astype(np.uint8),
             cv2.HOUGH_GRADIENT,
@@ -173,17 +202,13 @@ class WidgetRingReader:
         if circles is None:
             return None
 
-        # Pre-compute external contours once for the circularity gate.
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
-                                       cv2.CHAIN_APPROX_SIMPLE)
-
         for cx_f, cy_f, r_f in circles[0]:  # already accumulator-ordered
             cx, cy, r = float(cx_f), float(cy_f), float(r_f)
             if not (self._HOUGH_MIN_R <= r <= self._HOUGH_MAX_R):
                 continue
 
-            # --- hollow-ness: in-band orange / (in-band + in-core) orange ---
-            # Ring ≈ 1.0 (hollow centre), filled disc ≈ 0.36 (orange centre).
+            # --- gate 1, hollow-ness: in-band / (in-band + in-core) orange ---
+            # Ring ≈ 1.0 (hollow centre); filled disc ≈ 0.36; text cloud ≈ 0.6.
             band = self.annulus_band(cx, cy, r, mask.shape[:2])
             h, w = mask.shape[:2]
             yy, xx = np.ogrid[:h, :w]
@@ -193,41 +218,28 @@ class WidgetRingReader:
             denom = in_band + in_core
             if denom == 0:
                 continue
-            fill = in_band / denom
-            if fill < self._ANNULUS_MIN_FILL:
+            if in_band / denom < self._ANNULUS_MIN_FILL:
                 continue
 
-            # --- circularity: the external contour nearest the Hough centre ---
-            if not self._passes_circularity(contours, cx, cy, np, cv2):
+            # in-band orange pixel coordinates (non-empty: fill gate passed)
+            bys, bxs = np.nonzero(mask.astype(bool) & band)
+            dist = np.sqrt((bxs - cx) ** 2 + (bys - cy) ** 2)
+
+            # --- gate 2, radial tightness: ring pixels hug ONE radius -------
+            if float(dist.std()) / r > self._RADIAL_STD_MAX:
+                continue
+
+            # --- gate 3, angular coverage: must wrap the centre -------------
+            ang = np.arctan2(bys - cy, bxs - cx)  # [-pi, pi]
+            sectors = np.unique(
+                ((ang + np.pi) / (2.0 * np.pi)
+                 * self._ANGULAR_SECTORS).astype(int) % self._ANGULAR_SECTORS
+            )
+            if len(sectors) < self._ANGULAR_COVERAGE_MIN * self._ANGULAR_SECTORS:
                 continue
 
             return (cx, cy, r)
         return None
-
-    def _passes_circularity(self, contours, cx, cy, np, cv2) -> bool:
-        """4πA/p² ≥ _CIRCULARITY_MIN for the external contour whose centroid is
-        nearest the Hough candidate centre. RETR_EXTERNAL gives ONE contour per
-        ring (its inner hole is not a separate external contour)."""
-        best_d2 = None
-        best = None
-        for c in contours:
-            m = cv2.moments(c)
-            if m["m00"] == 0:
-                continue
-            ccx = m["m10"] / m["m00"]
-            ccy = m["m01"] / m["m00"]
-            d2 = (ccx - cx) ** 2 + (ccy - cy) ** 2
-            if best_d2 is None or d2 < best_d2:
-                best_d2 = d2
-                best = c
-        if best is None:
-            return False
-        area = cv2.contourArea(best)
-        perim = cv2.arcLength(best, True)
-        if perim == 0:
-            return False
-        circularity = 4.0 * np.pi * area / (perim * perim)
-        return circularity >= self._CIRCULARITY_MIN
 
     # ------------------------------------------------------------------
     # Public API

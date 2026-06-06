@@ -203,6 +203,70 @@ def test_bind_missing_is_caught():
 
 
 # ---------------------------------------------------------------------------
+# 19b-19d. per-iteration telemetry + frame dumps (ADDED 2026-06-06: the 13:0x
+# WidgetRingTimeout iters=28 was undiagnosable from the recording — only the
+# operator's screenshot exposed the phantom ring lock. Never again.)
+# ---------------------------------------------------------------------------
+
+def test_iter_telemetry_logged_every_iteration():
+    logged = []
+    sender = FakeSender()
+    reader = _FakeRingReader([_read(80, 0), _read(0, 0)])
+    ctx = StepContext(
+        sender=sender, clock=_Clock(), sleeper=lambda s: None,
+        widget_ring_enabled=True, widget_ring_reader=reader,
+        widget_frame_grabber=lambda: object(),
+        widget_ring_on_miss="fail_closed",
+        record=lambda t, p: logged.append((t, p)),
+    )
+    assert step_orient_widget_ring(ctx, samples=1) is True
+    iters = [p for t, p in logged if t == "WidgetRingIter"]
+    assert len(iters) == 2                       # one row per loop iteration
+    assert iters[0]["action"] == "YawRightButton"
+    assert iters[0]["hold"] > 0
+    assert iters[0]["aligned"] is False
+    assert iters[1]["action"] is None            # aligned -> no press
+    assert iters[1]["aligned"] is True
+    assert len(iters[0]["raw"]) == 1             # one raw read per sample
+
+
+def test_iter_telemetry_reports_not_found_beat():
+    logged = []
+    sender = FakeSender()
+    reader = _FakeRingReader([_read(0, 0, found=False), _read(0, 0)])
+    ctx = StepContext(
+        sender=sender, clock=_Clock(), sleeper=lambda s: None,
+        widget_ring_enabled=True, widget_ring_reader=reader,
+        widget_frame_grabber=lambda: object(),
+        widget_ring_on_miss="fail_closed",
+        record=lambda t, p: logged.append((t, p)),
+    )
+    assert step_orient_widget_ring(ctx, samples=1) is True
+    iters = [p for t, p in logged if t == "WidgetRingIter"]
+    assert iters[0]["found"] is False
+    assert iters[0]["action"] is None            # not found -> idle beat
+    assert sender.actions() == []
+
+
+def test_frame_sink_receives_all_sample_frames():
+    dumped = []
+    sender = FakeSender()
+    reader = _FakeRingReader([_read(80, 0), _read(0, 0), _read(0, 0), _read(0, 0)])
+    ctx = StepContext(
+        sender=sender, clock=_Clock(), sleeper=lambda s: None,
+        widget_ring_enabled=True, widget_ring_reader=reader,
+        widget_frame_grabber=lambda: object(),
+        widget_ring_on_miss="fail_closed",
+        frame_sink=lambda name, frame: dumped.append(name),
+    )
+    step_orient_widget_ring(ctx, samples=2)
+    assert all(n.startswith("widget_") for n in dumped)
+    assert any("_i00_s0" in n for n in dumped)
+    assert any("_i00_s1" in n for n in dumped)   # every sample frame dumped
+    assert len(dumped) % 2 == 0                  # samples per iteration
+
+
+# ---------------------------------------------------------------------------
 # 22. procedure integration: step inserted after orient_compass, no-ops when off
 # ---------------------------------------------------------------------------
 

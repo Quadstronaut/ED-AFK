@@ -601,29 +601,59 @@ def step_orient_widget_ring(
 
     from ..vision.widget_ring import median_of
 
+    # Diagnostic frame dump + per-iteration telemetry (ADDED 2026-06-06: the
+    # 13:0x WidgetRingTimeout iters=28 — a phantom ring lock over the target
+    # info TEXT — was undiagnosable from the recording; only the operator's
+    # screenshot exposed it). Mirrors step_orient_compass: clock-stamped names
+    # so one run's orients don't collide; only active when cli wired a sink.
+    t0 = int(ctx.clock()) if ctx.frame_sink is not None else 0
+
     start = ctx.clock()
     iterations = 0
     while ctx.clock() - start < timeout_s:
-        reads = [ctx.widget_ring_reader.read(ctx.widget_frame_grabber())
-                 for _ in range(samples)]
+        frames = [] if ctx.frame_sink is not None else None
+        reads = []
+        for _ in range(samples):
+            frame = ctx.widget_frame_grabber()
+            if frames is not None:
+                frames.append(frame)
+            reads.append(ctx.widget_ring_reader.read(frame))
         read = median_of(reads)
+        if frames is not None:
+            for si, f in enumerate(frames):
+                ctx.frame_sink(f"widget_{t0}_i{iterations:02d}_s{si}", f)
         iterations += 1
-        if not read.found:
-            ctx.sleeper(settle_s)
-            continue
-        if read.aligned:
+
+        action: "str | None" = None
+        hold: "float | None" = None
+        aligned_now = read.aligned
+        if read.found and not aligned_now:
+            # Bind-missing catch lives HERE in the loop — an unbound Yaw/Pitch
+            # key must log and continue to the timeout, never propagate a
+            # KeyError out of the step.
+            try:
+                pressed = _correct_widget_ring(ctx.sender, read,
+                                               gain_s_per_px=gain_s_per_px,
+                                               min_press=min_press,
+                                               max_press=max_press)
+                if pressed is not None:
+                    action, hold = pressed
+            except KeyError as e:
+                ctx.log("BindMissing",
+                        {"action": str(e), "step": "orient_widget_ring"})
+        ctx.log("WidgetRingIter", {
+            "i": iterations - 1, "found": read.found,
+            "dx": round(read.delta_x, 2), "dy": round(read.delta_y, 2),
+            "r": round(read.ring_radius_px, 2),
+            "deadzone": round(read.deadzone_px, 2),
+            "action": action, "hold": hold, "aligned": aligned_now,
+            "raw": [[r_.found, round(r_.delta_x, 2), round(r_.delta_y, 2),
+                     round(r_.ring_radius_px, 2)] for r_ in reads],
+        })
+        if aligned_now:
             ctx.log("WidgetRingAligned", {"iters": iterations,
                     "dx": read.delta_x, "dy": read.delta_y})
             return True
-        # Bind-missing catch lives HERE in the loop — an unbound Yaw/Pitch key
-        # must log and continue to the timeout, never propagate a KeyError out
-        # of the step.
-        try:
-            _correct_widget_ring(ctx.sender, read,
-                                 gain_s_per_px=gain_s_per_px,
-                                 min_press=min_press, max_press=max_press)
-        except KeyError as e:
-            ctx.log("BindMissing", {"action": str(e), "step": "orient_widget_ring"})
         ctx.sleeper(settle_s)
     ctx.log("WidgetRingTimeout", {"iters": iterations, "degraded": degrade})
     return degrade
@@ -641,18 +671,26 @@ def _hold_for(delta_px: float, ring_r: float, gain_s_per_px: float,
 def _correct_widget_ring(sender, read, *, gain_s_per_px, min_press, max_press):
     """One dominant-axis micro-correction. Per-axis deadzone is read.deadzone_px.
     delta_y>0 (ring below widget) -> pitch DOWN; delta_x>0 -> yaw RIGHT. NO
-    inversion (the OPPOSITE of compass.py's pre-inverted offset_y)."""
+    inversion (the OPPOSITE of compass.py's pre-inverted offset_y).
+
+    Returns (action, hold) for the press sent, or None when the dominant axis
+    sits inside the deadzone — the WidgetRingIter telemetry records it."""
     dx, dy = read.delta_x, read.delta_y
     if abs(dx) >= abs(dy):
         if abs(dx) > read.deadzone_px:
             hold = _hold_for(abs(dx), read.ring_radius_px, gain_s_per_px,
                              min_press, max_press)
-            sender.press("YawRightButton" if dx > 0 else "YawLeftButton", hold=hold)
+            action = "YawRightButton" if dx > 0 else "YawLeftButton"
+            sender.press(action, hold=hold)
+            return action, hold
     else:
         if abs(dy) > read.deadzone_px:
             hold = _hold_for(abs(dy), read.ring_radius_px, gain_s_per_px,
                              min_press, max_press)
-            sender.press("PitchDownButton" if dy > 0 else "PitchUpButton", hold=hold)
+            action = "PitchDownButton" if dy > 0 else "PitchUpButton"
+            sender.press(action, hold=hold)
+            return action, hold
+    return None
 
 
 # Steps that OWN input: multi-key UI macros where a stray concurrent keypress

@@ -6,6 +6,8 @@ crop centre (450, 300). HUD orange is drawn as BGR (0, 165, 255), which maps to
 HSV H≈19 (inside the reader's [10,25] orange band), S=V=255.
 """
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
@@ -122,17 +124,78 @@ def test_widget_missing_returns_not_found():
 
 
 # ---------------------------------------------------------------------------
-# 7. circularity rejects a 120° arc
+# 7. angular coverage rejects a short (120°) arc
 # ---------------------------------------------------------------------------
 
-def test_circularity_rejects_arc():
+def test_short_arc_rejected():
     reader = WidgetRingReader()
     frame = _blank()
     _widget(frame, cx=450, cy=300)
-    # 120° orange arc centred at (490,360), r=50
+    # 120° orange arc centred at (490,360), r=50 — only 1/3 of the circle.
     cv2.ellipse(frame, (490, 360), (50, 50), 0, 0, 120, ORANGE_BGR, thickness=3)
     read = reader.read(frame)
-    assert read.found is False  # an arc is not a ring
+    assert read.found is False  # a short arc is not a ring
+
+
+# ---------------------------------------------------------------------------
+# 7b. an OPEN reticle ring (gap for the info text) IS accepted
+# ---------------------------------------------------------------------------
+
+def test_open_arc_ring_accepted():
+    """The real in-game reticle is never a closed circle — it has a gap on
+    the text side plus a stem. A 270° arc must pass (the pre-2026-06-06
+    contour-circularity gate could NEVER pass it: 4πA/p² of a thin open
+    arc ≈ 0.01)."""
+    reader = WidgetRingReader()
+    frame = _blank()
+    _widget(frame, cx=450, cy=300)
+    # 270° arc (90° gap at the right, where ED draws the target text)
+    cv2.ellipse(frame, (490, 360), (50, 50), 0, 45, 315, ORANGE_BGR, thickness=3)
+    read = reader.read(frame)
+    assert read.found is True
+    assert abs(read.delta_x - 40) <= 5
+    assert abs(read.delta_y - 60) <= 5
+
+
+# ---------------------------------------------------------------------------
+# 7c-7d. THE real failing frame (2026-06-06 13:0x fine-pass divergence)
+# ---------------------------------------------------------------------------
+
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / \
+    "widget_ring_charging_left_below.png"
+
+
+def test_real_frame_charging_reticle_found():
+    """Operator screenshot 2026-06-06 13:07 (FSD charging, ring left+below the
+    widget). Pre-fix read(): a PHANTOM Hough candidate over the target-info
+    TEXT passed (the circularity gate scored the contour NEAREST the phantom
+    centre — the widget dot itself, circ 0.888 — a different object vouching
+    for it) while the REAL reticle (hollow fill 1.000) failed circularity
+    (0.013, open arc). The loop steered text onto the widget and drove the
+    actual target away. The fix must find THE ring: (346, 373) r≈48."""
+    frame = cv2.imread(str(FIXTURE))
+    assert frame is not None, f"fixture missing: {FIXTURE}"
+    reader = WidgetRingReader()
+    read = reader.read(frame)
+    assert read.found is True
+    assert abs(read.ring_cx - 346) <= 6
+    assert abs(read.ring_cy - 373) <= 6
+    assert 40 <= read.ring_radius_px <= 58
+    assert read.delta_x < -90      # ring well LEFT of the widget
+    assert read.delta_y > 60       # and BELOW it
+    assert read.aligned is False   # 13:07 was NOT aligned, whatever the log said
+
+
+def test_real_frame_no_phantom_when_ring_removed():
+    """Same frame with the real reticle blacked out: only the target-info text
+    and the widget remain. NOTHING may pass the ring gates — a found=False
+    beat (loop idles) is correct; a phantom lock steers the ship wrong."""
+    frame = cv2.imread(str(FIXTURE))
+    assert frame is not None, f"fixture missing: {FIXTURE}"
+    cv2.circle(frame, (346, 373), 62, (0, 0, 0), thickness=-1)  # erase the ring
+    reader = WidgetRingReader()
+    read = reader.read(frame)
+    assert read.found is False
 
 
 # ---------------------------------------------------------------------------
