@@ -113,6 +113,9 @@ class FlowRunner:
         self.heat_eject_cooldown_s = heat_eject_cooldown_s
 
         self._event_times: dict[str, float] = {}
+        # True while the journal's last SC transition is SupercruiseExit at a
+        # Star (see _record_event_time) — restart-while-smacked routing.
+        self._smacked = False
         self._latest_status: Optional[Any] = status_supplier()
         self._caught_up = False
         self._startup_done = False
@@ -299,6 +302,15 @@ class FlowRunner:
         name = getattr(ev, "event", None)
         if name == "SupercruiseExit" and getattr(ev, "body_type", None) == "Star":
             self._event_times["drop"] = self.clock()
+        # Flight-scene tracker (2026-06-06 13:41): smacked = the journal's
+        # LAST supercruise transition is a star drop. Fed by backlog AND live
+        # events (the tail replays from the top on attach), so a bot
+        # restarted while the ship sits smacked in normal space knows it —
+        # the live SupercruiseExit dispatch never fires for backlog events.
+        if name == "SupercruiseExit":
+            self._smacked = getattr(ev, "body_type", None) == "Star"
+        elif name in ("SupercruiseEntry", "FSDJump"):
+            self._smacked = False
 
     def _apply_state(self, ev: Any) -> None:
         """Track the latest FSDTarget (+ a monotone seq) so the
@@ -395,6 +407,15 @@ class FlowRunner:
             # 13:26:17 -> SupercruiseExit Body=Star 13:26:21). arrival.toml
             # orbits the star and clears it BEFORE throttling up.
             self._run("arrival")
+            return
+        if self._smacked:
+            # Restart while SMACKED (normal space, last SC transition was a
+            # star drop): smack_recovery owns this state — startup's
+            # throttle-100 + glare-blind orient is the 13:26 dive all over
+            # again, and the SupercruiseExit that would dispatch the reflex
+            # live is backlog here, never dispatched. wait_cooldown_clear
+            # passes instantly when the cooldown already expired.
+            self._run("smack_recovery")
             return
         self._run("startup")
 

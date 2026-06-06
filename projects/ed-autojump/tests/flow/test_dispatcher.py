@@ -48,12 +48,15 @@ def test_supercruise_exit_not_star_is_ignored():
 
 
 def _startup_runner(sender, *, in_supercruise, docked=False):
-    """Runner with distinguishable single-step startup/arrival procedures:
-    startup presses SelectTarget (target_ahead), arrival presses
-    TargetNextRouteSystem (target_next_route)."""
+    """Runner with distinguishable single-step procedures: startup presses
+    SelectTarget (target_ahead), arrival presses TargetNextRouteSystem
+    (target_next_route), smack_recovery presses SetSpeed50 (set_throttle 50)."""
     procs = {
         "startup": Procedure(name="startup", steps=(Step("target_ahead"),)),
         "arrival": Procedure(name="arrival", steps=(Step("target_next_route"),)),
+        "smack_recovery": Procedure(
+            name="smack_recovery",
+            steps=(Step("set_throttle", {"pct": 50}),)),
     }
     return FlowRunner(
         procedures=procs, sender=sender, clock=lambda: 0.0,
@@ -90,6 +93,55 @@ def test_startup_docked_runs_nothing():
     r._maybe_startup()
     assert sender.actions() == []
     assert r._startup_done is True
+
+
+def test_startup_smacked_runs_smack_recovery():
+    """Restart while SMACKED (2026-06-06 13:41 operator question): journal
+    backlog ends on SupercruiseExit Body=Star with no SC re-entry, status
+    shows normal space. The live SupercruiseExit dispatch never fires for
+    backlog events, and startup's throttle-100 + glare-blind orient is the
+    wrong procedure — smack_recovery owns this state (its cooldown gate
+    passes instantly when the cooldown already expired)."""
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=False)
+    r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))   # backlog
+    r._maybe_startup()
+    assert sender.actions() == ["SetSpeed50"]      # smack_recovery ran
+
+
+def test_smacked_scene_cleared_by_supercruise_entry():
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=False)
+    r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
+    r._on_tail_event(_ev("SupercruiseEntry"))      # recovered before restart
+    r._maybe_startup()
+    assert sender.actions() == ["SelectTarget"]    # plain startup
+
+
+def test_smacked_scene_cleared_by_fsdjump():
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=False)
+    r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
+    r._on_tail_event(_ev("FSDJump", star_system="X"))
+    r._maybe_startup()
+    assert sender.actions() == ["SelectTarget"]    # plain startup
+
+
+def test_non_star_drop_is_not_smacked():
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=False)
+    r._on_tail_event(_ev("SupercruiseExit", body_type="Planet"))
+    r._maybe_startup()
+    assert sender.actions() == ["SelectTarget"]    # plain startup
+
+
+def test_in_supercruise_outranks_stale_smack():
+    """If the operator recovered manually back into SC, the live flag wins."""
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=True)
+    r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
+    r._maybe_startup()
+    assert sender.actions() == ["TargetNextRouteSystem"]   # arrival
 
 
 def _heat_runner(*, overheating, clock, sender=None, cooldown=10.0, record=None):
