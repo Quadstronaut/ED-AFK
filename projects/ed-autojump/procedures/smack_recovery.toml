@@ -43,25 +43,25 @@ steps = [
   { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 2 EXCLUSIVE â€” pitch star behind
   { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown â€” FsdCooldown flag-gated, no timer
 
-  # â”€â”€ Get a LIVE charge, align ANTI-STAR, wait for SC entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  # REDESIGN v4 (2026-06-06 run 10): the post-smack charge HOLDS until the
-  # ship aligns with the spawned ESCAPE VECTOR (screen-confirmed 14:56), but
-  # the vector does NOT render on the nav compass -- v3's orient read a bare
-  # dash (no target = no hologram) and failed. The vector points radially
-  # AWAY from the star, so with the star KEPT TARGETED, "aligned with the
-  # vector" == "star dead astern" -- the proven pitch_compass machinery.
-  # No deselect: the star lock IS the alignment reference; target_next_route
-  # replaces it after entry. Presses can still be REFUSED outright (run 6),
-  # so re-press until a charge is LIVE; never during one (cancels it); and
-  # the entry wait presses NOTHING.
-  { action = "set_throttle", pct = 100 },                                                     # tap    | 4a full burn AWAY (star astern)
+  # â”€â”€ Get a LIVE charge, align FRONT to the ROUTE HOP, hold to entry â”€â”€â”€â”€â”€
+  # REDESIGN v5 (2026-06-06 16:39, CONTROLLED EXPERIMENT): v4's anti-star
+  # alignment sat at mag 0.02-0.15 astern through THREE 240s entry waits
+  # (12+ min of burn, no entry). Locking the ROUTE HOP and aligning FRONT
+  # to its compass dot produced SC ENTRY IN 35 SECONDS -- twice now (run 12
+  # accidental, 16:39 controlled). ED's escape acceptance follows the
+  # locked destination, not the anti-star bearing. Bonus: target_next_route
+  # is danger-gated, and a locked hop ALWAYS renders a compass dot (v3's
+  # lesson). Charge first (refusal re-press, never re-press a live one),
+  # then lock-hop -> front-orient -> hold to entry.
+  { action = "set_throttle", pct = 100 },                                                     # tap    | 4a full burn (star astern from step 2)
   { action = "engage_supercruise", required = true, until_charging = true, presses = 30, between_press_s = 8.0, max_charge_s = 240.0 },  # gated  | 5 press until a charge is LIVE
-  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.15, timeout_s = 75.0, max_iters = 40 },                 # vision | 6 fine: star DEAD astern = vector aligned
-  { action = "engage_supercruise", required = true, press = false, max_charge_s = 240.0 },    # gated  | 7 wait for entry -- no press (charge is live)
+  { action = "target_next_route", required = true },                                          # gated  | 6 lock the HOP (danger-gated)
+  { action = "orient_compass", required = true },                                             # vision | 7a FRONT-align to the hop dot
+  { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 7b gentle holds until entry â€” the 35s path
 
-  # â”€â”€ In supercruise: clear the star, target route, jump â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # â”€â”€ In supercruise: clear the star, jump (hop already locked) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   { action = "set_throttle", pct = 100 },                                                     # tap    | 8
-  { action = "target_next_route", required = true },                                                           # gated  | 9
+  { action = "target_next_route", required = true },                                                           # gated  | 9 re-confirm (no-op when already locked)
   { action = "wait", s = 13.0 },                                                              # wait   | 10 fly clear of arrival star â€” TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
   { action = "orient_compass", required = true },                                             # vision | 11 EXCLUSIVE coarse
   { action = "orient_widget_ring", required = true },                                         # vision | 12 fine (no-op unless [vision].widget_ring_alignment)
