@@ -1,4 +1,4 @@
-from ed_autojump.flow.context import StepContext
+﻿from ed_autojump.flow.context import StepContext
 from ed_autojump.flow.steps import STEP_REGISTRY
 from tests.flow import FakeSender
 from ed_autojump.vision.compass import CompassRead
@@ -69,7 +69,7 @@ def test_orient_compass_returns_alignment_result():
 
 
 def test_orient_compass_logs_per_iteration_telemetry():
-    """Every align iteration lands in the session recording as OrientIter —
+    """Every align iteration lands in the session recording as OrientIter â€”
     reads were invisible in session_123734 and the oscillation could only be
     root-caused because ED happened to still be running (2026-06-06)."""
     reader = FakeReader([_ahead(-0.6), _ahead(0.0)])   # one press, then aligned
@@ -94,7 +94,7 @@ def test_orient_compass_dumps_frames_when_sink_wired():
 
 
 def test_orient_compass_no_sink_no_crash():
-    """frame_sink is optional — None must not break the align loop."""
+    """frame_sink is optional â€” None must not break the align loop."""
     reader = FakeReader([_ahead(0.0)])
     ctx, _ = _ctx(reader)
     assert ctx.frame_sink is None
@@ -134,7 +134,7 @@ def test_orient_compass_fails_closed_when_supercruise_lost():
 
 def test_orient_compass_guard_inert_when_starting_in_normal_space():
     """smack_recovery's escape-vector orient runs in NORMAL space (during the
-    SC charge). The guard arms only when the step STARTS in supercruise —
+    SC charge). The guard arms only when the step STARTS in supercruise â€”
     a normal-space start must orient exactly as before."""
     reader = FakeReader([_ahead(-0.6), _ahead(0.0)])   # one press, then aligned
     ctx, _ = _ctx(reader)
@@ -243,3 +243,48 @@ def test_pitch_front_flip_keeps_full_power():
     action, hold = sender.holds[0]
     assert action == "PitchUpButton"
     assert hold == 1.0                     # full pitch_hold for the flip
+
+
+
+def test_nav_panel_target_verifies_lock_via_compass():
+    """2026-06-06 14:07 (run 4): target_via_navpanel is a blind TOGGLE -- on
+    an already-locked star the second UI_Select hits UNLOCK, the compass
+    hologram vanishes, and pitch_compass read found=False 31x. Proven live
+    14:16: one macro run re-locked it and the dot appeared instantly. The
+    step must VERIFY the lock (compass dot found) and re-toggle if absent."""
+    reader = FakeReader([_ahead(0.3)])     # dot visible after first macro
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0)
+    assert ok is True
+    assert sender.events.count("FocusLeftPanel") == 2   # exactly one macro
+
+
+def test_nav_panel_target_retoggles_when_no_dot():
+    """First macro lands on the unlock side of the toggle -> no dot -> run
+    the macro again; dot appears -> True."""
+    reader = FakeReader([CompassRead.not_found(), CompassRead.not_found(),
+                         CompassRead.not_found(), _ahead(0.3)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0, verify_reads=3)
+    assert ok is True
+    assert sender.events.count("FocusLeftPanel") == 4   # two macro runs
+
+
+def test_nav_panel_target_fails_closed_when_dot_never_appears():
+    """Glare or true vision loss: never seen -> False (required step ->
+    procedure retry), NOT a blind True that sends pitch hunting nothing."""
+    reader = FakeReader([])                # always not_found
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0, verify_reads=2,
+                                           max_toggles=2)
+    assert ok is False
+    assert sender.events.count("FocusLeftPanel") == 4   # capped at 2 macros
+
+
+def test_nav_panel_target_blind_without_vision():
+    """No compass wired -> original blind behavior (macro once, True)."""
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, sleeper=lambda s: None)
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0)
+    assert ok is True
+    assert sender.events.count("FocusLeftPanel") == 2

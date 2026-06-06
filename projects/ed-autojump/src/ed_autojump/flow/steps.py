@@ -342,18 +342,53 @@ def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
         return False
 
 
-def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
-    """Blind nav-panel macro: target row 0 (the closest body, normally the
-    arrival star). Gives downstream compass-vision steps a body to home on
-    when SelectTarget can't be relied on (after a smack drop the star may
-    not be ahead of the reticle)."""
+def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
+                          verify_reads: int = 4,
+                          max_toggles: int = 3) -> bool:
+    """Nav-panel macro: target row 0 (the closest body, normally the arrival
+    star), VERIFIED by the compass and re-toggled until the lock holds.
+
+    target_via_navpanel is a blind TOGGLE (2026-06-06 14:07, run 4): on an
+    already-locked star the second UI_Select lands on UNLOCK, the nav-compass
+    hologram vanishes (it only renders with a locked target), and
+    pitch_compass read found=False 31x while the ship sat nose-on the star.
+    The operator watched it happen ("it unselected the star"). Proven live
+    14:16: one more macro run re-locked it and the dot appeared instantly.
+
+    So: run the macro, then read the compass a few times — the dot's
+    presence IS the lock signal. No dot -> the toggle landed on unlock (or
+    the panel desynced) -> run the macro again, up to max_toggles. Never
+    verified -> False (fail closed; a blind True sends pitch hunting a
+    hologram that isn't there). Without vision wired, fall back to the
+    original blind single run."""
     from ..executor.navpanel import target_via_navpanel
-    try:
-        target_via_navpanel(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s)
-        return True
-    except KeyError:
-        ctx.log("BindMissing", {"step": "nav_panel_target"})
-        return False
+
+    def _macro() -> bool:
+        try:
+            target_via_navpanel(ctx.sender, sleeper=ctx.sleeper,
+                                settle_s=settle_s)
+            return True
+        except KeyError:
+            ctx.log("BindMissing", {"step": "nav_panel_target"})
+            return False
+
+    if ctx.compass_reader is None or ctx.frame_grabber is None:
+        return _macro()   # blind legacy path — nothing to verify with
+
+    from ..executor.align import _measure
+
+    for attempt in range(max_toggles):
+        if not _macro():
+            return False
+        for _ in range(verify_reads):
+            read = _measure(ctx.compass_reader, ctx.frame_grabber, 1)
+            if read.found:
+                ctx.log("NavPanelTargetVerified",
+                        {"toggles": attempt + 1})
+                return True
+            ctx.sleeper(settle_s)
+    ctx.log("NavPanelTargetUnverified", {"toggles": max_toggles})
+    return False
 
 
 def _supercruise_lost_guard(ctx: StepContext):

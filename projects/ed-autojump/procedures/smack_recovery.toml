@@ -16,15 +16,22 @@
 #   hold    key down â†’ event â†’ key up; used in parallel honk track
 #   macro   multi-key UI-state sequence â€” EXCLUSIVE, owns input
 #   vision  closed-loop pitch/yaw + frame capture â€” EXCLUSIVE, owns input + screen
+# retry_from = nav_panel_target (NOT pitch_compass, 2026-06-06 14:16): the
+# macro is a TOGGLE, so a retry that skips it can be pitching at a target
+# that got UNLOCKED -- the step verifies the lock via the compass now, and
+# every retry must re-establish it.
 [on_required_fail]
-retry_from = "pitch_compass"
+retry_from = "nav_panel_target"
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
   # â”€â”€ Real-space recovery during the smack cooldown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  { action = "set_throttle", pct = 50 },                                                    # tap    | 0
-  { action = "nav_panel_target" },                                                           # macro  | 1 EXCLUSIVE â€” row 0 = arrival star
+  # THROTTLE 0 until the star is BEHIND (pitch-star-first rule, 2026-06-06
+  # 14:10: the old pct=50 here thrust the ship nose-on INTO the star surface
+  # for minutes while pitch_compass hunted a missing target lock).
+  { action = "set_throttle", pct = 0 },                                                       # tap    | 0
+  { action = "nav_panel_target", required = true },                                           # macro  | 1 EXCLUSIVE â€” row 0 = arrival star; compass-verified lock
   # timeout_s/max_iters are FAILSAFE ceilings (the gate is the compass read,
   # never the clock): run 3 (2026-06-06 13:59) was converging at mag 0.40 when
   # the default 30s expired â€” proportional taps need ~2.2s/iter and a wrecked
@@ -33,6 +40,8 @@ steps = [
   { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown â€” FsdCooldown flag-gated, no timer
 
   # â”€â”€ Fire FSD inside the exclusion zone to spawn the escape vector â”€â”€â”€â”€â”€
+  # Star is BEHIND now -- safe to make way; SC entry needs forward throttle.
+  { action = "set_throttle", pct = 50 },                                                      # tap    | 4a
   { action = "target_ahead" },                                                                # tap    | 4 deselect
   { action = "press", bind = "Supercruise" },                                                 # tap    | 5 FSD lit inside exclusion â†’ escape vector spawns
   { action = "orient_compass", required = true },                                             # vision | 6 EXCLUSIVE â€” home on escape vector during SC charge
