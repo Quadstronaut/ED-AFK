@@ -317,3 +317,56 @@ def test_pitch_consecutive_not_found_sweeps():
     assert ok is True
     assert sender.holds[0] == ("PitchUpButton", 1.0)    # sweep on miss #3
     assert len(sender.actions()) == 1                   # misses 1-2 pressed nothing
+
+
+class _FocusStatus:
+    """Status whose gui_focus starts at `focus` and drops to 0 (cockpit)
+    after `backs_needed` UI_Back-driven reads."""
+
+    def __init__(self, focus, backs_needed=1):
+        self.focus = focus
+        self.backs = backs_needed
+        self.reads = 0
+
+    def __call__(self):
+        from types import SimpleNamespace
+        self.reads += 1
+        # first read = the pre-check; each later read follows one UI_Back
+        current = self.focus if self.reads <= self.backs else 0
+        return SimpleNamespace(gui_focus=current, in_supercruise=True)
+
+
+def test_orient_compass_closes_map_before_reading():
+    """Run 7 cycle 3 (session_143403): a desynced sc_assist_orbit macro
+    opened the SYSTEM MAP (GuiFocus 7); orient read the map background --
+    all not_found, 7-sample zeroes -- through 3 retries. Vision steps must
+    press UI_Back until GuiFocus==0 before trusting a single frame."""
+    reader = FakeReader([_ahead(0.0)])     # aligned once the cockpit is back
+    ctx, sender = _ctx(reader)
+    ctx.status_supplier = _FocusStatus(focus=7, backs_needed=1)
+    ok = STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=3,
+                                         timeout_s=999, settle_s=0.0)
+    assert ok is True
+    assert sender.actions()[0] == "UI_Back"
+
+
+def test_orient_compass_fails_closed_when_focus_stuck():
+    reader = FakeReader([_ahead(0.0)])
+    ctx, sender = _ctx(reader)
+    ctx.status_supplier = _FocusStatus(focus=7, backs_needed=99)  # never clears
+    ok = STEP_REGISTRY["orient_compass"](ctx, align_tol=0.2, max_iters=3,
+                                         timeout_s=999, settle_s=0.0)
+    assert ok is False
+    assert all(a == "UI_Back" for a in sender.actions())   # never steered blind
+
+
+def test_nav_panel_target_restores_focus_before_macro():
+    """The macros are BLIND -- starting them from a map/panel is the desync
+    source. UI_Back to the cockpit first, then the panel sequence."""
+    reader = FakeReader([_ahead(0.3)])
+    ctx, sender = _ctx(reader)
+    ctx.status_supplier = _FocusStatus(focus=7, backs_needed=1)
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0)
+    assert ok is True
+    assert sender.actions()[0] == "UI_Back"
+    assert sender.actions()[1] == "FocusLeftPanel"

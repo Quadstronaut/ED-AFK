@@ -357,6 +357,11 @@ STEP_REGISTRY.update({
 
 def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
     from ..executor.navpanel import engage_supercruise_assist
+    # Blind macro — must start from cockpit focus (run 7 cycle 3: a macro
+    # started on a desynced cursor opened the SYSTEM MAP and blinded vision
+    # for 3 full arrival retries).
+    if not _ensure_cockpit_focus(ctx):
+        return False
     try:
         engage_supercruise_assist(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s)
         return True
@@ -398,6 +403,11 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
     if ctx.compass_reader is None or ctx.frame_grabber is None:
         return _macro()   # blind legacy path — nothing to verify with
 
+    # The macro is BLIND — starting it from a map/panel is the desync source
+    # (run 7 cycle 3: a desynced macro opened the SYSTEM MAP).
+    if not _ensure_cockpit_focus(ctx):
+        return False
+
     from ..executor.align import _measure
 
     for attempt in range(max_toggles):
@@ -411,6 +421,36 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
                 return True
             ctx.sleeper(settle_s)
     ctx.log("NavPanelTargetUnverified", {"toggles": max_toggles})
+    return False
+
+
+def _ensure_cockpit_focus(ctx: StepContext, *, max_backs: int = 4,
+                          settle_s: float = 0.5) -> bool:
+    """Press UI_Back until Status.GuiFocus returns to the cockpit (0).
+
+    2026-06-06 run 7 cycle 3 (session_143403): a desynced sc_assist_orbit
+    macro opened the SYSTEM MAP (GuiFocus 7) and orient_compass read the map
+    background — all-not-found, 7-sample zeroes — through 3 full retries.
+    Any map/panel owning the screen makes EVERY vision read garbage and
+    every blind UI macro start from an unknown cursor. State-gated on
+    GuiFocus (no clocks); True when status is unwired (nothing to verify
+    with — legacy blind behavior); False when focus can't be restored."""
+    st = ctx.status_supplier()
+    if st is None or not getattr(st, "gui_focus", 0):
+        return True
+    for _ in range(max_backs):
+        try:
+            ctx.sender.press("UI_Back")
+        except KeyError:
+            ctx.log("BindMissing", {"step": "ensure_cockpit_focus"})
+            return False
+        ctx.sleeper(settle_s)
+        st = ctx.status_supplier()
+        if st is None or not getattr(st, "gui_focus", 0):
+            ctx.log("CockpitFocusRestored", {})
+            return True
+    ctx.log("CockpitFocusStuck",
+            {"gui_focus": getattr(st, "gui_focus", None)})
     return False
 
 
@@ -444,6 +484,8 @@ def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
     if ctx.compass_reader is None or ctx.frame_grabber is None:
         ctx.log("OrientNoVision", {})
         return False  # FAIL CLOSED — never proceed to jump without a confirmed orient
+    if not _ensure_cockpit_focus(ctx):
+        return False  # a map/panel owns the screen — every read is garbage
     from ..executor.align import align_to_target
     kwargs = dict(ctx.align_kwargs)
     kwargs.update(align_overrides)
@@ -493,6 +535,8 @@ def step_pitch_compass(
     if ctx.compass_reader is None or ctx.frame_grabber is None:
         ctx.log("PitchCompassNoVision", {"until": until})
         return False
+    if not _ensure_cockpit_focus(ctx):
+        return False  # a map/panel owns the screen — every read is garbage
     from ..executor.align import _measure
 
     def _at_gate(read) -> bool:
@@ -653,6 +697,8 @@ def step_hold_alignment(
     if ctx.status_supplier() is None:
         ctx.log("HoldAlignmentNoStatus", {})
         return False
+    if not _ensure_cockpit_focus(ctx):
+        return False  # a map/panel owns the screen — every read is garbage
 
     from ..executor.align import _correct, _measure
 
@@ -743,6 +789,9 @@ def step_orient_widget_ring(
     if ctx.widget_ring_reader is None or ctx.widget_frame_grabber is None:
         ctx.log("WidgetRingNoVision", {"degraded": degrade})
         return degrade
+
+    if not _ensure_cockpit_focus(ctx):
+        return False  # a map/panel owns the screen — every read is garbage
 
     from ..vision.widget_ring import median_of
 
