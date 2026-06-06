@@ -1,10 +1,10 @@
 # Reflex: emergency drop INSIDE the star's exclusion zone (SupercruiseExit,
 # BodyType:Star). Slow throttle, target the arrival star via nav panel
-# (row 0 = closest body — works even when the star isn't ahead of the
+# (row 0 = closest body â€” works even when the star isn't ahead of the
 # reticle), pitch it BEHIND, wait the smack cooldown out, deselect targets,
 # fire the FSD WHILE STILL INSIDE the exclusion zone. With no body
 # targeted and the FSD lit inside an exclusion zone, the game spawns an
-# ESCAPE VECTOR compass target — orient_compass homes on that spawned
+# ESCAPE VECTOR compass target â€” orient_compass homes on that spawned
 # vector during the SC charge even though no body is selected. Once SC
 # entry confirms, throttle up, lock the next route star, fly 13s to clear
 # the arrival star, re-orient, jump (log-gated on StartJump).
@@ -12,34 +12,34 @@
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
-#   wait    passive block on journal event or clock — no input sent
-#   hold    key down → event → key up; used in parallel honk track
-#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
-#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+#   wait    passive block on journal event or clock â€” no input sent
+#   hold    key down â†’ event â†’ key up; used in parallel honk track
+#   macro   multi-key UI-state sequence â€” EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture â€” EXCLUSIVE, owns input + screen
 [on_required_fail]
 retry_from = "pitch_compass"
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  # ── Real-space recovery during the smack cooldown ─────────────────────
+  # â”€â”€ Real-space recovery during the smack cooldown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   { action = "set_throttle", pct = 50 },                                                    # tap    | 0
-  { action = "nav_panel_target" },                                                           # macro  | 1 EXCLUSIVE — row 0 = arrival star
-  { action = "pitch_compass", until = "behind", required = true },                           # vision | 2 EXCLUSIVE — pitch star behind
-  { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown — FsdCooldown flag-gated, no timer
+  { action = "nav_panel_target" },                                                           # macro  | 1 EXCLUSIVE â€” row 0 = arrival star
+  { action = "pitch_compass", until = "behind", required = true },                           # vision | 2 EXCLUSIVE â€” pitch star behind
+  { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown â€” FsdCooldown flag-gated, no timer
 
-  # ── Fire FSD inside the exclusion zone to spawn the escape vector ─────
+  # â”€â”€ Fire FSD inside the exclusion zone to spawn the escape vector â”€â”€â”€â”€â”€
   { action = "target_ahead" },                                                                # tap    | 4 deselect
-  { action = "press", bind = "Supercruise" },                                                 # tap    | 5 FSD lit inside exclusion → escape vector spawns
-  { action = "orient_compass", required = true },                                             # vision | 6 EXCLUSIVE — home on escape vector during SC charge
-  { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 7 hold escape vector until SC entry — event/state-gated, no clock
+  { action = "press", bind = "Supercruise" },                                                 # tap    | 5 FSD lit inside exclusion â†’ escape vector spawns
+  { action = "orient_compass", required = true },                                             # vision | 6 EXCLUSIVE â€” home on escape vector during SC charge
+  { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 7 hold escape vector until SC entry â€” event/state-gated, no clock
 
-  # ── In supercruise: clear the star, target route, jump ────────────────
+  # â”€â”€ In supercruise: clear the star, target route, jump â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   { action = "set_throttle", pct = 100 },                                                     # tap    | 8
-  { action = "target_next_route" },                                                           # tap    | 9
-  { action = "wait", s = 13.0 },                                                              # wait   | 10 fly clear of arrival star — TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
+  { action = "target_next_route", required = true },                                                           # gated  | 9
+  { action = "wait", s = 13.0 },                                                              # wait   | 10 fly clear of arrival star â€” TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
   { action = "orient_compass", required = true },                                             # vision | 11 EXCLUSIVE coarse
   { action = "orient_widget_ring", required = true },                                         # vision | 12 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },                                                # gated  | 13a FSD jump
-  { action = "hold_alignment", required = true },                                             # vision | 13b hold cone until StartJump — event/state-gated, no clock
+  { action = "hold_alignment", required = true },                                             # vision | 13b hold cone until StartJump â€” event/state-gated, no clock
 ]

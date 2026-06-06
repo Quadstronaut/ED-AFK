@@ -4,10 +4,10 @@
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
-#   wait    passive block on journal event or clock — no input sent
-#   hold    key down → event → key up; used in parallel honk track
-#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
-#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+#   wait    passive block on journal event or clock â€” no input sent
+#   hold    key down â†’ event â†’ key up; used in parallel honk track
+#   macro   multi-key UI-state sequence â€” EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture â€” EXCLUSIVE, owns input + screen
 parallel_tracks = ["honk"]
 
 [on_required_fail]
@@ -18,13 +18,13 @@ backoff_s = 2.0
 steps = [
   { action = "set_throttle", pct = 0 },             # tap    | 0
   { action = "target_ahead" },                       # tap    | 1
-  { action = "sc_assist_orbit" },                    # macro  | 2 EXCLUSIVE — nav panel macro
+  { action = "sc_assist_orbit" },                    # macro  | 2 EXCLUSIVE â€” nav panel macro
   { action = "wait", s = 13.0 },                     # wait   | 3 let orbit acquire
-  { action = "target_next_route" },                  # tap    | 4
+  { action = "target_next_route", required = true },                  # gated  | 4
   { action = "set_throttle", pct = 100 },            # tap    | 5
-  { action = "wait", s = 13.0 },                     # wait   | 6 clear of arrival star — TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
+  { action = "wait", s = 13.0 },                     # wait   | 6 clear of arrival star â€” TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
   { action = "orient_compass", required = true },        # vision | 7 coarse
   { action = "orient_widget_ring", required = true },    # vision | 8 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },           # gated  | 9 FSD jump
-  { action = "hold_alignment", required = true },        # vision | 10 hold cone until StartJump — event/state-gated, no clock
+  { action = "hold_alignment", required = true },        # vision | 10 hold cone until StartJump â€” event/state-gated, no clock
 ]

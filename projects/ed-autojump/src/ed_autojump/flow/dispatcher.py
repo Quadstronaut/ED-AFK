@@ -125,6 +125,10 @@ class FlowRunner:
         # a bool, so a parallel track can't clear the main track's hold.
         self._exclusive_lock = threading.Lock()
         self._exclusive_count = 0
+        # Latest FSDTarget + monotone seq — target_next_route's danger gate
+        # reads these to tell a NEW target from a stale one.
+        self._fsd_target_seq = 0
+        self._latest_fsd_target: Optional[Any] = None
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
@@ -179,7 +183,13 @@ class FlowRunner:
         # Each context gets its OWN hub subscription so concurrent waiters
         # (honk track + main procedure) all see every event. _run owns the
         # unsubscribe via the handle stashed on the context.
+        # No hub (no tail) -> event_waiter=None, TRUTHFULLY "no journal
+        # wiring": steps take their unit-test fallbacks instead of spinning
+        # on a waiter that always says True against suppliers that never
+        # advance.
         handle = self._hub.subscribe() if self._hub is not None else None
+        waiter = (None if self._hub is None else
+                  (lambda name, t, _h=handle: self._wait_for_event(_h, name, t)))
         ctx = StepContext(
             sender=self.sender,
             clock=self.clock,
@@ -194,9 +204,10 @@ class FlowRunner:
             overlay=self.overlay,
             status_supplier=self._fresh_status,
             event_time=self.event_time,
-            event_waiter=lambda name, t, _h=handle: self._wait_for_event(_h, name, t),
+            event_waiter=waiter,
             should_abort=self._should_abort,
             exclusive_guard=self._exclusive_input,
+            fsd_target_supplier=self._fsd_target_state,
             record=self.record,
         )
         ctx._tail_handle = handle   # for _run's unsubscribe; None without a tail
@@ -283,10 +294,15 @@ class FlowRunner:
             self._event_times["drop"] = self.clock()
 
     def _apply_state(self, ev: Any) -> None:
-        """Hook for tracking next-target etc. State the engage gate needs is
-        read live from status; route targeting is done in-procedure via
-        target_next_route, so this is intentionally minimal for v1."""
-        return
+        """Track the latest FSDTarget (+ a monotone seq) so the
+        target_next_route danger gate can verify the NEW target's StarClass.
+        Called exactly once per event via the hub's on_event."""
+        if getattr(ev, "event", None) == "FSDTarget":
+            self._fsd_target_seq += 1
+            self._latest_fsd_target = ev
+
+    def _fsd_target_state(self) -> tuple:
+        return (self._fsd_target_seq, self._latest_fsd_target)
 
     def _poll_status(self) -> None:
         with self._status_lock:

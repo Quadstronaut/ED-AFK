@@ -58,9 +58,47 @@ def step_target_ahead(ctx: StepContext) -> bool:
     return _press(ctx, "SelectTarget")
 
 
-def step_target_next_route(ctx: StepContext) -> bool:
-    # Cancels Supercruise Assist AND locks the next route star in one press.
-    return _press(ctx, "TargetNextRouteSystem")
+def step_target_next_route(
+    ctx: StepContext, *, poll_s: float = 0.5, watchdog_s: float = 60.0,
+) -> bool:
+    """Press TargetNextRouteSystem (cancels Supercruise Assist AND locks the
+    next route star in one press), then VERIFY the resulting FSDTarget's
+    StarClass against the danger list (fsd.danger: D*/N/H/W). WIRED
+    2026-06-06 — the filter existed since v1 with no caller; until now
+    nothing stopped a plotted route through a neutron star.
+
+    Event-gated: waits for a NEW FSDTarget journal event (seq advances past
+    the pre-press snapshot). Dangerous class -> False and the procedure's
+    required-fail policy takes over — FAIL CLOSED, the ship never jumps at
+    it. `watchdog_s` is the operator-sanctioned stuck-state class (no
+    FSDTarget at all = no route plotted / press lost). Without journal
+    wiring (unit tests) the press alone is the step."""
+    seq0, _ = ctx.fsd_target_supplier()
+    if not _press(ctx, "TargetNextRouteSystem"):
+        return False
+    if ctx.event_waiter is None:
+        return True
+    from ..fsd.danger import is_dangerous
+
+    start = ctx.clock()
+    while True:
+        if ctx.should_abort():
+            ctx.log("TargetNextRouteDone", {"reason": "abort"})
+            return False
+        if ctx.clock() - start > watchdog_s:
+            ctx.log("TargetNextRouteDone", {"reason": "watchdog"})
+            return False
+        # This poll pumps the tail hub, which is what advances
+        # fsd_target_supplier — do NOT replace it with a bare sleep.
+        ctx.event_waiter("FSDTarget", poll_s)
+        seq, target = ctx.fsd_target_supplier()
+        if seq > seq0 and target is not None:
+            sc = getattr(target, "star_class", "") or ""
+            if sc and is_dangerous(sc):
+                ctx.log("TargetDangerRefused", {"star_class": sc})
+                return False
+            ctx.log("TargetConfirmed", {"star_class": sc})
+            return True
 
 
 def step_engage_jump(ctx: StepContext) -> bool:
@@ -142,11 +180,54 @@ STEP_REGISTRY: dict[str, Callable[..., bool]] = {
     "pitch": step_pitch,
 }
 
+def step_ensure_analysis_mode(
+    ctx: StepContext, *,
+    poll_s: float = 0.5,
+    settle_polls: int = 4,
+    max_toggles: int = 3,
+) -> bool:
+    """The FSS honk only fires in ANALYSIS HUD mode. Operator ground truth
+    2026-06-06: "We have to be in analysis mode. If we're not, we must
+    switch to it."
+
+    State-gated on the AnalysisMode status flag (bit 27): already set ->
+    no-op success. Else press PlayerHUDModeToggle and poll the flag for
+    `settle_polls` cycles (Status.json lags the flip ~0.5s — judging too
+    early would double-toggle straight back to combat). `max_toggles` is a
+    bounded press count, not a wall clock. Fails closed without status."""
+    if ctx.status_supplier() is None:
+        ctx.log("AnalysisModeNoStatus", {})
+        return False
+    toggles = 0
+    while True:
+        if ctx.should_abort():
+            return False
+        st = ctx.status_supplier()
+        if st is not None and getattr(st, "analysis_mode", False):
+            if toggles:
+                ctx.log("AnalysisModeSwitched", {"toggles": toggles})
+            return True
+        if toggles >= max_toggles:
+            ctx.log("AnalysisModeFailed", {"toggles": toggles})
+            return False
+        if not _press(ctx, "PlayerHUDModeToggle"):
+            return False
+        toggles += 1
+        # Give Status.json time to reflect the flip before judging it.
+        for _ in range(settle_polls):
+            ctx.sleeper(poll_s)
+            st = ctx.status_supplier()
+            if st is not None and getattr(st, "analysis_mode", False):
+                ctx.log("AnalysisModeSwitched", {"toggles": toggles})
+                return True
+
+
 STEP_REGISTRY.update({
     "target_ahead": step_target_ahead,
     "target_next_route": step_target_next_route,
     "engage_jump": step_engage_jump,
     "engage_supercruise": step_engage_supercruise,
+    "ensure_analysis_mode": step_ensure_analysis_mode,
 })
 
 

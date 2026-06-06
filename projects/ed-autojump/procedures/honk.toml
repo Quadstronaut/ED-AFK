@@ -13,5 +13,6 @@
 #   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 parallel = true
 steps = [
-  { action = "hold_until_event", bind = "ExplorationFSSDiscoveryScan", event = "FSSDiscoveryScan" },  # hold | 0 the honk itself
+  { action = "ensure_analysis_mode", required = true },                                               # gated | 0 honk only fires in ANALYSIS mode — flag-gated, toggles HUD if needed (operator ruling 2026-06-06)
+  { action = "hold_until_event", bind = "ExplorationFSSDiscoveryScan", event = "FSSDiscoveryScan" },  # hold  | 1 the honk itself
 ]

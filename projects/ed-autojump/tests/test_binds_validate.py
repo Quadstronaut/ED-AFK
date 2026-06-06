@@ -77,6 +77,7 @@ def _all_bound() -> dict[str, str]:
         "YawLeftButton": "Key_A",
         "YawRightButton": "Key_D",
         "ExplorationFSSDiscoveryScan": "Key_Equals",
+        "PlayerHUDModeToggle": "Key_M",   # ensure_analysis_mode (honk gate)
         "FocusLeftPanel": "Key_1",
         "UI_Select": "Key_Enter",
         "UI_Right": "Key_D",   # same key as YawRightButton — different context, OK

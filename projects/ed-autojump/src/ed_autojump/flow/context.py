@@ -37,6 +37,11 @@ class StepContext:
     # for its duration (heat watchdog pauses). None when no watchdog is wired.
     exclusive_guard: Optional[Callable[[], Any]] = None
 
+    # (seq, latest FSDTarget event) — seq advances once per FSDTarget the
+    # tail has seen, so target_next_route can tell a NEW target from a stale
+    # one. Wired by FlowRunner; the default means "no journal wiring".
+    fsd_target_supplier: Callable[[], tuple] = lambda: (0, None)
+
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 

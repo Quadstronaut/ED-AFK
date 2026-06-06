@@ -69,7 +69,8 @@ ignored (loader passes the inline table straight through as `**params`).
 | action | params | what it does |
 |---|---|---|
 | `target_ahead` | none | Press `SelectTarget`. With nothing ahead this CLEARS the target. |
-| `target_next_route` | none | Press `TargetNextRouteSystem`. Also cancels Supercruise Assist. |
+| `target_next_route` | `poll_s: float = 0.5`, `watchdog_s: float = 60.0` | Press `TargetNextRouteSystem` (also cancels Supercruise Assist), then **verify the new `FSDTarget`'s StarClass against the danger list** (D*/N/H/W → step fails → procedure aborts, fail closed). Event-gated on a NEW FSDTarget; `watchdog_s` = stuck-state guard (no route / lost press). `required = true` everywhere. |
+| `ensure_analysis_mode` | `poll_s: float = 0.5`, `settle_polls: int = 4`, `max_toggles: int = 3` | Gate on the **AnalysisMode status flag** (bit 27): already set → no-op; else press `PlayerHUDModeToggle` and poll the flag (bounded press count). The honk only fires in analysis mode. Fails closed without status. |
 | `nav_panel_target` | `settle_s: float = 0.4` | Blind nav-panel macro: open panel → row 0 (closest body) → UI_Select (opens detail; cursor on "Lock Destination") → UI_Select (activate) → close. Targets the arrival star regardless of reticle aim. |
 
 ### Jump / supercruise

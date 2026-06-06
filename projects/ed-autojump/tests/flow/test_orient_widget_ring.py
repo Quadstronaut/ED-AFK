@@ -193,6 +193,16 @@ def _arrival_status():
                            overheating=False)
 
 
+def _fsd_target_seq():
+    """Supplier whose seq advances on every read — the read after the press
+    always looks like a fresh, safe (K-class) FSDTarget."""
+    n = [0]
+    def supplier():
+        n[0] += 1
+        return (n[0], SimpleNamespace(event="FSDTarget", star_class="K"))
+    return supplier
+
+
 def test_arrival_has_widget_ring_after_compass():
     procs = load_procedures(PROC_DIR)
     actions = [s.action for s in procs["arrival"].steps]
@@ -214,6 +224,9 @@ def test_arrival_has_widget_ring_after_compass():
         # arrival now ends with hold_alignment (event/state-gated, no clock);
         # fire StartJump on the first poll so the procedure completes.
         event_waiter=lambda ev, t: ev == "StartJump",
+        # target_next_route's danger gate needs a NEW safe FSDTarget after
+        # the press (seq must advance past the pre-press snapshot).
+        fsd_target_supplier=_fsd_target_seq(),
     )
     result = run_procedure(procs["arrival"], ctx)
     assert result.aborted is False

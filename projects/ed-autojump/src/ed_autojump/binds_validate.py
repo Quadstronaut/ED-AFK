@@ -55,8 +55,10 @@ REQUIRED_ACTIONS: frozenset[str] = frozenset({
     "PitchUpButton", "PitchDownButton",
     # executor/align.py
     "YawLeftButton", "YawRightButton",
-    # executor/honk.py + procedures/honk.toml
+    # procedures/honk.toml
     "ExplorationFSSDiscoveryScan",
+    # flow/steps.py: step_ensure_analysis_mode (honk needs ANALYSIS HUD mode)
+    "PlayerHUDModeToggle",
     # executor/navpanel.py (sc_assist_orbit + nav_panel_target)
     "FocusLeftPanel", "UI_Select", "UI_Right",
     # flow/dispatcher.py: heat_guard
