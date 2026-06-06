@@ -32,9 +32,21 @@ steps = [
   { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 1b star astern FIRST (best effort)
   { action = "sc_assist_orbit" },                    # macro  | 2 EXCLUSIVE â€” nav panel macro (from the safe lane)
   { action = "wait", s = 13.0 },                     # wait   | 3 let orbit acquire
+  # OUTWARD fly-out (REDESIGN 2026-06-06 15:55, MO-O b7-1): the old flow
+  # throttled 100 and flew wherever the post-orbit nose pointed, then
+  # hold_alignment flew TOWARD THE HOP during the charge. For a hop on the
+  # far side of the star ("starward"), that never gains jump altitude --
+  # 4 perfectly-aligned holds in a row sat blocked ("TOO CLOSE") and the
+  # arrival ended in a smack. Fly-out must be RADIALLY OUTWARD regardless
+  # of hop bearing: re-lock the local star, pitch it astern, burn 26s,
+  # THEN turn to the hop. Best-effort like step 1b: a noisy pitch falls
+  # through to the old behavior, never blocks.
+  { action = "nav_panel_target" },                                                                     # macro  | 3b re-lock local star
+  { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 3c nose radially outward
+  { action = "set_throttle", pct = 100 },            # tap    | 3d
+  { action = "wait", s = 26.0 },                     # wait   | 3e altitude burn -- TRAJECTORY PACING, not a gate
   { action = "target_next_route", required = true },                  # gated  | 4
-  { action = "set_throttle", pct = 100 },            # tap    | 5
-  { action = "wait", s = 13.0 },                     # wait   | 6 clear of arrival star â€” TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
+  { action = "wait", s = 6.0 },                      # wait   | 5 keep burning while the lock settles
   { action = "orient_compass", required = true },        # vision | 7 coarse
   { action = "orient_widget_ring", required = true },    # vision | 8 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },           # gated  | 9 FSD jump
