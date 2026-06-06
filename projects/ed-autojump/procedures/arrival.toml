@@ -44,7 +44,10 @@ steps = [
   { action = "nav_panel_target" },                                                                     # macro  | 3b re-lock local star
   { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 3c nose radially outward
   { action = "set_throttle", pct = 100 },            # tap    | 3d
-  { action = "wait", s = 26.0 },                     # wait   | 3e altitude burn -- TRAJECTORY PACING, not a gate
+  # 40s (was 26s, 2026-06-06 16:23): a big F star blocked the jump charge
+  # even after a clean 26s outward burn -- the smack-recovery detour costs
+  # 5-10 min vs 14s of extra burn per arrival.
+  { action = "wait", s = 40.0 },                     # wait   | 3e altitude burn -- TRAJECTORY PACING, not a gate
   { action = "target_next_route", required = true },                  # gated  | 4
   { action = "wait", s = 6.0 },                      # wait   | 5 keep burning while the lock settles
   { action = "orient_compass", required = true },        # vision | 7 coarse
