@@ -1,9 +1,10 @@
 """
 Closed-loop nav-compass alignment.
 
-The blind macro (`perform_star_escape`) pitches a fixed time then engages —
-it can't actually point at the next target, which is why the ship "engaged
-the FSD but didn't orient". This loop closes that gap: read the compass,
+The old blind macro (perform_star_escape, DELETED 2026-06-06) pitched a
+fixed time then engaged — it couldn't actually point at the next target,
+which is why the ship "engaged the FSD but didn't orient". This loop
+closes that gap: read the compass,
 press pitch/yaw proportional to the dot's offset, repeat until the dot is
 centred and in FRONT, or give up.
 

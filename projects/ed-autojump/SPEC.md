@@ -1188,8 +1188,16 @@ Per-leg algorithm:
    Confirm via `FSDTarget` event with matching `Name`.
 8. Run §8.4 danger-class check on the *new* `FSDTarget.StarClass`. If
    dangerous, log and clean-stop. Otherwise verify fuel (§9.5).
-9. Engage FSD (`HyperSuperCombination` key). Within 1 s, send `SetSpeedZero`.
-10. Wait for `StartJump:Hyperspace` event. Watch for `FSDJump` arrival.
+9. Engage FSD (granular `Hyperspace` bind; `HyperSuperCombination` is
+   retired). **THROTTLE IS NEVER TOUCHED AFTER ENGAGING** — the jump needs
+   full throttle start to finish; zeroing it mid-charge stalls the jump
+   ("more speed required"). ED's own safety auto-dethrottles on arrival.
+   (Operator ground truth 2026-06-06; the original "send `SetSpeedZero`
+   within 1 s" instruction here was WRONG and got `handle_start_jump`
+   deleted.)
+10. `hold_alignment` keeps the dot in the charge cone until
+    `StartJump:Hyperspace` / the FsdJump flag (event/state-gated, no
+    wall-clock). Watch for `FSDJump` arrival.
 
 ### 9.2 Req 7 — Don't collide with the star (the hard one — corrected)
 
@@ -1210,32 +1218,38 @@ v0.1 said "pitch up for 2 seconds after `FSDJump` and boost." This is wrong:
 
 #### 9.2.2 Correct procedure
 
-**T-pre-charge (`StartJump:Hyperspace` event seen, ~5 s before arrival):**
+> **SUPERSEDED 2026-06-06 — this section described the deleted
+> `handle_start_jump` / `perform_star_escape` macros.** The live escape is
+> `procedures/arrival.toml`: on `FSDJump` → throttle 0 → target ahead →
+> SC-assist orbit around the star → re-target route → fly clear → compass
+> coarse + widget-ring fine orient → jump (event/state-gated). Two of the
+> old steps were factually WRONG and are kept struck-through below only as
+> a record of what NOT to do:
+>
+> - ~~"T-pre-charge: send `SetSpeedZero`"~~ — stalls the jump. Throttle is
+>   never touched after engaging (operator ground truth 2026-06-06).
+> - ~~"on FSDJump: PitchUp `t_pitch` seconds + `SetSpeed75` during the
+>   pitch"~~ — fixed-time pitch with no confirmation the star is off-screen,
+>   then throttle toward it. Violates pitch-star-first. Deleted.
 
-1. Send `SetSpeedZero`. Confirm `Status.json` next update shows the engine
-   throttle ≈ 0 (we approximate by waiting one Status poll cycle).
-2. Inspect cached `StartJump.StarClass`. If it's in §8.4's **danger list**,
-   the route filter should have prevented this — abort the jump by toggling
-   the FSD-engage key again. The charge cancels; `Flags.FsdCharging` clears
-   within 1 s. Log and clean-stop.
-
-**T+0 (witch space → normal space, `FSDJump` event observed):**
-
-3. Immediately `PitchUpButton` hold for `t_pitch` (class-dependent, table
-   below). During pitch, also send `SetSpeed75` so we start moving once we're
-   off the star vector.
-4. After `t_pitch`, release pitch and watch `Status.Flags` — wait for
-   `FsdMassLocked` (bit 16) to clear before any further FSD action.
+**T+0 (witch space → normal space, `FSDJump` event observed):** the
+`arrival` procedure runs (see above). `FsdMassLocked` (bit 16) clearing
+still gates any further FSD action.
 
 **T+~3 s:**
 
-5. Read `Heat` from `Status.json` if present. If `Heat > 0.6`, send
-   `DeployHeatSink`. If `> 0.9`, send `UseBoostJuice` (boost) and re-pitch
-   90° from estimated star vector for 1 s.
-6. If `FuelLevel < FuelCapacity * refuel_threshold` and `StarClass in KGBFOAM`,
-   transition to `SCOOPING`. Otherwise transition to `HONK_AND_SCAN`.
+5. ~~Heat threshold ladder (0.6 → heatsink, 0.9 → boost + re-pitch)~~ —
+   SUPERSEDED: live heat protection is the watchdog thread on the
+   `OverHeating` flag (spec 2026-06-06-heat-watchdog-design).
+6. Scoop decision — PENDING the refuel redesign (the old SC-assist refuel
+   flow was scrap; do not revive).
 
-#### 9.2.3 Class-conditional pitch parameters (initial — **VERIFY in flight**)
+#### 9.2.3 Class-conditional pitch parameters — **DELETED 2026-06-06**
+
+> The table below fed `perform_star_escape`'s fixed-time pitch + throttle
+> macro, which is deleted (fixed-time pitch with no off-screen confirmation,
+> then throttle — violates pitch-star-first). Kept only as historical data;
+> the live escape is the arrival procedure's SC-assist orbit.
 
 | Star class | t_pitch (s) | Post-pitch throttle | Notes |
 |---|---:|---:|---|
@@ -1262,11 +1276,13 @@ the per-class pitch table from real data.
 
 ### 9.2.5 Startup escape (realspace) — get off the star on launch
 
-A **fresh game load** has no `FSDJump`/`SupercruiseExit` to trigger §9.2, yet
-the ship sits in normal space at the arrival star. This is its **own
-procedure** (`executor/escape.py::perform_realspace_escape`), driven once from
-the first flyable `Status` tick — it is **not** smack recovery (§9.8) and waits
-no FSD cooldown. It runs **only after the system honk has fired** (below).
+> **SUPERSEDED 2026-06-06.** The brightness-based escape this section
+> described (`perform_realspace_escape` / `sun_avoid`, archived then
+> deleted in the legacy purge) is replaced by the COMPASS escape: the live
+> startup behavior is `procedures/startup.toml` (throttle 100 → target next
+> route → compass coarse + widget-ring fine orient → engage → hold_alignment).
+> The pitch-star-first rule below (step 7) remains LAW; everything
+> brightness-CV is historical.
 
 Spec order (law — confirmed verbally by the developer):
 

@@ -1,23 +1,17 @@
-"""Phase 3: req 1 + 7 — jump + escape macros."""
+"""Danger-class refusal + regression guards for deleted legacy landmines.
+
+2026-06-06 purge: the escape-macro tests (and their "Every FSDJump produces
+a PitchUp + throttle pair" fiction) are gone with perform_star_escape. The
+LIVE arrival behavior is procedures/arrival.toml — covered by the flow
+tests, not here.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from ed_autojump.executor.jump import (
-    EscapeOutcome,
-    perform_star_escape,
-    should_refuse_target,
-)
+from ed_autojump.executor.jump import should_refuse_target
 from ed_autojump.journal import parse_event
-from ed_autojump.keys import RecordingSender, parse_binds
-
-
-def _binds():
-    src = Path(__file__).parent / "fixtures" / "ED-AFK.legacy.binds"
-    return parse_binds(src)
 
 
 # --- danger-class refusal (req 3 + req 7 defense in depth) ----------------
@@ -41,120 +35,45 @@ def test_should_refuse_target_safe(cls: str):
     assert should_refuse_target(target) is False
 
 
-# --- handle_start_jump is DELETED (operator ground truth 2026-06-06) ------
-# The jump needs FULL throttle through charge/countdown/witchspace; ED
-# auto-dethrottles on arrival. SetSpeedZero-on-StartJump would stall jumps.
+# --- deleted-landmine regression guards ------------------------------------
+# Unwired-but-present code eventually gets wired (hold_alignment proved it,
+# twice nearly the wrong way). These keep the landmines from coming back.
 
 
 def test_handle_start_jump_is_deleted():
+    """SetSpeedZero-on-StartJump would stall jumps — the FSD needs FULL
+    throttle start to finish; ED auto-dethrottles on arrival."""
     import ed_autojump.executor as executor
     import ed_autojump.executor.jump as jump_mod
     assert not hasattr(jump_mod, "handle_start_jump")
     assert "handle_start_jump" not in executor.__all__
 
 
-# --- Star-exit escape macro (req 7) ---------------------------------------
+def test_perform_star_escape_is_deleted():
+    """Fixed-time pitch then throttle with no off-screen confirmation —
+    throttles toward the star; violates pitch-star-first. Live escape is
+    arrival.toml's orbit flow."""
+    import ed_autojump.executor as executor
+    import ed_autojump.executor.jump as jump_mod
+    assert not hasattr(jump_mod, "perform_star_escape")
+    assert not hasattr(jump_mod, "DEFAULT_CLASS_PITCH_S")
+    assert "perform_star_escape" not in executor.__all__
 
 
-def test_escape_macro_K_class_pitches_2s_throttle_75():
-    sender = RecordingSender(_binds())
-    fsd = parse_event(
-        '{"timestamp":"2026-01-10T03:00:30Z","event":"FSDJump",'
-        '"StarSystem":"X","SystemAddress":1,"StarPos":[0,0,0],'
-        '"Body":"X A","BodyID":1,"BodyType":"Star",'
-        '"JumpDist":20.0,"FuelUsed":3.0,"FuelLevel":60.0}'
-    )
-    out = perform_star_escape(fsd, sender, cached_star_class="K")
-    assert isinstance(out, EscapeOutcome)
-    assert out.star_class == "K"
-    assert out.pitch_held_s == 2.0
-    assert out.throttle_action == "SetSpeed75"
-    assert sender.actions() == ["PitchUpButton", "SetSpeed75"]
-    assert sender.events[0].hold_s == pytest.approx(2.0)
+def test_perform_honk_is_deleted():
+    """Legacy honk macro with unverified combat-mode retry + timed resolve
+    gate. The live honk is honk.toml's event-gated hold_until_event."""
+    import ed_autojump.executor as executor
+    assert "perform_honk" not in executor.__all__
+    import importlib
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("ed_autojump.executor.honk")
 
 
-def test_escape_macro_O_class_longer_pitch_lower_throttle():
-    sender = RecordingSender(_binds())
-    fsd = parse_event(
-        '{"timestamp":"2026-01-10T03:00:30Z","event":"FSDJump",'
-        '"StarSystem":"X","SystemAddress":1,"StarPos":[0,0,0],'
-        '"Body":"X A","BodyID":1,"BodyType":"Star",'
-        '"JumpDist":20.0,"FuelUsed":3.0,"FuelLevel":60.0}'
-    )
-    out = perform_star_escape(fsd, sender, cached_star_class="O")
-    assert out.pitch_held_s == 4.0
-    assert out.throttle_action == "SetSpeed50"
+# --- danger journal replay --------------------------------------------------
 
 
-def test_escape_macro_handles_neutron_safely():
-    """If the filter is bypassed and we somehow arrive at an N, the macro
-    still executes with the longer-pitch lower-throttle profile."""
-    sender = RecordingSender(_binds())
-    fsd = parse_event(
-        '{"timestamp":"2026-01-10T03:00:30Z","event":"FSDJump",'
-        '"StarSystem":"X","SystemAddress":1,"StarPos":[0,0,0],'
-        '"Body":"X A","BodyID":1,"BodyType":"Star",'
-        '"JumpDist":20.0,"FuelUsed":3.0,"FuelLevel":60.0}'
-    )
-    out = perform_star_escape(fsd, sender, cached_star_class="N")
-    assert out.pitch_held_s == 4.5
-    assert out.throttle_action == "SetSpeed50"
-
-
-def test_escape_macro_unknown_class_falls_back():
-    sender = RecordingSender(_binds())
-    fsd = parse_event(
-        '{"timestamp":"2026-01-10T03:00:30Z","event":"FSDJump",'
-        '"StarSystem":"X","SystemAddress":1,"StarPos":[0,0,0],'
-        '"Body":"X A","BodyID":1,"BodyType":"Star",'
-        '"JumpDist":20.0,"FuelUsed":3.0,"FuelLevel":60.0}'
-    )
-    out = perform_star_escape(
-        fsd, sender, cached_star_class="ZZ_unknown", fallback_pitch_s=2.5
-    )
-    assert out.pitch_held_s == 2.5
-    assert out.throttle_action == "SetSpeed75"
-
-
-# --- Replay against the fixture journal -----------------------------------
-
-
-def test_jump_sequence_through_fixture(sample_journal: Path):
-    """
-    Walk the bundled sample journal. Each StartJump:Hyperspace caches the
-    star class (throttle is NEVER touched at StartJump — full throttle
-    through the jump, ED auto-dethrottles on arrival); each FSDJump must
-    trigger the PitchUp + throttle escape macro.
-    """
-    binds = _binds()
-    sender = RecordingSender(binds)
-
-    from ed_autojump.journal import (
-        JournalTail,
-        StartJump,
-        FSDJump,
-    )
-
-    tail = JournalTail(sample_journal.parent)
-    cached_class: str | None = None
-    starts = 0
-    jumps = 0
-    for ev in tail.replay_file(sample_journal):
-        if isinstance(ev, StartJump):
-            cached_class = ev.star_class or cached_class
-            starts += 1
-        elif isinstance(ev, FSDJump):
-            perform_star_escape(ev, sender, cached_star_class=cached_class)
-            jumps += 1
-
-    assert starts >= 1 and jumps >= 1
-    # NO SetSpeedZero at StartJump — that would stall the jump.
-    assert sender.actions().count("SetSpeedZero") == 0
-    # Every FSDJump produces a PitchUp + throttle pair.
-    assert sender.actions().count("PitchUpButton") == jumps
-
-
-def test_danger_journal_all_refused(danger_journal: Path):
+def test_danger_journal_all_refused(danger_journal):
     """All five targets in danger_journal except K class get refused."""
     from ed_autojump.journal import JournalTail
     from ed_autojump.journal.events import FSDTarget
