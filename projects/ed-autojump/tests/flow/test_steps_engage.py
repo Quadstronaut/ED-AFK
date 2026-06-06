@@ -327,3 +327,17 @@ def test_engage_supercruise_single_press_legacy_default():
     ok = STEP_REGISTRY["engage_supercruise"](ctx, poll_s=1.0, max_charge_s=10.0)
     assert ok is False
     assert sender.actions().count("Supercruise") == 1
+
+
+def test_engage_supercruise_until_charging_returns_on_live_charge():
+    """Run 9 (screen-confirmed 14:56): the post-smack charge spawns an
+    ESCAPE VECTOR and holds until the ship aligns -- success for the press
+    step is a LIVE CHARGE; orient+hold own the alignment afterward."""
+    sender = FakeSender()
+    status = _ExclusionStatus(refuse_polls=8)    # one refusal window, then charge
+    ctx = _climb_ctx(sender, status)
+    ok = STEP_REGISTRY["engage_supercruise"](ctx, poll_s=1.0, max_charge_s=60.0,
+                                             presses=10, between_press_s=5.0,
+                                             until_charging=True)
+    assert ok is True
+    assert sender.actions().count("Supercruise") == 2   # refused once, then took

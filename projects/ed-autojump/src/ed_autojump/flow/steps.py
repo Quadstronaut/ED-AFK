@@ -150,6 +150,7 @@ def step_engage_jump(ctx: StepContext) -> bool:
 def step_engage_supercruise(
     ctx: StepContext, *, poll_s: float = 0.8, max_charge_s: float = 60.0,
     presses: int = 1, between_press_s: float = 8.0,
+    until_charging: bool = False,
 ) -> bool:
     """Press Supercruise, then gate on game signals — no success-window clock.
 
@@ -173,6 +174,14 @@ def step_engage_supercruise(
     re-pressing during a live charge would CANCEL it; a charge that starts
     then drops is handled by the existing charge_dropped exit. presses=1 is
     the exact legacy behavior.
+
+    `until_charging` (ADDED 2026-06-06 run 9): SUCCESS = a LIVE CHARGE, not
+    SC entry. A post-smack charge spawns an ESCAPE VECTOR and holds until
+    the ship ALIGNS with it (screen-confirmed 14:56: cyan "ALIGN WITH
+    ESCAPE VECTOR" marker; 9 minutes of full-throttle burn never engaged
+    because ED wanted attitude, not distance). The caller follows with
+    orient_compass (the vector renders as the compass dot) + hold_alignment
+    until SupercruiseEntry.
     """
     st = ctx.status_supplier()
     if st is not None and getattr(st, "in_supercruise", False):
@@ -207,6 +216,10 @@ def step_engage_supercruise(
             if getattr(st, "in_supercruise", False):
                 return True
             if getattr(st, "fsd_charging", False):
+                if until_charging:
+                    ctx.log("EngageSupercruiseDone", {"reason": "charging",
+                                                      "attempt": attempt + 1})
+                    return True   # live charge IS the goal — caller aligns
                 charge_seen = True
             elif charge_seen:
                 # Charge dropped without entry. One grace poll absorbs the
