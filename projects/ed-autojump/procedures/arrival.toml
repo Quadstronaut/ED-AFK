@@ -17,8 +17,15 @@ backoff_s = 2.0
 
 steps = [
   { action = "set_throttle", pct = 0 },             # tap    | 0
-  { action = "target_ahead" },                       # tap    | 1
-  { action = "sc_assist_orbit" },                    # macro  | 2 EXCLUSIVE â€” nav panel macro
+  # Pitch-star-first (ADDED 2026-06-06: 2 of 4 arrivals smacked ~25s after
+  # FSDJump â€” the ship arrives nose-INTO the star and the SC-assist
+  # acquisition starts from that pose; the operator's standing rule is the
+  # star goes off-axis BEFORE anything else flies). Verified star lock
+  # replaces the blind target_ahead deselect; the orbit macro re-targets
+  # row 0 itself, so the lock is compatible.
+  { action = "nav_panel_target", required = true },                                                    # macro  | 1 verified local-star lock
+  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 1b star astern FIRST
+  { action = "sc_assist_orbit" },                    # macro  | 2 EXCLUSIVE â€” nav panel macro (from the safe lane)
   { action = "wait", s = 13.0 },                     # wait   | 3 let orbit acquire
   { action = "target_next_route", required = true },                  # gated  | 4
   { action = "set_throttle", pct = 100 },            # tap    | 5
