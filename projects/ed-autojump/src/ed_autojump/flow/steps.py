@@ -519,14 +519,22 @@ def step_pitch_compass(
                    min(pitch_hold, behind_gain_s * read.magnitude))
 
     start = ctx.clock()
+    misses = 0   # consecutive not_found beats
     for i in range(max_iters):
         if ctx.clock() - start > timeout_s:
             ctx.log("PitchCompassTimeout", {"until": until, "iters": i})
             return False
         read = _measure(ctx.compass_reader, ctx.frame_grabber, ctx.compass_samples)
         at_gate = _at_gate(read)
-        action = None if at_gate else _press_for(read)
-        hold = None if at_gate else _hold_for(read)
+        # Transient-miss damping (run 5, session_142245): a single
+        # not_found beat (glare flicker) used to fire the full-power blind
+        # sweep and WRECK a converging pose. One missed beat -> press
+        # NOTHING, hold position; only 3 consecutive misses mean the dot is
+        # genuinely out of view and the sweep should resume.
+        misses = misses + 1 if not read.found else 0
+        transient_miss = (not read.found) and misses < 3
+        action = None if (at_gate or transient_miss) else _press_for(read)
+        hold = None if action is None else _hold_for(read)
         # Per-iteration telemetry (ADDED 2026-06-06: the 13:45 spin was 25
         # opaque presses — reads were invisible, same gap orient had).
         ctx.log("PitchIter", {
@@ -540,7 +548,8 @@ def step_pitch_compass(
                                          "offset_y": read.offset_y,
                                          "in_front": read.in_front})
             return True
-        ctx.sender.press(action, hold=hold)
+        if action is not None:           # transient miss -> hold position
+            ctx.sender.press(action, hold=hold)
         ctx.sleeper(settle_s)
     ctx.log("PitchCompassMaxIters", {"until": until})
     return False

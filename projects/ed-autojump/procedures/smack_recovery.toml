@@ -36,7 +36,11 @@ steps = [
   # never the clock): run 3 (2026-06-06 13:59) was converging at mag 0.40 when
   # the default 30s expired â€” proportional taps need ~2.2s/iter and a wrecked
   # pose can take ~25 iters (flip + center both axes).
-  { action = "pitch_compass", until = "behind", required = true, timeout_s = 75.0, max_iters = 40 },  # vision | 2 EXCLUSIVE â€” pitch star behind
+  # center_frac 0.35 (was default 0.25, widened 2026-06-06 run 5): the gate
+  # only needs "roughly astern" before throttling away; read noise is ~0.07
+  # and run 5 bounced at mag 0.29-0.40 for 17 iterations against the 0.25
+  # gate, burning the whole budget a hair short.
+  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 2 EXCLUSIVE â€” pitch star behind
   { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown â€” FsdCooldown flag-gated, no timer
 
   # â”€â”€ Fire FSD inside the exclusion zone to spawn the escape vector â”€â”€â”€â”€â”€

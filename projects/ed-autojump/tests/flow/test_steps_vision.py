@@ -288,3 +288,32 @@ def test_nav_panel_target_blind_without_vision():
     ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0)
     assert ok is True
     assert sender.events.count("FocusLeftPanel") == 2
+
+
+def test_pitch_transient_not_found_holds_position():
+    """Run 5 (session_142245): single not_found beats (glare flicker) fired
+    the full-power 1.0s blind sweep and WRECKED converging poses (i33 mag
+    0.41 -> not_found -> 1.0s blast -> pose gone). One missed beat must
+    press NOTHING; only k consecutive misses justify the sweep."""
+    reader = FakeReader([_behind_at(-0.3, -0.1), CompassRead.not_found(),
+                         _behind_at(-0.1, -0.05)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=6, timeout_s=999)
+    assert ok is True
+    # one yaw tap for the first read, NOTHING for the transient miss
+    assert sender.actions() == ["YawRightButton"]
+
+
+def test_pitch_consecutive_not_found_sweeps():
+    """3 consecutive misses = the dot is genuinely not visible -> blind
+    sweep resumes (the original search behavior)."""
+    reader = FakeReader([CompassRead.not_found()] * 3 + [_behind_at(-0.1, -0.05)])
+    ctx, sender = _ctx(reader)
+    ok = STEP_REGISTRY["pitch_compass"](ctx, until="behind", center_frac=0.25,
+                                        pitch_hold=1.0, settle_s=0.0,
+                                        max_iters=8, timeout_s=999)
+    assert ok is True
+    assert sender.holds[0] == ("PitchUpButton", 1.0)    # sweep on miss #3
+    assert len(sender.actions()) == 1                   # misses 1-2 pressed nothing
