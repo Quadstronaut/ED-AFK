@@ -1,8 +1,17 @@
-# The one parallel track. Hold the Discovery Scanner key DOWN until the
-# journal logs FSSDiscoveryScan, then release. The release is log-gated,
-# not time-gated — the key comes up the instant the scan confirms.
+# The one parallel track. Hold the FIRE TRIGGER down until the journal logs
+# FSSDiscoveryScan, then release. The release is log-gated, not time-gated —
+# the key comes up the instant the scan confirms (~5s charge).
 # max_hold_s in the step is a safety backstop (default ~30s) so a missing
 # event can't deadlock the track; it should never fire in normal use.
+#
+# REDESIGN 2026-06-06 (manual_honk_probe.py, live experiment): the old bind
+# was ExplorationFSSDiscoveryScan (Key_Equals) — that bind only works INSIDE
+# the FSS screen. Held 12s from the cockpit: nothing, which is why
+# FSSDiscoveryScan never appeared in ANY journal all day. The cockpit honk
+# is the FIRE-GROUP trigger: discovery scanner assigned to the active fire
+# group, PrimaryFire held in ANALYSIS mode -> honk fired in 5.0s flat.
+# ensure_analysis_mode is now doubly load-bearing: PrimaryFire in COMBAT
+# HUD is live weapons, so the analysis gate stays required and first.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
@@ -13,6 +22,6 @@
 #   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 parallel = true
 steps = [
-  { action = "ensure_analysis_mode", required = true },                                               # gated | 0 honk only fires in ANALYSIS mode — flag-gated, toggles HUD if needed (operator ruling 2026-06-06)
-  { action = "hold_until_event", bind = "ExplorationFSSDiscoveryScan", event = "FSSDiscoveryScan" },  # hold  | 1 the honk itself
+  { action = "ensure_analysis_mode", required = true },                                # gated | 0 honk only fires in ANALYSIS mode — and PrimaryFire outside it is weapons
+  { action = "hold_until_event", bind = "PrimaryFire", event = "FSSDiscoveryScan" },   # hold  | 1 the honk itself — fire-group trigger, ~5s charge
 ]

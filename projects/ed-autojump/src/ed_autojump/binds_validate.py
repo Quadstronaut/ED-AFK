@@ -55,8 +55,10 @@ REQUIRED_ACTIONS: frozenset[str] = frozenset({
     "PitchUpButton", "PitchDownButton",
     # executor/align.py
     "YawLeftButton", "YawRightButton",
-    # procedures/honk.toml
-    "ExplorationFSSDiscoveryScan",
+    # procedures/honk.toml — the cockpit honk is the FIRE-GROUP trigger
+    # (2026-06-06 probe: ExplorationFSSDiscoveryScan only works inside the
+    # FSS screen; PrimaryFire in analysis mode fired the honk in 5s).
+    "PrimaryFire",
     # flow/steps.py: step_ensure_analysis_mode (honk needs ANALYSIS HUD mode)
     "PlayerHUDModeToggle",
     # executor/navpanel.py (sc_assist_orbit + nav_panel_target)

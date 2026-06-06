@@ -31,6 +31,12 @@ def test_scancode_letters_match_directinput_set1():
 def test_scancode_numpad_and_punct():
     assert scancode_for("Key_Numpad_0") == 0x52
     assert scancode_for("Key_Numpad_7") == 0x47
+    # Frontier's canonical underscore spellings (straight from the game's own
+    # .binds output) — the EDAPGui-derived "Key_NumpadSubtract" form alone
+    # made PrimaryFire (Key_Numpad_Subtract) raise BindMissing (2026-06-06).
+    assert scancode_for("Key_Numpad_Subtract") == 0x4A
+    assert scancode_for("Key_NumpadSubtract") == 0x4A  # alias kept
+    assert scancode_for("Key_Numpad_Enter") == 0x1C    # extended
     assert scancode_for("Key_Apostrophe") == 0x28
     assert scancode_for("Key_SemiColon") == 0x27
     assert scancode_for("Key_Tab") == 0x0F

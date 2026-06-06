@@ -28,8 +28,9 @@ CRITICAL_ACTIONS = (
     "SetSpeed75",
     "SetSpeed100",
     "PitchUpButton",
-    "ExplorationFSSDiscoveryScan",  # the honk; bot never enters FSS mode,
-                                    # so Enter/Quit are NOT pressed and not critical.
+    "PrimaryFire",  # the honk = fire-group trigger held in analysis mode
+                    # (2026-06-06 probe: the ExplorationFSSDiscoveryScan bind
+                    # only works INSIDE the FSS screen, never the cockpit).
 )
 
 

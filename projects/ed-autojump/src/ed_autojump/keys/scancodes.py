@@ -54,6 +54,11 @@ KEY_TO_SCANCODE: dict[str, int] = {
     "Key_Numpad_9": 0x49,
     "Key_NumpadDecimal": 0x53, "Key_NumpadMultiply": 0x37,
     "Key_NumpadSubtract": 0x4A, "Key_NumpadAdd": 0x4E,
+    # Frontier's CANONICAL spellings use an underscore (Key_Numpad_Subtract --
+    # straight from the developer's own .binds output, 2026-06-06 honk probe).
+    # The EDAPGui-derived names above are kept as aliases.
+    "Key_Numpad_Decimal": 0x53, "Key_Numpad_Multiply": 0x37,
+    "Key_Numpad_Subtract": 0x4A, "Key_Numpad_Add": 0x4E,
 }
 
 # Extended-prefix keys (require 0xE0 byte). pydirectinput handles the
@@ -68,6 +73,7 @@ EXTENDED_KEY_TO_SCANCODE: dict[str, int] = {
     "Key_Insert": 0x52, "Key_Delete": 0x53,
     "Key_RightControl": 0x1D, "Key_RightAlt": 0x38,
     "Key_NumpadEnter": 0x1C, "Key_NumpadDivide": 0x35,
+    "Key_Numpad_Enter": 0x1C, "Key_Numpad_Divide": 0x35,  # Frontier canonical
 }
 
 

@@ -76,7 +76,7 @@ def _all_bound() -> dict[str, str]:
         "PitchDownButton": "Key_W",
         "YawLeftButton": "Key_A",
         "YawRightButton": "Key_D",
-        "ExplorationFSSDiscoveryScan": "Key_Equals",
+        "PrimaryFire": "Key_Numpad_Subtract",   # the honk (fire-group trigger)
         "PlayerHUDModeToggle": "Key_M",   # ensure_analysis_mode (honk gate)
         "FocusLeftPanel": "Key_1",
         "UI_Select": "Key_Enter",
