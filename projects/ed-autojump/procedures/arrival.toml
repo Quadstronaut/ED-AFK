@@ -23,8 +23,13 @@ steps = [
   # star goes off-axis BEFORE anything else flies). Verified star lock
   # replaces the blind target_ahead deselect; the orbit macro re-targets
   # row 0 itself, so the lock is compatible.
-  { action = "nav_panel_target", required = true },                                                    # macro  | 1 verified local-star lock
-  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 1b star astern FIRST
+  # BEST-EFFORT (required=false, 2026-06-06 run 13): a far secondary star's
+  # tiny dot sits on the filled/hollow classifier boundary and the bit
+  # flips every 1-3 beats at a stable position -- the pitch can stall on
+  # noise. A failed pitch must not block the arrival the orbit-first flow
+  # handled fine; a successful one still removes the nose-into-star pose.
+  { action = "nav_panel_target" },                                                                     # macro  | 1 best-effort local-star lock
+  { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 1b star astern FIRST (best effort)
   { action = "sc_assist_orbit" },                    # macro  | 2 EXCLUSIVE â€” nav panel macro (from the safe lane)
   { action = "wait", s = 13.0 },                     # wait   | 3 let orbit acquire
   { action = "target_next_route", required = true },                  # gated  | 4

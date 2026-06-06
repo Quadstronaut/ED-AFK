@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from types import SimpleNamespace
 
 from ed_autojump.flow import load_procedures, run_procedure, StepContext
@@ -27,7 +27,7 @@ def test_arrival_aborts_without_jump_when_orient_fails():
     # reader never finds the dot -> orient_compass fails -> abort before engage_jump
     ctx = StepContext(
         sender=sender, sleeper=lambda s: None,
-        compass_reader=FakeReader([CompassRead.not_found()] * 50),
+        compass_reader=FakeReader([CompassRead.not_found()] * 500),  # arrival v2 steps (nav verify + pitch) read ~52 before orient
         frame_grabber=lambda: object(), compass_samples=1,
         status_supplier=_status,
         align_kwargs={"max_iters": 2, "timeout_s": 999, "settle_s": 0.0},
@@ -35,6 +35,6 @@ def test_arrival_aborts_without_jump_when_orient_fails():
     result = run_procedure(procs["arrival"], ctx)
     assert result.aborted is True
     # The JUMP key must never fire when orient fails. (SetSpeed100 IS expected
-    # earlier — it's the legitimate fly-out throttle before the orient gate —
+    # earlier â€” it's the legitimate fly-out throttle before the orient gate â€”
     # so we assert on the jump combo, not the throttle.)
     assert "Hyperspace" not in sender.actions()   # NEVER jumped
