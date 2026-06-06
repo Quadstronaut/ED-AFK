@@ -263,3 +263,67 @@ def test_engage_supercruise_timeout_kwarg_is_gone():
                       status_supplier=lambda: _status(in_supercruise=True))
     with pytest.raises(TypeError):
         STEP_REGISTRY["engage_supercruise"](ctx, timeout_s=30.0)
+
+
+class _ExclusionStatus:
+    """Status sequence for the exclusion-zone climb-out: presses are REFUSED
+    (no fsd_charging, ever) until `refuse_polls` status reads pass, then the
+    charge takes and SC entry follows two reads later."""
+
+    def __init__(self, refuse_polls):
+        self.refuse_polls = refuse_polls
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        if self.calls <= self.refuse_polls:
+            return _status()
+        if self.calls <= self.refuse_polls + 2:
+            return _status(fsd_charging=True)
+        return _status(in_supercruise=True)
+
+
+def _climb_ctx(sender, status, *, step=1.0):
+    now = [0.0]
+    def clock():
+        return now[0]
+    def waiter(ev, t):
+        now[0] += t          # event polls advance the clock; never fire
+        return False
+    return StepContext(sender=sender, clock=clock, sleeper=lambda s: None,
+                       event_waiter=waiter, status_supplier=status)
+
+
+def test_engage_supercruise_represses_when_refused():
+    """Run 6 (session_142708): inside the exclusion zone ED refuses the SC
+    press outright -- no FsdCharging, no event. The climb-out re-presses
+    every between_press_s until the charge takes; entry via the flag."""
+    sender = FakeSender()
+    status = _ExclusionStatus(refuse_polls=14)   # ~2 windows of refusals
+    ctx = _climb_ctx(sender, status)
+    ok = STEP_REGISTRY["engage_supercruise"](ctx, poll_s=1.0, max_charge_s=60.0,
+                                             presses=10, between_press_s=5.0)
+    assert ok is True
+    assert sender.actions().count("Supercruise") >= 2   # re-pressed at least once
+
+
+def test_engage_supercruise_never_represses_during_live_charge():
+    """Re-pressing Supercruise mid-charge CANCELS it -- once fsd_charging is
+    seen, no further presses, ever."""
+    sender = FakeSender()
+    status = _ExclusionStatus(refuse_polls=0)    # charge takes immediately
+    ctx = _climb_ctx(sender, status)
+    ok = STEP_REGISTRY["engage_supercruise"](ctx, poll_s=1.0, max_charge_s=60.0,
+                                             presses=10, between_press_s=2.0)
+    assert ok is True
+    assert sender.actions().count("Supercruise") == 1
+
+
+def test_engage_supercruise_single_press_legacy_default():
+    """presses=1 (the default) keeps the exact legacy behavior: one press,
+    watchdog if nothing happens."""
+    sender = FakeSender()
+    ctx = _climb_ctx(sender, lambda: _status())   # never charges
+    ok = STEP_REGISTRY["engage_supercruise"](ctx, poll_s=1.0, max_charge_s=10.0)
+    assert ok is False
+    assert sender.actions().count("Supercruise") == 1

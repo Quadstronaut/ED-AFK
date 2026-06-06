@@ -43,13 +43,18 @@ steps = [
   { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 2 EXCLUSIVE â€” pitch star behind
   { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown â€” FsdCooldown flag-gated, no timer
 
-  # â”€â”€ Fire FSD inside the exclusion zone to spawn the escape vector â”€â”€â”€â”€â”€
-  # Star is BEHIND now -- safe to make way; SC entry needs forward throttle.
-  { action = "set_throttle", pct = 50 },                                                      # tap    | 4a
-  { action = "target_ahead" },                                                                # tap    | 4 deselect
-  { action = "press", bind = "Supercruise" },                                                 # tap    | 5 FSD lit inside exclusion â†’ escape vector spawns
-  { action = "orient_compass", required = true },                                             # vision | 6 EXCLUSIVE â€” home on escape vector during SC charge
-  { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 7 hold escape vector until SC entry â€” event/state-gated, no clock
+  # â”€â”€ Climb out of the exclusion zone, re-pressing SC until it takes â”€â”€â”€â”€â”€
+  # REDESIGNED 2026-06-06 run 6 (session_142708): the old single Supercruise
+  # press + escape-vector orient + 60s hold assumed the FSD lights inside the
+  # exclusion zone and spawns an escape-vector compass target. Reality: ED
+  # REFUSES the press outright inside the exclusion -- no FsdCharging, no
+  # journal event -- and the "escape vector" the orient homed on was the
+  # route-hop compass fallback. Star is BEHIND (gated above): full burn
+  # straight out, re-press SC every 8s until the charge takes (never
+  # re-pressed during a live charge -- that cancels it).
+  { action = "set_throttle", pct = 100 },                                                     # tap    | 4a full burn AWAY (star astern)
+  { action = "target_ahead" },                                                                # tap    | 4b deselect the star
+  { action = "engage_supercruise", required = true, presses = 30, between_press_s = 8.0 },    # gated  | 5 climb-out: press until FSD takes, entry via event/flag
 
   # â”€â”€ In supercruise: clear the star, target route, jump â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   { action = "set_throttle", pct = 100 },                                                     # tap    | 8
