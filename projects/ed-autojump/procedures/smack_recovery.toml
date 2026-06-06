@@ -54,7 +54,11 @@ steps = [
   # re-pressed during a live charge -- that cancels it).
   { action = "set_throttle", pct = 100 },                                                     # tap    | 4a full burn AWAY (star astern)
   { action = "target_ahead" },                                                                # tap    | 4b deselect the star
-  { action = "engage_supercruise", required = true, presses = 30, between_press_s = 8.0 },    # gated  | 5 climb-out: press until FSD takes, entry via event/flag
+  # max_charge_s 240 (run 8, 14:48): a climb-out charge can sit BLOCKED-BUT-
+  # LIVE ("TOO CLOSE") for minutes while the ship burns outward -- ED engages
+  # the moment the exclusion clears. The default 60s "wedged FSD" watchdog is
+  # calibrated for JUMP charges and gave up on a healthy climbing charge.
+  { action = "engage_supercruise", required = true, presses = 30, between_press_s = 8.0, max_charge_s = 240.0 },  # gated  | 5 climb-out: press until FSD takes, entry via event/flag
 
   # â”€â”€ In supercruise: clear the star, target route, jump â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   { action = "set_throttle", pct = 100 },                                                     # tap    | 8
