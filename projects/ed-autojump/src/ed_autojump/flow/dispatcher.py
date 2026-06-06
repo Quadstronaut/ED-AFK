@@ -71,6 +71,32 @@ class FlowRunner:
     def event_time(self, name: str) -> Optional[float]:
         return self._event_times.get(name)
 
+    def _fresh_status(self) -> Optional[Any]:
+        """Re-poll Status.json on every read. The previous wiring handed steps
+        a snapshot frozen at procedure start — `_poll_status` only ran in the
+        outer live loop, so engage_jump's fsd_charging gate and any in-step
+        state machine were reading STALE flags for the procedure's whole life.
+        Event-driven steps need live state; a stat() per read is cheap.
+
+        Without a status_reader (tests), fall back to the injected supplier
+        so scripted fakes stay live too."""
+        if self.status_reader is not None:
+            self._poll_status()
+        else:
+            st = self.status_supplier()
+            if st is not None:
+                self._latest_status = st
+        return self._latest_status
+
+    def _should_abort(self) -> bool:
+        """Operator abort signal for in-step loops: panic hotkey or stop
+        request. With wall-clock gates banned, this is the only non-game exit
+        from an event-driven wait."""
+        if self.stop_requested:
+            return True
+        return self.panic_switch is not None and getattr(
+            self.panic_switch, "tripped", False)
+
     # ---- context construction --------------------------------------------
     def _make_context(self) -> StepContext:
         return StepContext(
@@ -85,9 +111,10 @@ class FlowRunner:
             widget_ring_reader=self.widget_ring_reader,
             widget_frame_grabber=self.widget_frame_grabber,
             overlay=self.overlay,
-            status_supplier=lambda: self._latest_status,
+            status_supplier=self._fresh_status,
             event_time=self.event_time,
             event_waiter=self._wait_for_event,
+            should_abort=self._should_abort,
             record=self.record,
         )
 

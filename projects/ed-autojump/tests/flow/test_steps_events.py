@@ -3,11 +3,11 @@ from ed_autojump.flow.steps import STEP_REGISTRY
 from tests.flow import FakeSender
 
 
-def test_wait_for_event_delegates_to_waiter():
-    ctx = StepContext(sender=FakeSender(),
-                      event_waiter=lambda ev, t: ev == "SupercruiseEntry")
-    assert STEP_REGISTRY["wait_for_event"](ctx, event="SupercruiseEntry", timeout_s=5.0) is True
-    assert STEP_REGISTRY["wait_for_event"](ctx, event="Nope", timeout_s=5.0) is False
+def test_wait_for_event_is_deleted():
+    """REGRESSION GUARD: the timeout-gated passive wait cancelled a healthy
+    jump twice (2026-06-01, 2026-06-06). It must stay out of the registry so
+    any straggler TOML fails validation loudly."""
+    assert "wait_for_event" not in STEP_REGISTRY
 
 
 def test_wait_cooldown_waits_only_the_remainder():

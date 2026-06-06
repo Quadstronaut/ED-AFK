@@ -24,7 +24,14 @@ class StepContext:
     status_supplier: Callable[[], Optional[Any]] = lambda: None
     event_time: Callable[[str], Optional[float]] = lambda name: None
     # block until `event` is logged or `timeout_s` elapses; True if seen.
+    # NB: steps use this with SHORT windows as a poll cadence — never as a
+    # success/failure gate (no-arbitrary-timed-waits rule).
     event_waiter: Optional[Callable[[str, float], bool]] = None
+
+    # operator abort (panic switch / stop request). Event-driven loops MUST
+    # consult this every iteration — it is the only exit that isn't a game
+    # signal, and the operator's backstop now that wall-clock gates are banned.
+    should_abort: Callable[[], bool] = lambda: False
 
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None

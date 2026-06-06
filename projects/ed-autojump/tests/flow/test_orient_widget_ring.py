@@ -211,6 +211,9 @@ def test_arrival_has_widget_ring_after_compass():
         status_supplier=_arrival_status,
         align_kwargs={"max_iters": 2, "timeout_s": 999, "settle_s": 0.0},
         widget_ring_enabled=False,  # no-op fine step
+        # arrival now ends with hold_alignment (event/state-gated, no clock);
+        # fire StartJump on the first poll so the procedure completes.
+        event_waiter=lambda ev, t: ev == "StartJump",
     )
     result = run_procedure(procs["arrival"], ctx)
     assert result.aborted is False

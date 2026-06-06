@@ -1,18 +1,18 @@
 # Fresh load: ship sits at a star in normal space.
 #
-# First attempt: throttle up, lock the next route star, orient on compass,
-# fire the FSD, wait for the journal to confirm StartJump:Hyperspace. If
-# StartJump never arrives within 12s the jump refused (mass-locked, FSD
-# cooldown, off-axis, etc.) — the retry policy below kicks us back into
-# the recovery sequence (target_ahead onward): SC out, re-target, re-orient,
-# re-jump.
+# First attempt: throttle up, lock the next route star, orient on compass
+# (coarse) then widget ring (fine), fire the FSD, then hold_alignment — a
+# PURE EVENT-DRIVEN gate that keeps the dot in the charge cone and exits on
+# the game's own signals: StartJump journal event / FsdJump flag = success;
+# FsdCharging true→false without either = the game aborted the charge =
+# failure. NO wall-clock timeout (no-arbitrary-timed-waits): the old 12s
+# wait_for_event gate expired mid-spool on a healthy charge and the recovery
+# path's SelectTarget/Supercruise presses cancelled the jump (2026-06-01,
+# 2026-06-06 sessions).
 #
-# Every state transition that has a journal correlate gates on it. ED emits
-# no "jump failed" event — absence of StartJump within timeout IS the failure
-# signal. Vision-gated and Status.json-gated actions (orient_compass,
-# set_throttle, target_*) have no journal event and so can't be log-gated;
-# orient_compass fails closed without vision; engage_jump checks Status.json
-# flags before firing keys.
+# Recovery is only ever entered when the charge has GENUINELY dropped —
+# hold_alignment cannot fail while FsdCharging is set — so its keypresses
+# can no longer kill a live jump.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
@@ -30,18 +30,20 @@ backoff_s = 2.0
 
 steps = [
   # ── First-try direct jump ────────────────────────────────────────────────
-  { action = "set_throttle", pct = 100 },                                                # tap    | 0
-  { action = "target_next_route" },                                                       # tap    | 1
-  { action = "orient_compass", required = true },                                         # vision | 2
-  { action = "engage_jump", required = true },                                            # gated  | 3a press FSD combo
-  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },  # wait   | 3b confirm via journal
+  { action = "set_throttle", pct = 100 },                  # tap    | 0
+  { action = "target_next_route" },                        # tap    | 1
+  { action = "orient_compass", required = true },          # vision | 2 coarse
+  { action = "orient_widget_ring", required = true },      # vision | 3 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },             # gated  | 4 press FSD combo
+  { action = "hold_alignment", required = true },          # vision | 5 hold cone until StartJump — event/state-gated, no clock
 
   # ── Recovery: retry_from lands here when any required step above fails ───
-  { action = "target_ahead" },                                                            # tap    | 4 deselect (no target ahead → clears)
-  { action = "engage_supercruise", required = true },                                     # gated  | 5 log-gated on SupercruiseEntry
-  { action = "set_throttle", pct = 100 },                                                 # tap    | 6
-  { action = "target_next_route" },                                                       # tap    | 7
-  { action = "orient_compass", required = true },                                         # vision | 8
-  { action = "engage_jump", required = true },                                            # gated  | 9a press FSD combo
-  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },  # wait   | 9b confirm via journal
+  { action = "target_ahead" },                             # tap    | 6 deselect (no target ahead → clears)
+  { action = "engage_supercruise", required = true },      # gated  | 7 event/state-gated on SupercruiseEntry
+  { action = "set_throttle", pct = 100 },                  # tap    | 8
+  { action = "target_next_route" },                        # tap    | 9
+  { action = "orient_compass", required = true },          # vision | 10 coarse
+  { action = "orient_widget_ring", required = true },      # vision | 11 fine
+  { action = "engage_jump", required = true },             # gated  | 12 press FSD combo
+  { action = "hold_alignment", required = true },          # vision | 13 hold cone until StartJump
 ]

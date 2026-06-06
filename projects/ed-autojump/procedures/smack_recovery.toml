@@ -32,7 +32,7 @@ steps = [
   { action = "target_ahead" },                                                                # tap    | 4 deselect
   { action = "press", bind = "Supercruise" },                                                 # tap    | 5 FSD lit inside exclusion → escape vector spawns
   { action = "orient_compass", required = true },                                             # vision | 6 EXCLUSIVE — home on escape vector during SC charge
-  { action = "wait_for_event", event = "SupercruiseEntry", timeout_s = 20.0, required = true }, # wait   | 7
+  { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 7 hold escape vector until SC entry — event/state-gated, no clock
 
   # ── In supercruise: clear the star, target route, jump ────────────────
   { action = "set_throttle", pct = 100 },                                                     # tap    | 8
@@ -41,5 +41,5 @@ steps = [
   { action = "orient_compass", required = true },                                             # vision | 11 EXCLUSIVE coarse
   { action = "orient_widget_ring", required = true },                                         # vision | 12 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },                                                # gated  | 13a FSD jump
-  { action = "wait_for_event", event = "StartJump", timeout_s = 12.0, required = true },      # wait   | 13b confirm via journal
+  { action = "hold_alignment", required = true },                                             # vision | 13b hold cone until StartJump — event/state-gated, no clock
 ]

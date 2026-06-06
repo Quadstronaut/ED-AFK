@@ -83,7 +83,14 @@ def step_engage_jump(ctx: StepContext) -> bool:
     return _press(ctx, "Hyperspace")
 
 
-def step_engage_supercruise(ctx: StepContext, *, timeout_s: float = 30.0) -> bool:
+def step_engage_supercruise(ctx: StepContext, *, poll_s: float = 0.8) -> bool:
+    """Press Supercruise, then gate PURELY on game signals — no wall clock.
+
+    Success: `SupercruiseEntry` journal event, or the Supercruise status flag
+    (state-side confirmation, absorbs journal-write latency). Failure: the
+    FsdCharging flag observed true→false without entry (the game aborted the
+    charge), or operator abort. `poll_s` is the event-poll cadence, not a gate.
+    """
     st = ctx.status_supplier()
     if st is not None and getattr(st, "in_supercruise", False):
         return True  # already in SC; nothing to engage
@@ -91,7 +98,30 @@ def step_engage_supercruise(ctx: StepContext, *, timeout_s: float = 30.0) -> boo
         return False
     if ctx.event_waiter is None:
         return True  # no journal wiring (unit tests) -> proceed
-    return ctx.event_waiter("SupercruiseEntry", timeout_s)
+    charge_seen = False
+    while True:
+        if ctx.should_abort():
+            ctx.log("EngageSupercruiseDone", {"reason": "abort"})
+            return False
+        if ctx.event_waiter("SupercruiseEntry", poll_s):
+            return True
+        st = ctx.status_supplier()
+        if st is None:
+            continue
+        if getattr(st, "in_supercruise", False):
+            return True
+        if getattr(st, "fsd_charging", False):
+            charge_seen = True
+        elif charge_seen:
+            # Charge dropped without entry. One grace poll absorbs the
+            # Status-write vs journal-write race, then it's a real abort.
+            if ctx.event_waiter("SupercruiseEntry", poll_s):
+                return True
+            st = ctx.status_supplier()
+            if st is not None and getattr(st, "in_supercruise", False):
+                return True
+            ctx.log("EngageSupercruiseDone", {"reason": "charge_dropped"})
+            return False
 
 
 STEP_REGISTRY: dict[str, Callable[..., bool]] = {
@@ -109,10 +139,11 @@ STEP_REGISTRY.update({
 })
 
 
-def step_wait_for_event(ctx: StepContext, *, event: str, timeout_s: float) -> bool:
-    if ctx.event_waiter is None:
-        return True  # no journal wiring (unit tests) -> proceed
-    return ctx.event_waiter(event, timeout_s)
+# `wait_for_event` (timeout-gated passive wait) is DELETED, not deprecated:
+# a wall-clock timeout as a success/failure gate cancelled a healthy jump
+# twice (2026-06-01, 2026-06-06). Gates are journal events or Status.json
+# flags only — see step_hold_alignment. Removing it from the registry makes
+# any straggler TOML fail validation loudly instead of regressing silently.
 
 
 def step_wait_cooldown(ctx: StepContext, *, since: str, s: float) -> bool:
@@ -163,7 +194,6 @@ def step_hold_until_event(
 
 
 STEP_REGISTRY.update({
-    "wait_for_event": step_wait_for_event,
     "wait_cooldown": step_wait_cooldown,
     "hold_until_event": step_hold_until_event,
 })
@@ -257,71 +287,113 @@ def step_pitch_compass(
     return False
 
 
+# State-side success flags per gating event: the Status.json bit that proves
+# the event's outcome even if the journal write hasn't landed yet.
+_HOLD_SUCCESS_FLAG = {
+    "StartJump": "fsd_jump",            # bit 30 — hyperspace committed
+    "SupercruiseEntry": "in_supercruise",
+}
+# Extra event polls after FsdCharging drops before declaring failure. Absorbs
+# the Status-write vs journal-write race at jump commit (flag clears at the
+# same instant the event is written, by different writers). A bounded poll
+# count, not a wall-clock gate: the decision input is still event/state.
+_HOLD_GRACE_POLLS = 3
+
+
 def step_hold_alignment(
     ctx: StepContext,
     *,
     until_event: str = "StartJump",
-    timeout_s: float = 12.0,
+    poll_s: float = 0.8,
     align_tol: float = 0.07,
     gain: float = 0.3,
     min_press: float = 0.04,
     max_press: float = 0.10,
-    settle_s: float = 0.8,
     samples: int = 3,
 ) -> bool:
     """Hold compass alignment during an FSD spool until `until_event` arrives.
+    PURE EVENT-DRIVEN — no wall-clock timeout (no-arbitrary-timed-waits rule).
 
-    Replaces the old `wait_for_event StartJump` after `engage_jump`. That
-    pattern was OPEN-LOOP: once HyperSuperCombination fired, nothing kept the
-    target in ED's FSD-charge cone for the ~7s spool. The 2026-06-01 08:05
-    session showed the dot drifting past the cone (residual rotational
-    momentum + ship sway + target moving relative to nose as the ship coasts
-    forward), ED silently aborting the charge, and the bot falling into a
-    wrong recovery path.
+    The 12s `wait_for_event StartJump` this replaces timed out mid-spool on a
+    HEALTHY charge (twice: 2026-06-01, 2026-06-06) and the recovery path's
+    SelectTarget/Supercruise presses cancelled the jump. A clock cannot know
+    whether a charge is healthy; the game's own signals can.
 
-    Each loop iteration calls `event_waiter(until_event, settle_s)` as a
-    short-timeout poll — `settle_s` IS the blocking window (no separate
-    sleeper call). If it returns True the loop exits True. If False, take a
-    `samples`-median compass read; if in-front and within `align_tol`, no
-    correction. Otherwise apply ONE micro-correction via `_correct` from
-    `align.py`. The outer `timeout_s` is the wall-clock budget.
+    Exit conditions, in priority order — every one is a game signal or the
+    operator:
+      1. `until_event` in the journal, or its state-side success flag
+         (StartJump -> FsdJump bit, SupercruiseEntry -> Supercruise bit)
+         -> True.
+      2. FsdCharging observed true→false with neither (game aborted the
+         charge; ED emits no failure event — the flag drop IS the signal),
+         after `_HOLD_GRACE_POLLS` extra polls -> False.
+      3. FsdCooldown appearing before any charge was seen (press refused
+         into cooldown) -> False.
+      4. ctx.should_abort() — panic switch / stop request -> False.
 
-    Defaults are deliberately tighter / gentler than the acquire-loop in
-    `orient_compass`: `align_tol=0.07` (vs `[vision].align_tol`), `gain=0.3`
-    (vs orient's 2.0), `max_press=0.10` (vs 0.70). This is a MAINTENANCE
-    hold, not an acquisition swing — micro-nudges only.
+    `poll_s` is the event-poll blocking window (cadence, NOT a gate). Between
+    polls: `samples`-median compass read; in-front and within `align_tol` ->
+    no correction, else ONE micro-correction via align._correct. Defaults are
+    deliberately gentler than orient_compass (gain 0.3 vs 2.0, max_press 0.10
+    vs 0.70): this is a MAINTENANCE hold, not an acquisition swing.
 
-    Fails closed (returns False, logs) when vision or event_waiter is
-    unwired. Raises ValueError on samples<1 or timeout_s<=0 — those would
-    silently degrade to no-op loops, which is exactly the misconfig we
-    don't want to ship.
-
-    Retry interaction: on timeout the procedure's on_required_fail trips
-    retry_from. If retry_from lands back at `engage_jump` while the FSD is
-    still mid-charge, `engage_jump`'s `not fsd_charging` precondition
-    returns False and triggers another retry, bounded by `max_retries`.
-    The FSD will either fire StartJump (next attempt's hold_alignment
-    catches it) or fully abort (clearing the flag). Acceptable.
+    Fails closed (returns False, logs) when vision, event_waiter, OR status
+    is unwired — without status there is no failure signal, and waiting
+    forever on a dead charge is as wrong as a timer. Raises ValueError on
+    samples<1 or poll_s<=0 (silent no-op/spin misconfigs).
     """
     if samples < 1:
         raise ValueError(f"hold_alignment: samples must be >= 1, got {samples}")
-    if timeout_s <= 0:
-        raise ValueError(f"hold_alignment: timeout_s must be > 0, got {timeout_s}")
+    if poll_s <= 0:
+        raise ValueError(f"hold_alignment: poll_s must be > 0, got {poll_s}")
     if ctx.compass_reader is None or ctx.frame_grabber is None:
         ctx.log("HoldAlignmentNoVision", {})
         return False
     if ctx.event_waiter is None:
         ctx.log("HoldAlignmentNoWaiter", {})
         return False
+    if ctx.status_supplier() is None:
+        ctx.log("HoldAlignmentNoStatus", {})
+        return False
 
     from ..executor.align import _correct, _measure
 
-    start = ctx.clock()
+    success_flag = _HOLD_SUCCESS_FLAG.get(until_event)
+    charge_seen = False
     iterations = 0
-    while ctx.clock() - start < timeout_s:
-        if ctx.event_waiter(until_event, settle_s):
+    while True:
+        if ctx.should_abort():
+            ctx.log("HoldAlignmentDone", {"reason": "abort", "iters": iterations})
+            return False
+        if ctx.event_waiter(until_event, poll_s):
             ctx.log("HoldAlignmentDone", {"reason": "event", "iters": iterations})
             return True
+        st = ctx.status_supplier()
+        if st is not None:
+            if success_flag and getattr(st, success_flag, False):
+                ctx.log("HoldAlignmentDone", {"reason": "state", "iters": iterations})
+                return True
+            if getattr(st, "fsd_charging", False):
+                charge_seen = True
+            elif charge_seen:
+                for _ in range(_HOLD_GRACE_POLLS):
+                    if ctx.event_waiter(until_event, poll_s):
+                        ctx.log("HoldAlignmentDone",
+                                {"reason": "event", "iters": iterations})
+                        return True
+                    st = ctx.status_supplier()
+                    if (st is not None and success_flag
+                            and getattr(st, success_flag, False)):
+                        ctx.log("HoldAlignmentDone",
+                                {"reason": "state", "iters": iterations})
+                        return True
+                ctx.log("HoldAlignmentDone",
+                        {"reason": "charge_dropped", "iters": iterations})
+                return False
+            elif getattr(st, "fsd_cooldown", False):
+                ctx.log("HoldAlignmentDone",
+                        {"reason": "refused_cooldown", "iters": iterations})
+                return False
         read = _measure(ctx.compass_reader, ctx.frame_grabber, samples)
         iterations += 1
         if not read.found:
@@ -330,8 +402,6 @@ def step_hold_alignment(
             continue   # within maintenance tolerance, no correction needed
         _correct(ctx.sender, read, gain=gain, min_press=min_press,
                  max_press=max_press, deadzone=align_tol / 2)
-    ctx.log("HoldAlignmentDone", {"reason": "timeout", "iters": iterations})
-    return False
 
 
 def step_orient_widget_ring(

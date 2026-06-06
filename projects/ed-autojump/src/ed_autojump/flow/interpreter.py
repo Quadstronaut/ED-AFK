@@ -38,6 +38,15 @@ def run_procedure(
     i = 0
     n = len(proc.steps)
     while i < n:
+        if ctx.should_abort():
+            # Panic / stop: abort the whole procedure NOW — no retries, no
+            # later steps (a retry after panic would press keys the operator
+            # just tried to stop).
+            result.aborted = True
+            ctx.log("ProcedureAborted",
+                    {"procedure": proc.name, "at": "operator_abort",
+                     "retries": result.retries})
+            return result
         step = proc.steps[i]
         if ctx.overlay is not None:
             # cosmetic; the writer is fail-soft but guard anyway so a broken

@@ -26,4 +26,5 @@ steps = [
   { action = "orient_compass", required = true },        # vision | 7 coarse
   { action = "orient_widget_ring", required = true },    # vision | 8 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },           # gated  | 9 FSD jump
+  { action = "hold_alignment", required = true },        # vision | 10 hold cone until StartJump — event/state-gated, no clock
 ]

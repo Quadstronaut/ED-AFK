@@ -135,6 +135,12 @@ class Status(BaseModel):
         return self.flag(StatusFlags.FsdCooldown)
 
     @property
+    def fsd_jump(self) -> bool:
+        """True once the hyperspace jump is committed (bit 30). State-side
+        confirmation of the StartJump journal event."""
+        return self.flag(StatusFlags.FsdJump)
+
+    @property
     def scooping_fuel(self) -> bool:
         return self.flag(StatusFlags.ScoopingFuel)
 
