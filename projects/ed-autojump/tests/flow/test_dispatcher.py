@@ -251,9 +251,13 @@ class _FakeOverlay:
     def __init__(self):
         self.events = []
         self.steps = []
+        self.status_lines = []
 
     def event(self, text):
         self.events.append(text)
+
+    def status(self, text):
+        self.status_lines.append(text)
 
     def step(self, proc, action, idx, total):
         self.steps.append((proc, action, idx, total))
@@ -274,6 +278,28 @@ def test_overlay_threads_into_context_and_jump_event():
     r.dispatch(_ev("FSDJump", body_type="Star", star_system="Sol"))
     assert ov.events == ["Jump 1: Sol"]                    # counter + system
     assert ("arrival", "target_next_route", 1, 1) in ov.steps  # per-step status
+
+
+def test_aborted_procedure_notifies_loudly(capsys):
+    """G1: when run_procedure aborts (a required step exhausts its retries),
+    _run must NOTIFY — print + persistent overlay STATUS slot — never silently
+    swallow the result. ABORTED = human eyes required; notification-only, no
+    auto-restart. The step here fails because SelectTarget is unbound."""
+    sender = FakeSender(unbound={"SelectTarget"})
+    ov = _FakeOverlay()
+    procs = {"arrival": Procedure(
+        name="arrival",
+        steps=(Step("target_ahead", required=True),))}
+    r = FlowRunner(
+        procedures=procs, sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None, status_supplier=lambda: None, overlay=ov)
+    r._run("arrival")
+    out = capsys.readouterr().out
+    assert "[ABORTED]" in out
+    assert "arrival" in out
+    # persistent STATUS slot (keepalive), NOT the transient event() line
+    assert any("[ABORTED]" in t for t in ov.status_lines)
+    assert all("[ABORTED]" not in t for t in ov.events)   # not event()
 
 
 def test_make_context_widget_ring_defaults_off():

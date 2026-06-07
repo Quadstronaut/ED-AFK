@@ -273,13 +273,19 @@ def test_nav_panel_target_retoggles_when_no_dot():
 
 def test_nav_panel_target_fails_closed_when_dot_never_appears():
     """Glare or true vision loss: never seen -> False (required step ->
-    procedure retry), NOT a blind True that sends pitch hunting nothing."""
+    procedure retry), NOT a blind True that sends pitch hunting nothing.
+
+    F2 (2026-06-07 council, decoupled row scan): the macro cap is now
+    `max_rows + max_toggles` total runs, not `max_toggles` — a dot miss is
+    SAME-row slack, distinct from a wrong-body row advance. With all-miss and
+    the default max_rows=10 the loop runs 10+2=12 macros before failing closed
+    (each macro = one FocusLeftPanel open + close)."""
     reader = FakeReader([])                # always not_found
     ctx, sender = _ctx(reader)
     ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0, verify_reads=2,
                                            max_toggles=2)
     assert ok is False
-    assert sender.events.count("FocusLeftPanel") == 4   # capped at 2 macros
+    assert sender.events.count("FocusLeftPanel") == 24  # capped at 12 macros
 
 
 def test_nav_panel_target_blind_without_vision():

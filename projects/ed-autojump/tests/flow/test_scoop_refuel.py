@@ -34,10 +34,17 @@ def _st(fuel, scooping=False):
 
 
 def _ctx(script, *, clock=None, sender=None, ship=_SIX_A, star="G",
-         abort=None, log=None):
-    """script: callable(t) -> Status-like or None."""
+         abort=None, log=None, jump_age_supplier=None):
+    """script: callable(t) -> Status-like or None.
+
+    jump_age_supplier: optional override for the stale-arrival gate. Default
+    UNWIRED (the context default = `lambda: None`), so a bare _ctx() proceeds
+    exactly as before the gate existed (regression guard)."""
     clock = clock or _Clock()
     sender = sender or FakeSender()
+    kw = {}
+    if jump_age_supplier is not None:
+        kw["jump_age_supplier"] = jump_age_supplier
     return StepContext(
         sender=sender,
         clock=clock,
@@ -47,6 +54,7 @@ def _ctx(script, *, clock=None, sender=None, ship=_SIX_A, star="G",
         ship_fuel_supplier=lambda: ship,
         should_abort=abort or (lambda: False),
         record=log,
+        **kw,
     )
 
 
@@ -285,6 +293,73 @@ def test_unbound_throttle_fails_clean():
     ctx = _ctx(lambda t: _st(5.0))
     ctx.sender = sender
     assert STEP_REGISTRY["scoop_refuel"](ctx) is False
+
+
+# ---- stale-arrival skip gate (F1, the 11:57Z incident) ---------------------
+
+def test_stale_arrival_skips_with_zero_presses():
+    # A restart 25 min after FSDJump entered the approach loop pointed nowhere.
+    # age past the fresh window -> skip, no keys ever pressed against the star.
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(lambda t: _st(5.0), sender=sender, log=log,
+               jump_age_supplier=lambda: 700.0)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert sender.actions() == []
+    skip = dict(rows)["ScoopRefuelSkipped"]
+    assert skip["reason"] == "stale_arrival"
+    assert skip["age_s"] == 700.0
+
+
+def test_fresh_arrival_proceeds_into_the_scoop():
+    # Age inside the fresh window -> the happy script runs the full pit stop.
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(_happy_script, sender=sender, log=log,
+               jump_age_supplier=lambda: 30.0)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert "ScoopStart" in [k for k, _ in rows]
+
+
+def test_stale_arrival_boundary_proceeds_at_window():
+    # Gate is `>`, not `>=`: exactly at the window the arrival still counts as
+    # fresh and the scoop proceeds.
+    ctx = _ctx(_happy_script, jump_age_supplier=lambda: 120.0)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+
+
+def test_stale_arrival_boundary_skips_just_past_window():
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(lambda t: _st(5.0), sender=sender, log=log,
+               jump_age_supplier=lambda: 120.001)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert sender.actions() == []
+    assert dict(rows)["ScoopRefuelSkipped"]["reason"] == "stale_arrival"
+
+
+def test_unwired_jump_age_proceeds_exactly_as_today():
+    # Regression guard: a bare _ctx() (jump_age unwired -> None) must take the
+    # live path, never the stale-skip — None fails toward working behavior.
+    rows, log = _recorder()
+    ctx = _ctx(_happy_script, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert "ScoopStart" in [k for k, _ in rows]
+
+
+def test_dispatcher_jump_age_uses_event_timestamp_not_replay_clock():
+    # THE test that catches the monotonic bug: now_utc frozen 25 min after the
+    # FSDJump's OWN journal timestamp -> age ~1500s (stale), NOT ~0 as
+    # _event_times["jump"] (clock() at replay time) would have read.
+    import datetime as _dt
+    now = _dt.datetime(2026, 6, 7, 11, 57, 0, tzinfo=_dt.timezone.utc)
+    r = FlowRunner(procedures={}, sender=FakeSender(), now_utc=lambda: now)
+    # No FSDJump seen yet -> None.
+    assert r._make_context().jump_age_supplier() is None
+    r._apply_state(_ev("FSDJump", body_type="Star", star_system="Lyncis",
+                       timestamp="2026-06-07T11:32:00Z"))
+    age = r._make_context().jump_age_supplier()
+    assert abs(age - 1500.0) < 0.01
 
 
 # ---- dispatcher wiring -----------------------------------------------------

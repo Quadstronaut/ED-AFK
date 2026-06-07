@@ -465,7 +465,7 @@ def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
 def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
                           verify_reads: int = 4,
                           max_toggles: int = 4,
-                          max_rows: int = 4,
+                          max_rows: int = 10,
                           pin_to_top: bool = True,
                           pin_hold_s: float = 4.0) -> bool:
     """Nav-panel macro: lock the ARRIVAL STAR — compass-verified AND
@@ -516,8 +516,17 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
 
     from ..executor.align import _measure
 
+    # DECOUPLED counters (2026-06-07 council, the 11:23Z Lyncis incident):
+    # the old `for attempt in range(max_toggles)` made ONE counter serve both
+    # same-row dot-miss retries AND wrong-body row advances, so with max_rows=4
+    # a star past row 3 was structurally unreachable (rows 0-3 were all
+    # station/USS). `row` walks the panel; `macros` bounds total macro runs so
+    # dot-miss slack (max_toggles) can't spin forever. NO pin-only-once
+    # optimisation: cursor state after a macro is an unverified game assumption.
     row = 0
-    for attempt in range(max_toggles):
+    macros = 0
+    while row < max_rows and macros < max_rows + max_toggles:
+        macros += 1
         if not _macro(row):
             return False
         # layer 1: the compass dot is the lock signal
@@ -529,7 +538,7 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
                 break
             ctx.sleeper(settle_s)
         if not dot:
-            continue   # toggle landed on UNLOCK — same row again
+            continue   # toggle landed on UNLOCK — SAME row again (slack)
         # layer 2: the lock must be the LOCAL STAR, not whatever row 0 was
         system = ctx.current_system_supplier()
         ident = None
@@ -544,11 +553,10 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
         if ident is False:
             ctx.log("NavPanelTargetWrongBody",
                     {"row": row, "destination": dest_name, "system": system})
-            if row + 1 < max_rows:
-                row += 1   # scroll past the beacon/station next attempt
+            row += 1   # scroll past the beacon/station next attempt
             continue
         ctx.log("NavPanelTargetVerified",
-                {"toggles": attempt + 1, "row": row,
+                {"toggles": macros, "row": row,
                  "destination": dest_name,
                  "identity_checked": ident is True})
         return True
@@ -1070,6 +1078,15 @@ def _scoop_window_rate(samples: list, now: float,
     return None
 
 
+# Above this jump age, the arrival scene is STALE and scoop_refuel must not
+# fly nose-first at the star (it assumes the fresh-hyperspace-exit pose). A
+# healthy fresh arrival jumps to scooping in the SAME second (baseline:
+# FSDJump->ScoopStart, session_2026-06-07T111951, 11:21:40Z); 120s is ~60x
+# any real fresh-arrival latency and far below the 25-min loiter that caused
+# the 11:57Z restart incident.
+_FRESH_ARRIVAL_WINDOW_S = 120.0
+
+
 def step_scoop_refuel(
     ctx: StepContext, *,
     approach_pct: int = 25,
@@ -1122,6 +1139,17 @@ def step_scoop_refuel(
     if fuel_start >= capacity - full_epsilon:
         ctx.log("ScoopRefuelSkipped", {"reason": "already_full",
                                        "fuel": fuel_start})
+        return True
+    # Stale-arrival gate (2026-06-07 council, the 11:57Z incident): the whole
+    # step assumes the fresh-hyperspace-exit nose-into-star pose. A restart
+    # N minutes after FSDJump is pointed nowhere — flying it at the star is
+    # the dive the gate exists to prevent. age is derived from the FSDJump
+    # event's OWN journal timestamp (see _jump_age), so a stale restart reads
+    # stale. None PROCEEDS: unknown age fails toward current working behavior
+    # and keeps every bare-_ctx() unit test on the live path.
+    age = ctx.jump_age_supplier()
+    if age is not None and age > _FRESH_ARRIVAL_WINDOW_S:
+        ctx.log("ScoopRefuelSkipped", {"reason": "stale_arrival", "age_s": age})
         return True
 
     standoff_rate = standoff_frac * max_rate

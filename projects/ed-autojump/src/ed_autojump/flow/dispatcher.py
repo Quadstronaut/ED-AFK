@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from ..fsd.scoops import scoop_max_rate_t_s
@@ -82,6 +83,7 @@ class FlowRunner:
         sender: Any,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
+        now_utc: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         status_supplier: Callable[[], Optional[Any]] = lambda: None,
         compass_reader: Optional[Any] = None,
         frame_grabber: Optional[Callable[[], Any]] = None,
@@ -104,6 +106,7 @@ class FlowRunner:
         self.sender = sender
         self.clock = clock
         self.sleeper = sleeper
+        self.now_utc = now_utc
         self.status_supplier = status_supplier
         self.compass_reader = compass_reader
         self.frame_grabber = frame_grabber
@@ -165,10 +168,36 @@ class FlowRunner:
         # — feeds the star-lock identity check (2026-06-07 council).
         self._current_system: Optional[str] = None
         self._ship_fuel: Optional[ShipFuel] = None
+        # AWARE-UTC timestamp of the last FSDJump, parsed from the EVENT'S OWN
+        # journal timestamp (NOT _event_times["jump"], which is monotonic
+        # clock() stamped at backlog REPLAY time and reads a 25-min-stale
+        # restart as a fresh arrival — the 11:57Z incident). scoop_refuel's
+        # stale-arrival skip derives its age from this.
+        self._last_fsdjump_utc: Optional[datetime] = None
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
         return self._event_times.get(name)
+
+    def _jump_age(self) -> Optional[float]:
+        """Seconds since the last FSDJump, per the EVENT'S OWN journal
+        timestamp. None when no FSDJump has been seen. Evaluated at call time
+        (now_utc()) so a context wires the live age, not a build-time snapshot.
+        Both sides are AWARE-UTC datetimes — subtraction is well-defined."""
+        if self._last_fsdjump_utc is None:
+            return None
+        return (self.now_utc() - self._last_fsdjump_utc).total_seconds()
+
+    @staticmethod
+    def _parse_journal_ts(ts: str) -> Optional[datetime]:
+        """Parse an ED journal ISO8601 timestamp ("...Z") into an AWARE-UTC
+        datetime. The trailing Z (Zulu/UTC) is normalised to +00:00 for
+        fromisoformat on older Pythons. Returns None on a malformed stamp so a
+        garbled line degrades to 'no jump seen' rather than crashing the tail."""
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
 
     def _fresh_status(self) -> Optional[Any]:
         """Re-poll Status.json on every read. The previous wiring handed steps
@@ -258,6 +287,10 @@ class FlowRunner:
             arrival_star_class_supplier=lambda: self._arrival_star_class,
             current_system_supplier=lambda: self._current_system,
             ship_fuel_supplier=lambda: self._ship_fuel,
+            # Bound method, NOT a lambda capturing a value: jump age must be
+            # evaluated at call time (now_utc() advances) — a build-time
+            # snapshot would freeze the age at context construction.
+            jump_age_supplier=self._jump_age,
             record=self.record,
             frame_sink=self.frame_sink,
         )
@@ -290,9 +323,27 @@ class FlowRunner:
                 )
                 th.start()
                 threads.append(th)
-            run_procedure(proc, ctx)
+            result = run_procedure(proc, ctx)
             for th in threads:
                 th.join(timeout=15.0)
+            if result.aborted:
+                # ABORTED = human eyes required (notification-only: NO
+                # auto-restart, NO retry). Name the failing step when there is
+                # one, but guard the operator-abort case where the last step
+                # may not be the failer (or there are no steps at all) so the
+                # message stays sensible either way.
+                msg = f"[ABORTED] {name} — manual intervention needed"
+                if result.steps:
+                    msg += f" (failed at {result.steps[-1].action})"
+                print(msg, flush=True)
+                if self.overlay is not None:
+                    # Persistent STATUS slot (the keepalive line that stays
+                    # up), NOT event() — an abort must remain visible. Fail-soft
+                    # like every other overlay call here.
+                    try:
+                        self.overlay.status(msg)
+                    except Exception:  # noqa: BLE001
+                        pass
         finally:
             self._running_proc = None
             if self._preempt is not None and self.record is not None:
@@ -403,6 +454,15 @@ class FlowRunner:
             sysname = getattr(ev, "star_system", None)
             if sysname:
                 self._current_system = sysname
+            if name == "FSDJump":
+                # Stale-arrival instrument (2026-06-07 council): the FSDJump's
+                # OWN ISO8601 timestamp parsed to an AWARE-UTC datetime. Works
+                # for backlog AND live events because it's the event's own
+                # stamp, not a replay-time clock(). _event_times["jump"] is
+                # left untouched for its other consumers.
+                ts = getattr(ev, "timestamp", None)
+                if ts:
+                    self._last_fsdjump_utc = self._parse_journal_ts(ts)
         elif name == "Loadout":
             cap = getattr(getattr(ev, "fuel_capacity", None), "main", None)
             if cap:

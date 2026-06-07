@@ -86,6 +86,72 @@ def test_nav_panel_target_accepts_dot_only_when_identity_unknowable():
     assert ok is True
 
 
+# ---- nav_panel_target: decoupled row scan (F2, the 11:23Z Lyncis incident) --
+
+def test_star_past_row_three_is_reachable():
+    """Rows 0-4 all wrong bodies (station/USS), the star on row 5. The old
+    `for attempt in range(max_toggles)` with max_rows=4 made this structurally
+    unreachable — this FAILS on that code and PASSES with the decoupled row
+    counter. The held-up pin fires once per macro run, so its count tells us
+    which row this run targets (run N -> row N-1)."""
+    sender_holder = []
+
+    def status():
+        pins = len([h for a, h in sender_holder[0].holds
+                    if a == "UI_Up" and h >= 1.0])
+        # wrong body for runs 1-5 (rows 0-4); correct star on run 6 (row 5)
+        return _status("Acihaut" if pins >= 6
+                       else "$MULTIPLAYER_SCENARIO42_TITLE;")
+
+    ctx, sender = _nav_ctx(status)
+    sender_holder.append(sender)
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0, pin_hold_s=4.0)
+    assert ok is True
+
+
+def test_all_rows_wrong_fails_closed():
+    """Every row is a wrong body through exhaustion -> False (fail closed
+    preserved): a wrong lock must never flow on to the orbit."""
+    ctx, sender = _nav_ctx(lambda: _status("$MULTIPLAYER_SCENARIO42_TITLE;"))
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0)
+    assert ok is False
+
+
+class _MissThenDotReader:
+    """No dot on the FIRST macro run's reads; a dot from the second run on.
+    The pin's held UI_Up fires once per macro run, so the first run's pin is
+    on the sender before its dot reads happen — we gate on the pin count."""
+    def __init__(self, sender_holder):
+        self._sh = sender_holder
+
+    def read(self, frame):
+        pins = len([h for a, h in self._sh[0].holds
+                    if a == "UI_Up" and h >= 1.0])
+        if pins <= 1:
+            return CompassRead(found=False, offset_x=0.0, offset_y=0.0,
+                               in_front=False, confidence=0.0)
+        return CompassRead(found=True, offset_x=0.0, offset_y=0.0,
+                           in_front=True, confidence=1.0)
+
+
+def test_dot_miss_retoggles_same_row_without_advancing():
+    """A dot miss is a SAME-row re-toggle (the UNLOCK-toggle case), not a row
+    advance: first macro yields no dot, second yields a dot + correct identity
+    at row 0 -> True, and the row walk never advanced (zero UI_Down beyond the
+    one pin-tap-down per macro run)."""
+    sender_holder = []
+    ctx, sender = _nav_ctx(lambda: _status("Acihaut"))
+    sender_holder.append(sender)
+    ctx.compass_reader = _MissThenDotReader(sender_holder)
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0, pin_hold_s=4.0)
+    assert ok is True
+    # Each macro run does exactly one pin tap-down; a row advance would add a
+    # walk UI_Down. Two macro runs (one dot-miss, then success) at row 0 means
+    # UI_Down count == pin count (2), never more.
+    pins = len([h for a, h in sender.holds if a == "UI_Up" and h >= 1.0])
+    assert sender.events.count("UI_Down") == pins
+
+
 # ---- sc_assist_orbit guards ---------------------------------------------------
 
 def _orbit_ctx(status_fn, system="Acihaut"):

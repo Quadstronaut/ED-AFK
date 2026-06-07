@@ -75,6 +75,13 @@ class StepContext:
     # not wired / no Loadout seen -> scoop_refuel skips fail-safe (g1).
     ship_fuel_supplier: Callable[[], Optional[Any]] = lambda: None
 
+    # Seconds since the last FSDJump per the EVENT'S OWN journal timestamp (NOT
+    # a monotonic-clock stamp, which reads a stale backlog restart as fresh).
+    # None = no jump seen / not wired. scoop_refuel's stale-arrival classifier
+    # uses it: a fresh hyperspace exit is the nose-into-star pose the scoop
+    # relies on; an N-minute loiter (the 25-min restart incident) is not.
+    jump_age_supplier: Callable[[], Optional[float]] = lambda: None
+
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 
