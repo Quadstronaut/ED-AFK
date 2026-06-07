@@ -20,7 +20,9 @@ Output:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
+import signal
 import sys
 import time
 from pathlib import Path
@@ -520,6 +522,24 @@ def main() -> None:
         # Let the OS input pipeline settle after the foreground transition.
         time.sleep(0.6)
 
+        # SAFETY: UI_Up = Key_W, which is ALSO bound to PitchDownButton.
+        # A hard-kill (taskkill /F, OOM, crash) during the 4s Phase-B hold
+        # skips the finally-block keyUp, leaving Key_W physically held at the
+        # OS level — parked ship pitches down continuously.  atexit + signal
+        # handlers cover the soft-kill / KeyboardInterrupt / SIGINT / SIGBREAK
+        # surface.  SIGKILL-during-hold is an accepted residual (council gate
+        # 2026-06-07).  NullSender.release_all() is a no-op (base-class
+        # default) so these registrations are intentionally live-only.
+        atexit.register(sender.release_all)
+
+        def _emergency_release(signum, frame):
+            sender.release_all()
+            sys.exit(1)
+
+        signal.signal(signal.SIGINT, _emergency_release)
+        if hasattr(signal, "SIGBREAK"):
+            signal.signal(signal.SIGBREAK, _emergency_release)
+
     log.record(step="probe_start", dry=dry, stamp=stamp,
                settle_s=SETTLE_S, pin_hold_s=PIN_HOLD_S,
                max_down_taps=MAX_DOWN_TAPS, max_back_presses=MAX_BACK_PRESSES)
@@ -527,40 +547,50 @@ def main() -> None:
     a_result: dict = {}
     b_result: dict = {}
 
+    # Outermost safety net: release_all() fires on ANY exit path including
+    # BaseException (KeyboardInterrupt, SystemExit).  For the live sender this
+    # sends keyUp for every scancode ever pressed, preventing a stuck-held
+    # Key_W (PitchDownButton) from pitching the parked ship after the probe
+    # exits.  NullSender.release_all() is a no-op, so dry-run is unaffected.
     try:
-        # Phase A — Q1
-        a_result = phase_a(sender, log, stamp, dry=dry)
-
-        # Determine how many UI_Back presses closed the panel for Phase B's close.
-        presses_known = a_result.get("presses_to_close")
-        if isinstance(presses_known, int):
-            close_presses_for_b = presses_known
-        else:
-            # Q1 inconclusive; Phase B's finally-block will fall back to FocusLeftPanel.
-            close_presses_for_b = "unknown"
-
-        # Brief pause between phases so Status.json can settle.
-        time.sleep(1.0)
-
-        # Phase B — Q2
-        b_result = phase_b(
-            sender, log, stamp, dry=dry, close_presses=close_presses_for_b
-        )
-
-    except Exception as exc:
-        # Outermost abort handler: press UI_Back up to 4x to close any open panel.
-        print(f"\n[probe] EXCEPTION: {exc!r}  Running emergency panel close.",
-              flush=True)
-        log.record(step="exception_abort", exc=repr(exc))
         try:
-            _ensure_panel_closed(sender, log, stamp, dry=dry, context="exception")
-        except Exception as inner:  # noqa: BLE001
-            print(f"[probe] emergency close also failed: {inner!r}", flush=True)
-        raise
+            # Phase A — Q1
+            a_result = phase_a(sender, log, stamp, dry=dry)
+
+            # Determine how many UI_Back presses closed the panel for Phase B's close.
+            presses_known = a_result.get("presses_to_close")
+            if isinstance(presses_known, int):
+                close_presses_for_b = presses_known
+            else:
+                # Q1 inconclusive; Phase B's finally-block will fall back to FocusLeftPanel.
+                close_presses_for_b = "unknown"
+
+            # Brief pause between phases so Status.json can settle.
+            time.sleep(1.0)
+
+            # Phase B — Q2
+            b_result = phase_b(
+                sender, log, stamp, dry=dry, close_presses=close_presses_for_b
+            )
+
+        except Exception as exc:
+            # Abort handler: press UI_Back up to 4x to close any open panel.
+            print(f"\n[probe] EXCEPTION: {exc!r}  Running emergency panel close.",
+                  flush=True)
+            log.record(step="exception_abort", exc=repr(exc))
+            try:
+                _ensure_panel_closed(sender, log, stamp, dry=dry, context="exception")
+            except Exception as inner:  # noqa: BLE001
+                print(f"[probe] emergency close also failed: {inner!r}", flush=True)
+            raise
+
+        finally:
+            log.record(step="probe_end", a_result=a_result, b_result=b_result)
+            log.close()
 
     finally:
-        log.record(step="probe_end", a_result=a_result, b_result=b_result)
-        log.close()
+        # Fires on BaseException too (KeyboardInterrupt, SystemExit).
+        sender.release_all()
 
     # Final summary (one line for easy grep).
     q1_answer = (
