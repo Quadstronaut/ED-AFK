@@ -1,14 +1,20 @@
-# Runs on every LIVE FSDJump (you arrive in supercruise). Orbit AROUND the star
-# so a next-hop hidden behind it becomes reachable, THEN orient + jump.
+# Runs on every LIVE FSDJump (you arrive in supercruise) and on a bot restart
+# while already in supercruise. Operator-dictated flow (2026-06-07): scoop if
+# needed, orbit the star with SC assist, then target the hop and jump.
+#
+# REDESIGN 2026-06-07 (operator, line-by-line review): the pitch-astern +
+# outward-burn climb-out (nav_panel_target -> pitch_compass behind ->
+# 40s burn, added 2026-06-06) is GONE — the SC-assist orbit alone is the
+# get-around, and 13s at 100% after the hop lock is the clearance burn.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
-#   wait    passive block on journal event or clock â€” no input sent
-#   hold    key down â†’ event â†’ key up; used in parallel honk track
-#   macro   multi-key UI-state sequence â€” EXCLUSIVE, owns input
-#   vision  closed-loop pitch/yaw + frame capture â€” EXCLUSIVE, owns input + screen
-parallel_tracks = ["honk"]
+#   wait    passive block on journal event or clock — no input sent
+#   hold    key down → event → key up; used in parallel honk track
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+parallel_tracks = ["honk"]   # honk fires every system, no matter what
 
 [on_required_fail]
 retry_from = "sc_assist_orbit"   # re-orbit changes geometry; re-orienting alone would just fail again
@@ -16,52 +22,25 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  { action = "set_throttle", pct = 0 },             # tap    | 0
-  # Scoop pit stop (spec 2026-06-06-scoop-refuel-design, council-ratified):
-  # arrival pose is nose-into-star, so when the arrival star is scoopable
-  # (KGBFOAM via last Hyperspace StartJump) and the tank is below
-  # refuel_below, fly straight in at 25% until ScoopingFuel, keep closing to
-  # ~50% of the 6A's 0.878 t/s table max, cut throttle, drink until full.
-  # Status.json-gated throughout; budget_s is the operator's 5-min FAIL
-  # backstop only. BEST-EFFORT: skip/fail never blocks the climb-out below
-  # (nav_panel_target -> star astern -> sc_assist_orbit IS the climb-out).
-  # Honk overlaps this hold via parallel_tracks -- no time wasted.
-  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.50, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.70, full_epsilon = 0.2 },  # gated  | 0b pit stop
-  # Pitch-star-first (ADDED 2026-06-06: 2 of 4 arrivals smacked ~25s after
-  # FSDJump â€” the ship arrives nose-INTO the star and the SC-assist
-  # acquisition starts from that pose; the operator's standing rule is the
-  # star goes off-axis BEFORE anything else flies). Verified star lock
-  # replaces the blind target_ahead deselect; the orbit macro re-targets
-  # row 0 itself, so the lock is compatible.
-  # BEST-EFFORT (required=false, 2026-06-06 run 13): a far secondary star's
-  # tiny dot sits on the filled/hollow classifier boundary and the bit
-  # flips every 1-3 beats at a stable position -- the pitch can stall on
-  # noise. A failed pitch must not block the arrival the orbit-first flow
-  # handled fine; a successful one still removes the nose-into-star pose.
-  { action = "nav_panel_target" },                                                                     # macro  | 1 best-effort local-star lock
-  { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 1b star astern FIRST (best effort)
-  { action = "sc_assist_orbit" },                    # macro  | 2 EXCLUSIVE â€” nav panel macro (from the safe lane)
-  { action = "wait", s = 13.0 },                     # wait   | 3 let orbit acquire
-  # OUTWARD fly-out (REDESIGN 2026-06-06 15:55, MO-O b7-1): the old flow
-  # throttled 100 and flew wherever the post-orbit nose pointed, then
-  # hold_alignment flew TOWARD THE HOP during the charge. For a hop on the
-  # far side of the star ("starward"), that never gains jump altitude --
-  # 4 perfectly-aligned holds in a row sat blocked ("TOO CLOSE") and the
-  # arrival ended in a smack. Fly-out must be RADIALLY OUTWARD regardless
-  # of hop bearing: re-lock the local star, pitch it astern, burn 26s,
-  # THEN turn to the hop. Best-effort like step 1b: a noisy pitch falls
-  # through to the old behavior, never blocks.
-  { action = "nav_panel_target" },                                                                     # macro  | 3b re-lock local star
-  { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 3c nose radially outward
-  { action = "set_throttle", pct = 100 },            # tap    | 3d
-  # 40s (was 26s, 2026-06-06 16:23): a big F star blocked the jump charge
-  # even after a clean 26s outward burn -- the smack-recovery detour costs
-  # 5-10 min vs 14s of extra burn per arrival.
-  { action = "wait", s = 40.0 },                     # wait   | 3e altitude burn -- TRAJECTORY PACING, not a gate
-  { action = "target_next_route", required = true },                  # gated  | 4
-  { action = "wait", s = 6.0 },                      # wait   | 5 keep burning while the lock settles
-  { action = "orient_compass", required = true },        # vision | 7 coarse
-  { action = "orient_widget_ring", required = true },    # vision | 8 fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },           # gated  | 9 FSD jump
-  { action = "hold_alignment", required = true },        # vision | 10 hold cone until StartJump â€” event/state-gated, no clock
+  { action = "set_throttle", pct = 0 },             # tap    | 1 in case hyperspace auto-dethrottle is off
+  # Scoop pit stop. GATE: fuel < refuel_below AND arrival star KGBFOAM (last
+  # hyperspace StartJump StarClass) — else SKIP straight to the star lock.
+  # Nose in at 25% until ScoopingFuel, keep closing until the observed rate
+  # hits standoff_frac of the 6A's 0.878 t/s table max, cut throttle, drink
+  # until full (log-driven; Status.json fuel reads). standoff_frac IS the
+  # distance control: the rate fraction dictates a dynamic standoff from the
+  # exclusion zone. 0.80 = test value (operator 2026-06-07; was 0.50) — will
+  # be pushed toward 1.0 once proven. budget_s is a FAIL backstop only.
+  # BEST-EFFORT: skip/fail never blocks the orbit below.
+  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.70, full_epsilon = 0.2 },  # gated  | 2 pit stop
+  { action = "nav_panel_target" },                  # macro  | 3 EXCLUSIVE — star = nav panel row 0 (closest body)
+  { action = "sc_assist_orbit" },                   # macro  | 4 EXCLUSIVE — SC-assist orbit around the star
+  { action = "wait", s = 13.0 },                    # wait   | 5 let orbit acquire
+  { action = "target_next_route", required = true },                # gated  | 6 lock the NEXT SYSTEM in route
+  { action = "set_throttle", pct = 100 },           # tap    | 7 burn
+  { action = "wait", s = 13.0 },                    # wait   | 8 clear the star — TRAJECTORY PACING, not a gate
+  { action = "orient_compass", required = true },        # vision | 9a coarse align to the hop
+  { action = "orient_widget_ring", required = true },    # vision | 9b fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },           # gated  | 10 FSD jump
+  { action = "hold_alignment", required = true },        # vision | 11 hold cone until StartJump — event/state-gated, no clock
 ]
