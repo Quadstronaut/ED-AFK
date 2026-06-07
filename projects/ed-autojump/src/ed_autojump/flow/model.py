@@ -13,6 +13,10 @@ class Step:
     action: str
     params: dict[str, Any] = field(default_factory=dict)
     required: bool = False
+    # A required failure AT OR AFTER this step resumes HERE instead of at
+    # on_required_fail.retry_from (operator rule, 2026-06-07 startup redesign:
+    # "if it makes it to 13, failures after that should return to 13").
+    retry_anchor: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,4 +48,12 @@ class Procedure:
         for i, s in enumerate(self.steps):
             if s.action == action:
                 return i
+        return None
+
+    def anchor_at_or_before(self, i: int) -> Optional[int]:
+        """Index of the NEAREST retry_anchor step at or before step `i`, else
+        None. An anchor later in the procedure never catches earlier failures."""
+        for j in range(min(i, len(self.steps) - 1), -1, -1):
+            if self.steps[j].retry_anchor:
+                return j
         return None

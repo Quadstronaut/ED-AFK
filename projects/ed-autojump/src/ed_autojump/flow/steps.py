@@ -58,6 +58,20 @@ def step_target_ahead(ctx: StepContext) -> bool:
     return _press(ctx, "SelectTarget")
 
 
+def step_pips_engines(ctx: StepContext, *, presses: int = 4) -> bool:
+    """All pips to ENG (operator, 2026-06-07 startup redesign): reset to 2/2/2
+    first so the allocation is deterministic, then IncreaseEnginesPower x4 —
+    4 = the ENG pip cap, and presses past the cap are in-game no-ops, so
+    over-pressing can never misallocate. Plain arrow-key taps, no UI panel
+    state: deliberately NOT input-exclusive (the heat watchdog stays live)."""
+    if not _press(ctx, "ResetPowerDistribution"):
+        return False
+    for _ in range(presses):
+        if not _press(ctx, "IncreaseEnginesPower"):
+            return False
+    return True
+
+
 def step_target_next_route(
     ctx: StepContext, *, poll_s: float = 0.5, watchdog_s: float = 60.0,
 ) -> bool:
@@ -242,6 +256,7 @@ STEP_REGISTRY: dict[str, Callable[..., bool]] = {
     "wait": step_wait,
     "set_throttle": step_set_throttle,
     "pitch": step_pitch,
+    "pips_engines": step_pips_engines,
 }
 
 def step_ensure_analysis_mode(

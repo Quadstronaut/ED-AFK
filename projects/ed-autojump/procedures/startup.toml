@@ -1,55 +1,70 @@
 # Fresh load: ship sits at a star in NORMAL SPACE. That scene only — a bot
 # restarted while the ship is already IN SUPERCRUISE is routed to arrival.toml
 # instead (dispatcher._maybe_startup, 2026-06-06): an in-supercruise restart
-# sits nose-on at its last arrival star, and this procedure's throttle-100-
-# then-orient dove straight into the scoop zone (FuelScoop 13:26:17 ->
-# SupercruiseExit Body=Star 13:26:21 — the star smack). arrival.toml orbits
-# the star and clears it BEFORE throttling up.
+# sits nose-on at its last arrival star, and throttle-100-then-orient dove
+# straight into the scoop zone (FuelScoop 13:26:17 -> SupercruiseExit
+# Body=Star 13:26:21 — the star smack). arrival.toml orbits the star and
+# clears it BEFORE throttling up.
 #
-# First attempt: throttle up, lock the next route star, orient on compass
-# (coarse) then widget ring (fine), fire the FSD, then hold_alignment â€” a
-# PURE EVENT-DRIVEN gate that keeps the dot in the charge cone and exits on
-# the game's own signals: StartJump journal event / FsdJump flag = success;
-# FsdCharging trueâ†’false without either = the game aborted the charge =
-# failure. NO wall-clock timeout (no-arbitrary-timed-waits): the old 12s
-# wait_for_event gate expired mid-spool on a healthy charge and the recovery
-# path's SelectTarget/Supercruise presses cancelled the jump (2026-06-01,
-# 2026-06-06 sessions).
+# REDESIGN 2026-06-07 (operator, line-by-line review):
+# - All pips to ENGINES first, in both lanes.
+# - The recovery lane now clears the star the way arrival does: deselect,
+#   throttle 100 just in case, lock the star (nav panel row 0), pitch it
+#   astern (best-effort), pips again, SC entry, SC-assist orbit the star
+#   (still locked from the row-0 step), THEN lock the hop, 13s clearance
+#   burn, orient, jump.
+# - The 13s wait carries retry_anchor = true: once the lane is past it, a
+#   required failure (orient/jump/hold) returns to the WAIT — fly 13 more
+#   seconds and re-orient — instead of restarting the lane ("if it makes it
+#   to 13, failures after that should return to 13"). Failures before the
+#   wait still restart from target_ahead.
 #
-# Recovery is only ever entered when the charge has GENUINELY dropped â€”
-# hold_alignment cannot fail while FsdCharging is set â€” so its keypresses
-# can no longer kill a live jump.
+# hold_alignment is a PURE EVENT-DRIVEN gate: StartJump / FsdJump flag =
+# success; FsdCharging true->false without either = the game aborted the
+# charge = failure. NO wall-clock timeout (no-arbitrary-timed-waits): the old
+# 12s wait_for_event gate expired mid-spool on a healthy charge and the
+# recovery presses cancelled the jump (2026-06-01, 2026-06-06 sessions).
+# Recovery only ever runs when the charge has GENUINELY dropped.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
-#   wait    passive block on journal event or clock â€” no input sent
-#   hold    key down â†’ event â†’ key up; used in parallel honk track
-#   macro   multi-key UI-state sequence â€” EXCLUSIVE, owns input
-#   vision  closed-loop pitch/yaw + frame capture â€” EXCLUSIVE, owns input + screen
+#   wait    passive block on journal event or clock — no input sent
+#   hold    key down → event → key up; used in parallel honk track
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 parallel_tracks = ["honk"]
 
 [on_required_fail]
-retry_from = "target_ahead"
-max_retries = 1
+retry_from = "target_ahead"   # lane restart for failures BEFORE the anchor wait
+max_retries = 3               # total across the procedure (operator-confirmed 2026-06-07)
 backoff_s = 2.0
 
 steps = [
-  # â”€â”€ First-try direct jump â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  { action = "set_throttle", pct = 100 },                  # tap    | 0
-  { action = "target_next_route", required = true },                        # gated  | 1
-  { action = "orient_compass", required = true },          # vision | 2 coarse
-  { action = "orient_widget_ring", required = true },      # vision | 3 fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },             # gated  | 4 press FSD combo
-  { action = "hold_alignment", required = true },          # vision | 5 hold cone until StartJump â€” event/state-gated, no clock
+  # ── First-try direct jump ────────────────────────────────────────────────
+  { action = "pips_engines" },                             # tap    | 0 all pips ENG (reset + 4x)
+  { action = "set_throttle", pct = 100 },                  # tap    | 1
+  { action = "target_next_route", required = true },                        # gated  | 2
+  { action = "orient_compass", required = true },          # vision | 3 coarse
+  { action = "orient_widget_ring", required = true },      # vision | 4 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },             # gated  | 5 press FSD combo
+  { action = "hold_alignment", required = true },          # vision | 6 hold cone until StartJump — event/state-gated, no clock
 
-  # â”€â”€ Recovery: retry_from lands here when any required step above fails â”€â”€â”€
-  { action = "target_ahead" },                             # tap    | 6 deselect (no target ahead â†’ clears)
-  { action = "engage_supercruise", required = true },      # gated  | 7 event/state-gated on SupercruiseEntry
-  { action = "set_throttle", pct = 100 },                  # tap    | 8
-  { action = "target_next_route", required = true },                        # gated  | 9
-  { action = "orient_compass", required = true },          # vision | 10 coarse
-  { action = "orient_widget_ring", required = true },      # vision | 11 fine
-  { action = "engage_jump", required = true },             # gated  | 12 press FSD combo
-  { action = "hold_alignment", required = true },          # vision | 13 hold cone until StartJump
+  # ── Recovery: retry_from lands here when a pre-anchor required step fails ─
+  { action = "target_ahead" },                             # tap    | 7 deselect (no target ahead → clears)
+  { action = "set_throttle", pct = 100 },                  # tap    | 8 just in case
+  { action = "nav_panel_target" },                         # macro  | 9 EXCLUSIVE — star = nav panel row 0 (closest body)
+  # Best-effort (operator-confirmed 2026-06-07): a noisy classifier must fall
+  # through to SC entry, never burn the retry budget on a flickering dot.
+  { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 10 star astern (best effort)
+  { action = "pips_engines" },                             # tap    | 11 pips again before the climb
+  { action = "engage_supercruise", required = true },      # gated  | 12 event/state-gated on SupercruiseEntry
+  { action = "sc_assist_orbit" },                          # macro  | 13 EXCLUSIVE — SC-assist the star, still locked from step 9
+  { action = "target_next_route", required = true },                        # gated  | 14 lock the NEXT SYSTEM in route
+  { action = "set_throttle", pct = 100 },                  # tap    | 15
+  { action = "wait", s = 13.0, retry_anchor = true },      # wait   | 16 clearance burn — failures at/after here RETURN HERE
+  { action = "orient_compass", required = true },          # vision | 17 coarse
+  { action = "orient_widget_ring", required = true },      # vision | 18 fine
+  { action = "engage_jump", required = true },             # gated  | 19 press FSD combo
+  { action = "hold_alignment", required = true },          # vision | 20 hold cone until StartJump
 ]

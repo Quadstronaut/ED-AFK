@@ -43,6 +43,21 @@ def test_load_procedure_parses_steps_and_policy(tmp_path):
     assert proc.steps[2].params == {}
 
 
+def test_load_procedure_parses_retry_anchor(tmp_path):
+    """retry_anchor is a Step field like required — stripped from params."""
+    f = _write(tmp_path / "startup.toml", """
+        steps = [
+          { action = "target_ahead" },
+          { action = "wait", s = 13.0, retry_anchor = true },
+          { action = "orient_compass", required = true },
+        ]
+    """)
+    proc = load_procedure(f)
+    assert proc.steps[0].retry_anchor is False
+    assert proc.steps[1].retry_anchor is True
+    assert proc.steps[1].params == {"s": 13.0}   # not leaked into params
+
+
 def test_load_parallel_track(tmp_path):
     f = _write(tmp_path / "honk.toml", """
         parallel = true

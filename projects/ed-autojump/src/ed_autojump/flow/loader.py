@@ -36,7 +36,9 @@ def _step_from_table(table: dict) -> Step:
     table = dict(table)
     action = table.pop("action")
     required = bool(table.pop("required", False))
-    return Step(action=action, params=table, required=required)
+    retry_anchor = bool(table.pop("retry_anchor", False))
+    return Step(action=action, params=table, required=required,
+                retry_anchor=retry_anchor)
 
 
 def load_procedure(path: str | Path) -> Procedure:

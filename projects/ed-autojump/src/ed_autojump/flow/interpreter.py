@@ -70,10 +70,19 @@ def run_procedure(
 
         if not ok and step.required:
             policy = proc.on_required_fail
-            target = (proc.index_of_action(policy.retry_from)
-                      if policy.retry_from is not None else None)
+            # A retry_anchor at or before the failure wins over retry_from:
+            # once the procedure is past the anchor, failures return THERE
+            # (e.g. startup's 13s clearance wait) instead of restarting the
+            # whole recovery lane.
+            target = proc.anchor_at_or_before(i)
+            if target is None and policy.retry_from is not None:
+                target = proc.index_of_action(policy.retry_from)
             if target is not None and result.retries < policy.max_retries:
                 result.retries += 1
+                ctx.log("ProcedureRetry",
+                        {"procedure": proc.name, "failed": step.action,
+                         "resume_at": proc.steps[target].action,
+                         "resume_index": target, "retries": result.retries})
                 if policy.backoff_s > 0:
                     ctx.sleeper(policy.backoff_s)
                 i = target

@@ -50,6 +50,41 @@ def test_retry_from_resumes_then_aborts_after_max():
     assert result.retries == 2 and result.aborted is True
 
 
+def test_retry_anchor_catches_failures_at_or_after_it():
+    """Operator rule (2026-06-07 startup redesign): 'if it makes it to 13,
+    failures after that should return to 13' — a required failure AT OR AFTER
+    a retry_anchor step resumes from the anchor, not from retry_from."""
+    calls = []
+    proc = Procedure(
+        name="p",
+        steps=(Step("a"), Step("b", retry_anchor=True),
+               Step("orient", required=True), Step("jump")),
+        on_required_fail=OnRequiredFail(retry_from="a", max_retries=1, backoff_s=0.0),
+    )
+    result = run_procedure(proc, StepContext(sender=FakeSender()),
+                           registry=_registry(calls, {"orient"}))
+    # a,b,orient(fail) -> anchor b -> b,orient(fail) -> retries exhausted
+    assert calls == ["a", "b", "orient", "b", "orient"]
+    assert result.retries == 1 and result.aborted is True
+
+
+def test_failure_before_anchor_falls_back_to_retry_from():
+    """An anchor LATER in the procedure must not catch earlier failures —
+    those still restart from retry_from (the recovery-lane entry)."""
+    calls = []
+    proc = Procedure(
+        name="p",
+        steps=(Step("a"), Step("orient", required=True),
+               Step("c", retry_anchor=True), Step("jump")),
+        on_required_fail=OnRequiredFail(retry_from="a", max_retries=1, backoff_s=0.0),
+    )
+    result = run_procedure(proc, StepContext(sender=FakeSender()),
+                           registry=_registry(calls, {"orient"}))
+    # orient at index 1 fails; the anchor at index 2 is AFTER it -> retry_from
+    assert calls == ["a", "orient", "a", "orient"]
+    assert result.retries == 1 and result.aborted is True
+
+
 def test_non_required_failure_continues():
     calls = []
     proc = Procedure(name="p", steps=(Step("a"), Step("b"), Step("c")))
