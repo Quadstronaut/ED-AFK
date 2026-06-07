@@ -243,8 +243,8 @@ class VisionConfig:
     # Closed-loop tunables (all overridable from config for in-flight tuning).
     # Defaults validated live 2026-05-24: dominant-axis + behind-flip law,
     # long settle for momentum decay, hard drive (high gain + max_press).
-    align_tol: float = 0.15
-    deadzone: float = 0.10
+    align_tol: float = 0.12
+    deadzone: float = 0.08
     gain: float = 2.0
     min_press_s: float = 0.10
     max_press_s: float = 0.70

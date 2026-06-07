@@ -75,8 +75,9 @@ capture_backend = "gdi"
 # primary; generous box centred on the compass (~746,860) to allow drift.
 region = [676, 790, 140, 140]
 compass_radius = 25.0          # fallback radius; ring detection overrides it live
-align_tol = 0.10               # dot within 10% of centre = aligned (tightened from 0.15 on 2026-06-01 — 0.15 sat at the edge of ED's FSD-charge cone and a 08:05 run cancelled mid-spool)
-deadzone = 0.10                # ignore sub-10% offsets -- don't chase sub-dot noise
+align_tol = 0.12               # dot within 12% of centre = aligned (tightened from 0.15 on 2026-06-01 — 0.15 sat at the edge of ED's FSD-charge cone and a 08:05 run cancelled mid-spool)
+                               # council reconciliation 2026-06-07: invariant deadzone*sqrt(2)=0.1131 <= align_tol kills the forbidden-zone orient freeze (still under the 0.15 FSD-cancel edge)
+deadzone = 0.08                # ignore sub-8% offsets -- don't chase sub-dot noise
 timeout_s = 45.0               # give up aligning after this; then skip the jump
 settle_s = 1.4                 # wait after key release; ship momentum decays ~1-1.5 s; 1.4s safe margin
 align_samples = 7              # median of 7 reads robustly rejects transient cyan-UI spikes

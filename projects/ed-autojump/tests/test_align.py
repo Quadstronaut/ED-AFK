@@ -9,6 +9,10 @@ out), align_to_target reports aligned=False. The engage gate (separate
 module) relies on this to refuse a misaligned jump.
 """
 
+import math
+
+import pytest
+
 from ed_autojump.executor.align import align_to_target, AlignOutcome, _measure, _correct
 from ed_autojump.vision.compass import CompassRead
 
@@ -164,6 +168,39 @@ def test_behind_streak_resets_on_front_read():
                     samples=1, max_iters=3)
     assert "PitchUpButton" not in [a for a, _ in sender.calls]
     assert "PitchDownButton" not in [a for a, _ in sender.calls]
+
+
+def test_decisive_astern_fill_fires_flip_on_first_beat():
+    """2026-06-07 regression guard: a DECISIVE astern read (front_fill far
+    below _FILL_BAND_LO) must fire the behind-flip on beat 0, not be damped.
+    Live failure: post-_measure ox=-0.0307 oy=0.9908 in_front=False fill=0.161
+    (unambiguous astern) was damped by the old fill-blind 2-beat gate; the
+    1.4s no-press settle let the SC orbit swing the dot off-compass -> 21
+    blind search iters -> ProcedureRetry. The damp is for BOUNDARY noise
+    (fill ~0.5) only; decisive low fills flip immediately. oy>0 -> PitchUp."""
+    read = CompassRead(found=True, offset_x=-0.0307, offset_y=0.9908,
+                       in_front=False, confidence=0.6, front_fill=0.161)
+    sender = _Recorder()
+    align_to_target(_SeqReader([read]), sender, capture=lambda: None,
+                    sleeper=lambda s: None, clock=lambda: 0.0,
+                    samples=1, max_iters=1)
+    assert [a for a, _ in sender.calls] == ["PitchUpButton"], \
+        "decisive astern read (fill 0.161) must fire the flip on beat 0"
+
+
+def test_boundary_fill_behind_read_still_damped_one_beat():
+    """The damp is preserved for genuinely ambiguous boundary reads: a single
+    behind read with front_fill=0.45 (inside [0.35, 0.65]) presses NOTHING on
+    that beat — the legacy 2-beat gate still guards the filled/hollow boundary."""
+    read = CompassRead(found=True, offset_x=0.0, offset_y=0.6,
+                       in_front=False, confidence=0.6, front_fill=0.45)
+    sender = _Recorder()
+    align_to_target(_SeqReader([read]), sender, capture=lambda: None,
+                    sleeper=lambda s: None, clock=lambda: 0.0,
+                    samples=1, max_iters=1)
+    pitches = [a for a, _ in sender.calls
+               if a in ("PitchUpButton", "PitchDownButton")]
+    assert pitches == [], "boundary-fill behind read must stay damped one beat"
 
 
 def test_never_found_reports_not_aligned():
@@ -447,14 +484,15 @@ def test_on_iter_reports_behind_flip_at_max_press():
     payloads = []
     out = _run(sim, on_iter=payloads.append)
     assert out.aligned is True
-    # Beat 0 is the behind-flicker damping gate (2 consecutive behind reads
-    # required since 2026-06-06): verdict reported, NO press.
+    # 2026-06-07 fill-aware damp: _Sim reads carry no front_fill, so _measure
+    # (samples=7) synthesizes front_fill from the in_front bit -> 0.0 here, a
+    # DECISIVE astern read far below _FILL_BAND_LO. The damp is only for
+    # boundary noise (fill in/above the band), so the flip fires on beat 0;
+    # there is no longer a free first behind beat. (This test previously
+    # pinned the exact pre-fix behaviour: damp-on-first-behind-beat.)
     assert payloads[0]["in_front"] is False
-    assert payloads[0]["action"] is None
-    # Beat 1 confirms behind -> the hard flip fires, always at max_press.
-    assert payloads[1]["in_front"] is False
-    assert payloads[1]["action"] == "PitchUpButton"
-    assert payloads[1]["hold"] == 0.70       # behind-flip is always max_press
+    assert payloads[0]["action"] == "PitchUpButton"
+    assert payloads[0]["hold"] == 0.70       # behind-flip is always max_press
 
 
 def test_on_iter_reports_search_when_not_found():
@@ -513,3 +551,116 @@ def test_abort_check_stops_loop_with_its_reason():
     assert out.aligned is False
     assert out.reason == "supercruise_lost"
     assert out.iterations <= 2                   # died fast, not at timeout
+
+
+# ---------------------------------------------------------------------------
+# F-A: forbidden-zone orient freeze (council-ratified 2026-06-07)
+#
+# DEFECT: aligned test is L2 (mag <= align_tol) but _correct's deadzone is
+# per-axis L-inf. With the OLD live pair align_tol=0.10, deadzone=0.10 the
+# corner region {both axes < deadzone, mag > align_tol} is a forbidden zone:
+# un-aligned yet never pressed -> the loop freezes to timeout. Observed live:
+# 22 frozen iters at ox=-0.0885, oy=0.080, mag=0.1193 -> timeout ->
+# ProcedureRetry. Invariant that empties the zone: deadzone*sqrt(2) <= align_tol.
+# Ratified: align_tol=0.12, deadzone=0.08 (0.08*sqrt(2)=0.1131 <= 0.12).
+# ---------------------------------------------------------------------------
+
+class _ConstReader:
+    """Reader that always returns the same read (a frozen live frame)."""
+
+    def __init__(self, read):
+        self._read = read
+
+    def read(self, frame):
+        return self._read
+
+
+# the exact live frame that froze for 22 iterations
+_FROZEN = CompassRead(found=True, offset_x=-0.0885, offset_y=0.080,
+                      in_front=True, confidence=0.9)
+
+
+def test_frozen_live_frame_is_aligned_under_new_defaults():
+    """T1: the real frozen frame (mag 0.1193) must read aligned at iter 0
+    under the ratified 0.12/0.08 defaults — zero presses, reason 'aligned'."""
+    sender = _Recorder()
+    out = align_to_target(_ConstReader(_FROZEN), sender, capture=lambda: None,
+                          sleeper=lambda s: None, clock=lambda: 0.0,
+                          samples=1, max_iters=40)
+    assert out.aligned is True
+    assert out.reason == "aligned"
+    assert out.iterations == 0
+    assert sender.calls == []
+
+
+@pytest.mark.parametrize("align_tol,deadzone", [(0.10, 0.10)])
+def test_frozen_live_frame_freezes_under_old_constants(align_tol, deadzone):
+    """T1 (documented bug): under the OLD constants the same frame is the
+    forbidden zone — un-aligned (mag 0.1193 > 0.10) yet every axis is inside
+    the 0.10 deadzone so _correct presses NOTHING. The loop never converges."""
+    sender = _Recorder()
+    out = align_to_target(_ConstReader(_FROZEN), sender, capture=lambda: None,
+                          sleeper=lambda s: None, clock=lambda: 0.0,
+                          samples=1, max_iters=5,
+                          align_tol=align_tol, deadzone=deadzone)
+    assert out.aligned is False           # the freeze: forbidden zone
+    assert sender.calls == []             # never presses -> can't escape
+
+
+def test_diagonal_hole_fires_a_press_and_converges():
+    """T2: ox=oy=0.095 (mag 0.134) was frozen under the REJECTED 0.12/0.10
+    pair (both axes 0.095 < 0.10 deadzone, mag > 0.12). Under 0.12/0.08 the
+    axes clear the deadzone (0.095 > 0.08) so a yaw press fires, and the sim
+    converges with no timeout."""
+    # static-press check: at least one yaw press on the frozen diagonal frame
+    sender = _Recorder()
+    diag = CompassRead(found=True, offset_x=0.095, offset_y=0.095,
+                       in_front=True, confidence=0.9)
+    align_to_target(_ConstReader(diag), sender, capture=lambda: None,
+                    sleeper=lambda s: None, clock=lambda: 0.0,
+                    samples=1, max_iters=1, align_tol=0.12, deadzone=0.08)
+    yaws = [a for a, _ in sender.calls if a in ("YawRightButton", "YawLeftButton")]
+    assert len(yaws) >= 1, "deadzone 0.08 must let the 0.095 axis press"
+
+    # closed-loop convergence with the real plant
+    sim = _Sim(ox=0.095, oy=0.095, in_front=True)
+    out = _run(sim, align_tol=0.12, deadzone=0.08)
+    assert out.aligned is True
+    assert out.reason == "aligned"
+
+
+def test_invariant_holds_and_forbidden_zone_is_empty():
+    """T3: the ratified invariant deadzone*sqrt(2) <= align_tol, plus a 25-pose
+    sweep proving no pose can sit inside both axes' deadzone yet outside
+    align_tol — the forbidden zone is empty by construction."""
+    assert 0.08 * math.sqrt(2) <= 0.12
+    grid = (-0.08, -0.04, 0.0, 0.04, 0.08)
+    poses = [(ox, oy) for ox in grid for oy in grid]
+    assert len(poses) == 25
+    for ox, oy in poses:
+        mag = math.hypot(ox, oy)
+        # every in-deadzone pose is also inside align_tol -> no freeze
+        assert mag <= 0.12, f"pose ({ox},{oy}) mag {mag} exceeds align_tol"
+
+
+def test_convergence_no_oscillation_from_single_axis():
+    """T4: starting ox=0.09, oy=0.0, the plant (k=0.4, gain=2.0) predicts
+    press 0.18s -> lands +0.018 in one beat. Assert aligned within <=3 iters
+    and no same-axis direction reversal in the press sequence."""
+    sim = _Sim(ox=0.09, oy=0.0, in_front=True)
+    sender_log = []
+    orig = sim.press
+
+    def logged(action, *, hold=0.05):
+        sender_log.append(action)
+        return orig(action, hold=hold)
+
+    sim.press = logged
+    out = _run(sim, align_tol=0.12, deadzone=0.08)
+    assert out.aligned is True
+    assert out.iterations <= 3
+    # no same-axis reversal: never both YawRight and YawLeft in the sequence
+    assert not ("YawRightButton" in sender_log and "YawLeftButton" in sender_log), \
+        f"yaw direction reversed (oscillation): {sender_log}"
+    assert not ("PitchUpButton" in sender_log and "PitchDownButton" in sender_log), \
+        f"pitch direction reversed (oscillation): {sender_log}"

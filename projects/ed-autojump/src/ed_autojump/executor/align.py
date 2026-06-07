@@ -175,8 +175,10 @@ def align_to_target(
     sender: Any,
     *,
     capture: Callable[[], Any],
-    align_tol: float = 0.10,
-    deadzone: float = 0.10,
+    align_tol: float = 0.12,
+    # invariant: deadzone*sqrt(2) (=0.1131) <= align_tol so the per-axis
+    # L-inf deadzone can never leave a corner pose un-aligned yet un-pressed
+    deadzone: float = 0.08,
     gain: float = 2.0,
     min_press: float = 0.10,
     max_press: float = 0.70,
@@ -263,7 +265,19 @@ def align_to_target(
         # spurious beat presses nothing and holds position. A real behind
         # target costs one extra settle cycle, a noise beat costs zero.
         behinds = behinds + 1 if (read.found and not read.in_front) else 0
-        behind_flicker = read.found and not read.in_front and behinds < 2
+        # Fill-aware damp (2026-06-07 session: a decisive astern read —
+        # ox=-0.0307 oy=0.9908 in_front=False fill=0.161, far below
+        # _FILL_BAND_LO — was damped, the 1.4s no-press settle let the SC
+        # orbit swing the dot off-compass, 21 blind search iters, retry).
+        # The damp is for BOUNDARY noise (fill ~0.5), so only damp when the
+        # fill is in/above the band; a decisive low-fill astern read flips on
+        # beat 0. None-fill reads (test fakes / non-fill backends) keep the
+        # legacy 2-beat damp — the live loop always emits floats, so that
+        # branch never fires in production. Inclusive >= keeps boundary fill
+        # exactly 0.35 damped, consistent with _measure's own band test.
+        behind_flicker = (read.found and not read.in_front and behinds < 2
+                          and (read.front_fill is None
+                               or read.front_fill >= _FILL_BAND_LO))
 
         action: Optional[str] = None
         hold: Optional[float] = None
