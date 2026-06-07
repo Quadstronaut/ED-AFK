@@ -10,7 +10,7 @@ in sibling modules and defer those imports.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, Tuple, runtime_checkable
+from typing import Any, Optional, Protocol, Tuple, runtime_checkable
 
 # A bounding box as (x1, y1, x2, y2) in pixel coordinates.
 Box = Tuple[float, float, float, float]
@@ -33,6 +33,14 @@ class CompassRead:
     offset_y: float
     in_front: bool
     confidence: float
+    # Continuous front evidence in [0, 1] (cyan density at the dot centre:
+    # ~1.0 solid/front, ~0.0 hollow/behind). None = the backend can only give
+    # the boolean (YOLO/OpenCV). ADDED 2026-06-06: the hard 0.5 threshold sat
+    # inside the live noise band (821 of 4473 real reads in 0.3-0.6) and the
+    # in_front bit flipped beat-to-beat at stable positions — _measure now
+    # medians THIS across samples and applies hysteresis, which it cannot do
+    # from a pre-thresholded bit.
+    front_fill: Optional[float] = None
 
     @classmethod
     def not_found(cls) -> "CompassRead":

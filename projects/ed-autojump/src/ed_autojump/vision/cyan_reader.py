@@ -37,6 +37,12 @@ from .compass import CompassRead, _clamp_unit
 # confident YOLO read (if available) beats it in a CompositeCompassReader.
 _CONFIDENCE = 0.6
 _MIN_AREA = 4  # ignore noise specks smaller than 4 pixels
+# Largest plausible dot, as a fraction of ring_radius². Live data (2026-06-06,
+# 4,481 real reads): front areas IQR 36-44 px, behind 10-25 px at ring r≈25
+# (0.32·25² = 200). The 350-880 px blobs were glare orbs/flare — picking one
+# as "largest blob" steered the ship at scenery (session_130434 16410_i06
+# flapped between a 50 px dot and a 350 px glare blob, opposite verdicts).
+_MAX_AREA_FRAC = 0.32
 
 
 class CyanDotReader:
@@ -191,10 +197,15 @@ class CyanDotReader:
 
         best_label = -1
         best_area = -1
+        # Oversized blobs are NEVER the dot (true dots are <=~100 px; glare
+        # orbs run 350-880) — skip them so the next-largest REAL component
+        # can win, or fail to not_found, which the consumers' transient-miss
+        # damping absorbs. A wrong steer at scenery wrecks the pose.
+        max_area = _MAX_AREA_FRAC * radius * radius
         # Label 0 = background; skip it.
         for label in range(1, num_labels):
             area = int(stats[label, cv2.CC_STAT_AREA])
-            if area >= _MIN_AREA and area > best_area:
+            if _MIN_AREA <= area <= max_area and area > best_area:
                 best_area = area
                 best_label = label
 
@@ -228,7 +239,11 @@ class CyanDotReader:
         dist2 = (xs - bx) ** 2 + (ys - by) ** 2
         inner = dist2 <= inner_r ** 2
 
-        # Mean cyan density inside the inner disc.
+        # Mean cyan density inside the inner disc. The PER-FRAME threshold
+        # stays for compat, but the continuous value travels in front_fill:
+        # faint dots live in a 0.3-0.6 noise band where the bit is a coin
+        # flip (19% of live iterations had intra-iteration disagreement) —
+        # _measure medians the fills and applies hysteresis instead.
         inner_fill = float(cyan_mask[inner].mean()) if inner.any() else 0.0
         in_front = inner_fill >= 0.5  # filled disc → target ahead; ring → behind
 
@@ -238,4 +253,5 @@ class CyanDotReader:
             offset_y=offset_y,
             in_front=in_front,
             confidence=_CONFIDENCE,
+            front_fill=inner_fill,
         )

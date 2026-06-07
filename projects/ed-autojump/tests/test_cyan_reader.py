@@ -299,6 +299,43 @@ def test_real_frame_behind_hollow_top_is_behind():
     assert r.offset_y > 0.3, "dot sits near the TOP rim"
 
 
+def test_real_frames_faint_boundary_emit_continuous_fill():
+    """REAL frames (2026-06-06 session_130434, orient_16410_i01): one faint
+    hollow ring, samples 0 and 4 of the SAME iteration at the SAME attitude.
+    The old hard 0.5 threshold read them 0.41 vs 0.52 -> opposite verdicts
+    (the boundary disease, 19% of live iterations). The reader must emit the
+    CONTINUOUS front_fill so _measure can median + hysteresis it."""
+    from pathlib import Path
+    fx = Path(__file__).parent / "fixtures"
+    reader = CyanDotReader(use_ring_detect=True)
+    fills = []
+    for name in ("compass_faint_hollow_boundary_a.png",
+                 "compass_faint_hollow_boundary_b.png"):
+        frame = cv2.imread(str(fx / name))
+        assert frame is not None, f"fixture missing: {name}"
+        r = reader.read(frame)
+        assert r.found is True
+        assert r.front_fill is not None, "classifier must expose its evidence"
+        assert 0.0 <= r.front_fill <= 1.0
+        fills.append(r.front_fill)
+    # Both samples sit in the ambiguity band — the disease this fixture pins.
+    assert all(0.2 <= f <= 0.8 for f in fills), fills
+
+
+def test_real_frame_glare_orb_is_not_the_dot():
+    """REAL frame (2026-06-06 session_130434, orient_16405_i00_s3): a glowing
+    cyan celestial orb, 880 px of mask — 20x any true dot (live areas: front
+    IQR 36-44 px, behind 10-25 px). The old largest-blob pick locked onto it
+    and steered. Oversized blobs are never the dot: reject -> not_found
+    (transient-miss damping holds position; a wrong steer wrecks the pose)."""
+    from pathlib import Path
+    frame = cv2.imread(str(Path(__file__).parent / "fixtures"
+                           / "compass_glare_orb_not_dot.png"))
+    assert frame is not None, "fixture missing"
+    r = CyanDotReader(use_ring_detect=True).read(frame)
+    assert r.found is False, "880px glare orb must not be reported as the dot"
+
+
 # ---------------------------------------------------------------------------
 # build_compass_reader wiring smoke test
 # ---------------------------------------------------------------------------

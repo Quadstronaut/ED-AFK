@@ -41,6 +41,16 @@ class AlignOutcome:
     reason: str  # "aligned" | "timeout" | "max_iters"
 
 
+# front_fill uncertainty band (2026-06-06 boundary disease): the live fill
+# histogram (4,473 real reads) has 821 reads in 0.3-0.6 — a median there is
+# genuinely ambiguous, and re-thresholding it every beat flipped the verdict
+# at STABLE positions (19% of live iterations had per-sample disagreement;
+# 14 median-level flips). Inside the band the verdict HOLDS the caller's
+# previous one; outside, the median always re-decides (no permanent stick).
+_FILL_BAND_LO = 0.35
+_FILL_BAND_HI = 0.65
+
+
 def _measure(
     reader: Any,
     capture: Callable[[], Any],
@@ -48,6 +58,7 @@ def _measure(
     *,
     raw_out: Optional[list] = None,
     frames_out: Optional[list] = None,
+    prev_in_front: Optional[bool] = None,
 ) -> CompassRead:
     """Take ``samples`` consecutive reads and return a median-filtered result.
 
@@ -58,8 +69,14 @@ def _measure(
       - Collect all reads back-to-back (no sleep — the loop's settle handles pacing).
       - If fewer than half are ``found``, return ``CompassRead.not_found()``.
       - Otherwise return a synthetic read whose offset_x / offset_y are the
-        statistical medians of the found reads, in_front is a majority vote,
-        and confidence is the mean — this rejects single-frame cyan-UI spikes.
+        statistical medians of the found reads and confidence is the mean —
+        this rejects single-frame cyan-UI spikes.
+      - in_front comes from the MEDIAN of the continuous ``front_fill``
+        evidence (reads without it contribute 1.0/0.0 from their boolean),
+        NOT from a vote of per-sample bits: bits at the classifier boundary
+        are coin flips, the median fill is stable. When the median lands in
+        the uncertainty band and ``prev_in_front`` is given, the previous
+        verdict is held (temporal hysteresis at a stable position).
 
     ``raw_out`` / ``frames_out``: optional lists that collect the per-sample
     CompassReads / captured frames — diagnostic taps for align telemetry
@@ -90,12 +107,22 @@ def _measure(
     if len(found_reads) <= samples // 2:
         return CompassRead.not_found()
 
+    median_fill = statistics.median(
+        (r.front_fill if r.front_fill is not None else (1.0 if r.in_front else 0.0))
+        for r in found_reads
+    )
+    if prev_in_front is not None and _FILL_BAND_LO <= median_fill <= _FILL_BAND_HI:
+        in_front = prev_in_front
+    else:
+        in_front = median_fill >= 0.5
+
     return CompassRead(
         found=True,
         offset_x=statistics.median(r.offset_x for r in found_reads),
         offset_y=statistics.median(r.offset_y for r in found_reads),
-        in_front=sum(r.in_front for r in found_reads) > len(found_reads) / 2,
+        in_front=in_front,
         confidence=sum(r.confidence for r in found_reads) / len(found_reads),
+        front_fill=median_fill,
     )
 
 
@@ -215,7 +242,12 @@ def align_to_target(
 
         raw: Optional[list] = [] if on_iter is not None else None
         frames: Optional[list] = [] if frame_sink is not None else None
-        read = _measure(reader, capture, samples, raw_out=raw, frames_out=frames)
+        # Thread the last FOUND verdict into the measurement so a median
+        # fill in the uncertainty band holds it (hysteresis) instead of
+        # re-flipping a coin at a stable position.
+        prev = last.in_front if last.found else None
+        read = _measure(reader, capture, samples, raw_out=raw,
+                        frames_out=frames, prev_in_front=prev)
         last = read
         if frame_sink is not None:
             frame_sink(i, frames)
@@ -241,6 +273,10 @@ def align_to_target(
                 "i": i,
                 "found": read.found,
                 "in_front": read.in_front,
+                # median front_fill — the continuous evidence behind the
+                # verdict (ADDED 2026-06-06: the boundary disease was only
+                # quantifiable by re-running the reader over dumped frames).
+                "fill": None if read.front_fill is None else round(read.front_fill, 3),
                 "ox": round(read.offset_x, 4),
                 "oy": round(read.offset_y, 4),
                 "mag": round(read.magnitude, 4),

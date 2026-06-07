@@ -603,11 +603,15 @@ def step_pitch_compass(
     start = ctx.clock()
     misses = 0   # consecutive not_found beats
     fronts = 0   # consecutive in_front beats (until="behind" only)
+    prev_front = None  # last FOUND verdict -> _measure hysteresis
     for i in range(max_iters):
         if ctx.clock() - start > timeout_s:
             ctx.log("PitchCompassTimeout", {"until": until, "iters": i})
             return False
-        read = _measure(ctx.compass_reader, ctx.frame_grabber, ctx.compass_samples)
+        read = _measure(ctx.compass_reader, ctx.frame_grabber,
+                        ctx.compass_samples, prev_in_front=prev_front)
+        if read.found:
+            prev_front = read.in_front
         at_gate = _at_gate(read)
         # Transient-miss damping (run 5, session_142245): a single
         # not_found beat (glare flicker) used to fire the full-power blind
@@ -630,7 +634,9 @@ def step_pitch_compass(
         # opaque presses — reads were invisible, same gap orient had).
         ctx.log("PitchIter", {
             "i": i, "until": until, "found": read.found,
-            "in_front": read.in_front, "ox": round(read.offset_x, 4),
+            "in_front": read.in_front,
+            "fill": None if read.front_fill is None else round(read.front_fill, 3),
+            "ox": round(read.offset_x, 4),
             "oy": round(read.offset_y, 4), "mag": round(read.magnitude, 4),
             "action": action, "hold": hold,
         })
@@ -729,6 +735,7 @@ def step_hold_alignment(
     success_flag = _HOLD_SUCCESS_FLAG.get(until_event)
     charge_seen = False
     iterations = 0
+    prev_front = None  # last FOUND verdict -> _measure hysteresis
     start = ctx.clock()
     while True:
         if ctx.should_abort():
@@ -766,10 +773,12 @@ def step_hold_alignment(
                 ctx.log("HoldAlignmentDone",
                         {"reason": "refused_cooldown", "iters": iterations})
                 return False
-        read = _measure(ctx.compass_reader, ctx.frame_grabber, samples)
+        read = _measure(ctx.compass_reader, ctx.frame_grabber, samples,
+                        prev_in_front=prev_front)
         iterations += 1
         if not read.found:
             continue
+        prev_front = read.in_front
         if read.in_front and read.magnitude <= align_tol:
             continue   # within maintenance tolerance, no correction needed
         _correct(ctx.sender, read, gain=gain, min_press=min_press,

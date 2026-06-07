@@ -274,6 +274,67 @@ def test_measure_majority_not_found():
     assert result.found is False
 
 
+def _fill_read(fill, *, in_front=None, ox=0.1):
+    """A found read carrying continuous front_fill evidence (in_front derives
+    from fill unless given — mirrors what CyanDotReader emits per frame)."""
+    return CompassRead(found=True, offset_x=ox, offset_y=0.0,
+                       in_front=(fill >= 0.5) if in_front is None else in_front,
+                       confidence=0.6, front_fill=fill)
+
+
+def test_measure_medians_continuous_fill_not_boolean_votes():
+    """2026-06-06 boundary disease: 19% of live iterations had per-sample
+    in_front DISAGREEMENT (fills straddling 0.5). The median of the
+    CONTINUOUS fills decides — sample-level boolean votes don't exist
+    anymore. fills [.42,.46,.48,.52,.55] -> median .48 -> behind, even
+    though boolean voting would say 2/5 front."""
+    reader = _SeqReader([_fill_read(f) for f in (0.42, 0.46, 0.48, 0.52, 0.55)])
+    result = _measure(reader, lambda: None, samples=5)
+    assert result.found is True
+    assert result.in_front is False
+    assert result.front_fill == 0.48
+
+
+def test_measure_uncertainty_band_holds_previous_verdict():
+    """Median fill inside [0.35, 0.65] is genuinely ambiguous (the live
+    histogram has 821 reads in 0.3-0.6) — with prev_in_front given, the
+    verdict is STICKY so a stable position can't flip beat to beat."""
+    fills = (0.45, 0.48, 0.52, 0.55, 0.49)
+    reader = _SeqReader([_fill_read(f) for f in fills])
+    held = _measure(reader, lambda: None, samples=5, prev_in_front=True)
+    assert held.in_front is True, "band read must hold the previous verdict"
+
+    reader = _SeqReader([_fill_read(f) for f in fills])
+    held = _measure(reader, lambda: None, samples=5, prev_in_front=False)
+    assert held.in_front is False
+
+    reader = _SeqReader([_fill_read(f) for f in fills])
+    fresh = _measure(reader, lambda: None, samples=5, prev_in_front=None)
+    assert fresh.in_front is False, "no prior verdict -> plain 0.5 threshold"
+
+
+def test_measure_clear_evidence_overrides_previous_verdict():
+    """Hysteresis must not make the verdict permanently sticky: a median
+    fill OUTSIDE the band always re-decides."""
+    reader = _SeqReader([_fill_read(f) for f in (0.9, 0.95, 1.0, 0.92, 0.97)])
+    result = _measure(reader, lambda: None, samples=5, prev_in_front=False)
+    assert result.in_front is True
+
+    reader = _SeqReader([_fill_read(f) for f in (0.1, 0.15, 0.2, 0.12, 0.17)])
+    result = _measure(reader, lambda: None, samples=5, prev_in_front=True)
+    assert result.in_front is False
+
+
+def test_measure_fill_none_falls_back_to_boolean():
+    """Readers that don't emit front_fill (YOLO, OpenCV, test fakes) must
+    keep the old majority behaviour: fill defaults to in_front as 1.0/0.0."""
+    reads = [CompassRead(found=True, offset_x=0.1, offset_y=0.0,
+                         in_front=f, confidence=0.9) for f in (True, True, True, False, False)]
+    result = _measure(_SeqReader(reads), lambda: None, samples=5)
+    assert result.in_front is True   # median of [1,1,1,0,0] = 1.0
+    assert result.front_fill == 1.0
+
+
 def test_align_converges_with_samples():
     """samples=3 path: the loop still drives the ship to aligned=True."""
     sim = _Sim(ox=0.5, oy=0.0, in_front=True)
