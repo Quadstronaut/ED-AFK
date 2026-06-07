@@ -47,7 +47,7 @@ def test_supercruise_exit_not_star_is_ignored():
     assert sender.actions() == []
 
 
-def _startup_runner(sender, *, in_supercruise, docked=False):
+def _startup_runner(sender, *, in_supercruise, docked=False, fsd_cooldown=False):
     """Runner with distinguishable single-step procedures: startup presses
     SelectTarget (target_ahead), arrival presses TargetNextRouteSystem
     (target_next_route), smack_recovery presses SetSpeed50 (set_throttle 50)."""
@@ -63,7 +63,7 @@ def _startup_runner(sender, *, in_supercruise, docked=False):
         sleeper=lambda s: None,
         status_supplier=lambda: SimpleNamespace(
             docked=docked, in_supercruise=in_supercruise, fsd_charging=False,
-            fsd_cooldown=False, fsd_mass_locked=False, overheating=False),
+            fsd_cooldown=fsd_cooldown, fsd_mass_locked=False, overheating=False),
     )
 
 
@@ -95,18 +95,30 @@ def test_startup_docked_runs_nothing():
     assert r._startup_done is True
 
 
-def test_startup_smacked_runs_smack_recovery():
+def test_startup_smacked_with_live_cooldown_runs_smack_recovery():
     """Restart while SMACKED (2026-06-06 13:41 operator question): journal
     backlog ends on SupercruiseExit Body=Star with no SC re-entry, status
-    shows normal space. The live SupercruiseExit dispatch never fires for
-    backlog events, and startup's throttle-100 + glare-blind orient is the
-    wrong procedure — smack_recovery owns this state (its cooldown gate
-    passes instantly when the cooldown already expired)."""
+    shows normal space AND the FsdCooldown flag is still burning (a real
+    exclusion-zone drop imposes ~40s) — smack_recovery owns this state."""
     sender = FakeSender()
-    r = _startup_runner(sender, in_supercruise=False)
+    r = _startup_runner(sender, in_supercruise=False, fsd_cooldown=True)
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))   # backlog
     r._maybe_startup()
     assert sender.actions() == ["SetSpeed50"]      # smack_recovery ran
+
+
+def test_stale_star_drop_without_cooldown_runs_startup():
+    """2026-06-07 10:05 false positive: the operator manually dropped 8 Ls
+    from the star (a NORMAL SupercruiseExit — journal-identical to a smack)
+    and launched the bot seconds later. The cooldown gate is the
+    discriminator: a manual drop's ~5s cooldown is gone by boot, a real
+    smack's ~40s is not. No live cooldown -> the smacked inference is stale
+    -> startup, whose recovery lane does the star-astern escape anyway."""
+    sender = FakeSender()
+    r = _startup_runner(sender, in_supercruise=False, fsd_cooldown=False)
+    r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))   # backlog
+    r._maybe_startup()
+    assert sender.actions() == ["SelectTarget"]    # startup ran, NOT smack
 
 
 def test_smacked_scene_cleared_by_supercruise_entry():

@@ -486,13 +486,22 @@ class FlowRunner:
             # orbits the star and clears it BEFORE throttling up.
             self._run("arrival")
             return
-        if self._smacked:
+        if self._smacked and getattr(st, "fsd_cooldown", False):
             # Restart while SMACKED (normal space, last SC transition was a
-            # star drop): smack_recovery owns this state — startup's
-            # throttle-100 + glare-blind orient is the 13:26 dive all over
-            # again, and the SupercruiseExit that would dispatch the reflex
-            # live is backlog here, never dispatched. wait_cooldown_clear
-            # passes instantly when the cooldown already expired.
+            # star drop, FSD cooldown STILL burning): smack_recovery owns
+            # this state — startup's throttle-100 + glare-blind orient is
+            # the 13:26 dive all over again, and the SupercruiseExit that
+            # would dispatch the reflex live is backlog here, never
+            # dispatched.
+            #
+            # COOLDOWN GATE (2026-06-07 10:05 false positive): a manual drop
+            # near a star writes a journal-identical SupercruiseExit
+            # BodyType=Star — the operator parked 8 Ls out, launched the
+            # bot, and the backlog routed it to smack_recovery in a clean
+            # scene. The FsdCooldown flag is the only live discriminator:
+            # a real exclusion-zone drop imposes ~40s of cooldown, a normal
+            # drop ~5s (gone by boot). A stale smack falls through to
+            # startup, whose recovery lane runs the same star-astern escape.
             self._run("smack_recovery")
             return
         self._run("startup")
