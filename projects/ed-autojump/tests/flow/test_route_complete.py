@@ -88,7 +88,7 @@ def _arm_final_waypoint(r, addr, sysname):
 def test_e1_route_complete_runs_park_not_arrival():
     """Cache the final waypoint, latch a NavRouteClear, then an FSDJump whose
     SystemAddress matches within the window -> route_complete_park runs,
-    arrival does NOT, _route_done is True, the latch is consumed."""
+    arrival does NOT, the latch is consumed (the single-shot re-fire guard)."""
     sender = FakeSender()
     records = []
     r = _runner(sender, status=_status(), record=lambda n, p: records.append((n, p)))
@@ -98,7 +98,6 @@ def test_e1_route_complete_runs_park_not_arrival():
                    system_address=12345, timestamp=_ts(10)))
     assert "SetSpeedZero" in sender.actions()                    # park ran
     assert "TargetNextRouteSystem" not in sender.actions()    # arrival did NOT
-    assert r._route_done is True
     assert r._navroute_cleared is False                       # latch consumed
     assert any(n == "RouteComplete" and p["type"] == "system" for n, p in records)
 
@@ -115,7 +114,6 @@ def test_e4_clear_then_jump_to_different_system_runs_arrival():
     r.dispatch(_ev("FSDJump", body_type="Star", star_system="Other",
                    system_address=99999, timestamp=_ts(10)))
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
-    assert r._route_done is False
 
 
 # ---- guards: no-clear / address-mismatch / stale-clear -----------------------
@@ -170,7 +168,8 @@ def test_clear_after_jump_is_not_completion():
 
 def test_fresh_navroute_rearms_after_completion():
     """After a completed route, a new plot (NavRoute event) must re-arm: clear
-    _route_done and the clear latch so the NEXT route can complete too."""
+    the clear latch and re-cache the new final waypoint so the NEXT route can
+    complete too."""
     sender = FakeSender()
 
     class _NR:
@@ -179,12 +178,108 @@ def test_fresh_navroute_rearms_after_completion():
 
     nr = _NR([SimpleNamespace(system_address=777, star_system="New Dest")])
     r = _runner(sender, navroute=_FakeNavReader(nr))
-    r._route_done = True
     r._navroute_cleared = True
     r._on_tail_event(_ev("NavRoute"))
-    assert r._route_done is False
     assert r._navroute_cleared is False
     assert r._final_waypoint == (777, "New Dest")
+
+
+# ---- FIX 1: reader-driven resolution (journal rotation / NavRoute-event miss) -
+# These exercise the REAL populate path (_resolve_final_waypoint reading the
+# durable NavRoute.json reader) instead of _arm_final_waypoint, which bypasses
+# it. They FAIL against the pre-fix code, whose _is_route_complete only consulted
+# the event-cached self._final_waypoint and never the reader.
+
+class _NRRoute:
+    """A NavRoute-like object with a .route list of waypoints."""
+    def __init__(self, route):
+        self.route = route
+
+
+def _wp(addr, name):
+    return SimpleNamespace(system_address=addr, star_system=name)
+
+
+def test_fix1_journal_rotation_no_navroute_event_resolves_from_reader():
+    """The council's MISSED-fire case: route was plotted in a journal that has
+    since rotated, so NO NavRoute event was seen this session -> _final_waypoint
+    is None. But NavRoute.json (the FILE) persists and the reader returns it. A
+    NavRouteClear + matching final-hop FSDJump must STILL fire route-complete by
+    resolving the waypoint from the reader. (FAILS pre-fix: None waypoint -> the
+    5m40s false-abort grind this feature exists to kill.)"""
+    sender = FakeSender()
+    records = []
+    nr = _NRRoute([_wp(1, "Hop A"), _wp(2, "Hop B"), _wp(54321, "Final Sys")])
+    r = _runner(sender, status=_status(), navroute=_FakeNavReader(nr),
+                record=lambda n, p: records.append((n, p)))
+    assert r._final_waypoint is None                          # no NavRoute event
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Final Sys",
+                   system_address=54321, timestamp=_ts(10)))
+    assert "SetSpeedZero" in sender.actions()                    # park ran
+    assert "TargetNextRouteSystem" not in sender.actions()    # arrival did NOT
+    assert any(n == "RouteComplete" for n, _ in records)
+
+
+def test_fix1_reader_none_first_poll_then_current_holds_route():
+    """Event/file race: the reader's first poll() returns None (mtime-unchanged
+    at the moment we look) but .current holds the last good route -> _navroute_
+    state falls through to .current and the waypoint still resolves -> fires."""
+    sender = FakeSender()
+    nr = _NRRoute([_wp(54321, "Final Sys")])
+
+    class _PollNoneCurrentHolds:
+        """poll() ALWAYS returns None (no mtime change ever); .current holds."""
+        def poll(self):
+            return None
+
+        @property
+        def current(self):
+            return nr
+
+    r = _runner(sender, status=_status(), navroute=_PollNoneCurrentHolds())
+    assert r._final_waypoint is None
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Final Sys",
+                   system_address=54321, timestamp=_ts(10)))
+    assert "SetSpeedZero" in sender.actions()                    # park ran
+    assert "TargetNextRouteSystem" not in sender.actions()
+
+
+def test_fix1_reader_resolved_address_mismatch_runs_arrival():
+    """Reader resolves a final waypoint, but THIS jump's address doesn't match
+    it (a mid-route hop arriving with a stale clear latched) -> not complete ->
+    arrival. Proves reader-resolution still honours the int-address gate."""
+    sender = FakeSender()
+    nr = _NRRoute([_wp(54321, "Final Sys")])
+    r = _runner(sender, status=_status(), navroute=_FakeNavReader(nr))
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Mid Hop",
+                   system_address=999, timestamp=_ts(10)))
+    assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
+
+
+# ---- FIX: latch-consumed second jump (no re-plot) ----------------------------
+
+def test_second_jump_same_system_no_replot_runs_arrival():
+    """After a completed route, a SECOND FSDJump to the SAME address with NO
+    fresh plot must run arrival, NOT a second park. The single-shot clear latch
+    (consumed at completion) is the guard — _route_done was dead and is gone."""
+    sender = FakeSender()
+    nr = _NRRoute([_wp(54321, "Final Sys")])
+    r = _runner(sender, status=_status(), navroute=_FakeNavReader(nr))
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    # First jump completes the route -> park.
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Final Sys",
+                   system_address=54321, timestamp=_ts(10)))
+    assert "SetSpeedZero" in sender.actions()
+    assert r._navroute_cleared is False                       # latch consumed
+    # Second jump into the same system, no NavRoute / NavRouteClear between.
+    sender2 = FakeSender()
+    r.sender = sender2
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Final Sys",
+                   system_address=54321, timestamp=_ts(20)))
+    assert sender2.actions() == ["TargetNextRouteSystem"]     # arrival, not park
 
 
 # ---- system-vs-station decision ----------------------------------------------
@@ -221,6 +316,39 @@ def test_star_destination_body_zero_runs_system_park():
                    system_address=12345, timestamp=_ts(10)))
     assert any(n == "RouteComplete" for n, _ in records)
     assert not any(n == "RouteCompleteStationGated" for n, _ in records)
+
+
+def test_dest_locked_in_different_system_runs_system_park():
+    """Stale Destination lock from a PRIOR hop: a body is locked (Body != 0) but
+    its .system is a DIFFERENT system than this arrival -> NOT a station here ->
+    system park, never station-gated. (Non-blocking nit (e).)"""
+    sender = FakeSender()
+    records = []
+    # dest_system 99999 != the arrival's system_address 12345
+    st = _status(dest_name="Some Station", dest_body=7, dest_system=99999)
+    r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
+    r._current_system = "Destination Sys"
+    _arm_final_waypoint(r, 12345, "Destination Sys")
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+                   system_address=12345, timestamp=_ts(10)))
+    assert any(n == "RouteComplete" and p["type"] == "system" for n, p in records)
+    assert not any(n == "RouteCompleteStationGated" for n, _ in records)
+    assert "SetSpeedZero" in sender.actions()
+
+
+def test_address_mismatch_same_system_name_runs_arrival():
+    """SystemAddress is the int identity; star_system name matching is NOT
+    enough. A jump whose NAME equals the cached final waypoint's but whose
+    ADDRESS differs (procedural-name collision / dupe) is NOT route-complete ->
+    arrival. (Non-blocking nit (f).)"""
+    sender = FakeSender()
+    r = _runner(sender)
+    _arm_final_waypoint(r, 12345, "Destination Sys")
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+                   system_address=67890, timestamp=_ts(10)))   # name same, addr differs
+    assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
 
 
 def test_route_complete_overlay_uses_event_and_status_slots():
@@ -317,3 +445,40 @@ def test_restart_no_navroute_reader_runs_arrival():
                         current_system="Destination Sys")
     r._maybe_startup()
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
+
+
+# ---- FIX 2: malformed navroute object (no/None .route) fails CLOSED ----------
+# Pre-fix: `if nr is None or getattr(nr, "route", None): return False`. A
+# malformed object whose .route is absent/None -> getattr returns None ->
+# falsy -> does NOT return False -> falls through and may IDLE on UNKNOWN state
+# (fail-OPEN). Post-fix distinguishes route is None (UNKNOWN -> closed) from
+# route == [] (KNOWN empty -> parked). These FAIL pre-fix (they'd idle).
+
+def test_restart_navroute_route_attr_missing_runs_arrival():
+    """The reader returns an object with NO .route attribute at all (malformed
+    / partial parse) -> UNKNOWN, not 'empty' -> fail closed -> arrival runs."""
+    sender = FakeSender()
+
+    class _NoRouteAttr:        # deliberately has no .route
+        pass
+
+    st = _status(dest_name="Destination Sys", in_supercruise=True)
+    r = _startup_runner(sender, status=st, navroute=_FakeNavReader(_NoRouteAttr()),
+                        current_system="Destination Sys")
+    r._maybe_startup()
+    assert sender.actions() == ["TargetNextRouteSystem"]      # arrival, not idle
+
+
+def test_restart_navroute_route_is_none_runs_arrival():
+    """The reader returns an object whose .route is explicitly None (UNKNOWN)
+    -> fail closed -> arrival runs, never idles."""
+    sender = FakeSender()
+
+    class _NoneRoute:
+        route = None
+
+    st = _status(dest_name="Destination Sys", in_supercruise=True)
+    r = _startup_runner(sender, status=st, navroute=_FakeNavReader(_NoneRoute()),
+                        current_system="Destination Sys")
+    r._maybe_startup()
+    assert sender.actions() == ["TargetNextRouteSystem"]      # arrival, not idle

@@ -189,12 +189,19 @@ class FlowRunner:
         # NOT the trigger by itself: we cache the LAST waypoint while the route
         # still exists, latch the clear + its timestamp, and at the next FSDJump
         # confirm completion by matching SystemAddress (int, never name) AND a
-        # tight journal-timestamp correlation window. _route_done guards against
-        # a re-fire; a fresh NavRoute (re-plot) re-arms everything.
+        # tight journal-timestamp correlation window. The _navroute_cleared latch
+        # is single-shot (consumed at completion), which by itself blocks a
+        # re-fire on a second jump into the same system without a fresh plot.
+        #
+        # _final_waypoint is cached from the NavRoute EVENT when present, but is
+        # ALSO resolved at decision time from the DURABLE NavRoute.json reader
+        # (_navroute_state) — the event is missing across a journal rotation /
+        # game restart mid-route, while the FILE persists (FIX 2026-06-07: the
+        # missed-fire bug where a rotation dropped the cache and the final hop
+        # fell into the 5m40s false-abort grind).
         self._final_waypoint: Optional[tuple[int, str]] = None
         self._navroute_cleared: bool = False
         self._navroute_cleared_utc: Optional[datetime] = None
-        self._route_done: bool = False
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
@@ -414,8 +421,10 @@ class FlowRunner:
             # of arrival — arrival's target_next_route would find no next hop
             # and mis-report a clean success as a manual-intervention abort.
             if self._is_route_complete(ev):
-                self._navroute_cleared = False   # consume the latch
-                self._route_done = True
+                # Consume the single-shot latch: a second FSDJump into this same
+                # system without a fresh plot finds no clear latched and falls
+                # through to normal arrival (it is NOT a re-completion).
+                self._navroute_cleared = False
                 self.dispatch_route_complete(ev)
                 return
             self._run("arrival")
@@ -424,6 +433,33 @@ class FlowRunner:
             self._run("smack_recovery")
 
     # ---- route completion -------------------------------------------------
+    def _resolve_final_waypoint(self) -> Optional[tuple[int, str]]:
+        """The route's final waypoint as (system_address, star_system).
+
+        Prefers the event-time cache (_final_waypoint, set from the NavRoute
+        EVENT). When that is None — the council's MISSED-fire case: a journal
+        rotation / game restart mid-route emits NO NavRoute event, so the cache
+        is empty even though the route was real — fall back to the DURABLE
+        NavRoute.json reader (_navroute_state, which polls the FILE that
+        persists across rotation). Caches what it resolves so the catch-up read
+        seeds the latch for the rest of the session.
+
+        Returns None when neither source yields an addressed waypoint (fails
+        closed at the call site)."""
+        if self._final_waypoint is not None:
+            return self._final_waypoint
+        nr = self._navroute_state()
+        route = getattr(nr, "route", None) if nr is not None else None
+        if not route:
+            return None
+        last = route[-1]
+        addr = getattr(last, "system_address", None)
+        if addr is None:
+            return None
+        sysname = getattr(last, "star_system", None) or ""
+        self._final_waypoint = (addr, sysname)   # seed for the rest of the run
+        return self._final_waypoint
+
     def _is_route_complete(self, ev: Any) -> bool:
         """True iff this FSDJump is the arrival at the route's FINAL waypoint.
 
@@ -431,12 +467,17 @@ class FlowRunner:
         - a NavRouteClear was latched (the clear that precedes the final hop),
         - it falls within _CLEAR_JOIN_WINDOW_S of THIS jump (journal-timestamp
           correlation — a manual re-plot minutes ago won't match),
-        - we cached a final waypoint while the route still existed, and
+        - a final waypoint is resolvable — from the event cache OR, when the
+          NavRoute event was missed (rotation/restart), the durable
+          NavRoute.json reader, and
         - this jump's SystemAddress == that waypoint's (int match, never name).
 
         Fails closed (False) on any missing piece, so an unrecognised scene
         falls through to the normal arrival flow."""
-        if not self._navroute_cleared or self._final_waypoint is None:
+        if not self._navroute_cleared:
+            return False
+        final = self._resolve_final_waypoint()
+        if final is None:
             return False
         jump_ts = self._parse_journal_ts(getattr(ev, "timestamp", "") or "")
         if jump_ts is None or self._navroute_cleared_utc is None:
@@ -445,7 +486,7 @@ class FlowRunner:
         if not (0.0 <= gap <= _CLEAR_JOIN_WINDOW_S):
             return False
         addr = getattr(ev, "system_address", None)
-        return addr is not None and addr == self._final_waypoint[0]
+        return addr is not None and addr == final[0]
 
     def dispatch_route_complete(self, ev: Any) -> None:
         """Terminal ROUTE COMPLETE handler: park in orbit at the destination
@@ -595,7 +636,10 @@ class FlowRunner:
             # A (re-)plotted route. Cache the LAST waypoint as the final
             # destination WHILE the route still exists (it's gone after the
             # NavRouteClear that precedes the final FSDJump). Re-arm: a fresh
-            # plot clears any prior route-done latch so a NEW route can complete.
+            # plot clears any prior clear latch so a NEW route can complete.
+            # (_is_route_complete also re-resolves from the durable file reader
+            # when this event is missed across a rotation — see
+            # _resolve_final_waypoint.)
             nr = self._navroute_state()
             route = getattr(nr, "route", None) if nr is not None else None
             if route:
@@ -606,7 +650,6 @@ class FlowRunner:
                     self._final_waypoint = (addr, sysname or "")
             self._navroute_cleared = False
             self._navroute_cleared_utc = None
-            self._route_done = False
         elif name == "NavRouteClear":
             # Route cleared. Latch it + its journal timestamp. This fires on the
             # final hop (in witchspace) AND on a manual re-plot — the FSDJump
@@ -708,11 +751,18 @@ class FlowRunner:
         in_supercruise is the caller's precondition; this checks the rest."""
         from .steps import _destination_is_local_star
 
-        # Require an AFFIRMATIVELY empty route. None (no reader / unknown) is
-        # NOT empty — fail closed to arrival, since a mid-route arrival-star
-        # restart looks identical to a parked one except for the live route.
+        # Require an AFFIRMATIVELY empty route (route == []). Anything else is
+        # NOT known-empty — fail closed to arrival, since a mid-route arrival-
+        # star restart looks identical to a parked one except for the live
+        # route. Three non-empty cases all fail closed:
+        #   - nr is None            (no reader / file unreadable -> unknown)
+        #   - route is None/missing  (malformed object, attr absent -> UNKNOWN,
+        #                             not "empty"; getattr-default trap fixed
+        #                             2026-06-07: a falsy None must NOT pass)
+        #   - route is truthy        (waypoints remain -> still mid-route)
         nr = self._navroute_state()
-        if nr is None or getattr(nr, "route", None):
+        route = getattr(nr, "route", None) if nr is not None else None
+        if nr is None or route is None or route:
             return False
         dest = getattr(st, "destination", None)
         if dest is None:
