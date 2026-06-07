@@ -406,3 +406,111 @@ def test_pitch_consecutive_front_reads_flip():
     assert ok is True
     assert sender.holds[0] == ("PitchUpButton", 1.0)   # flip on beat 2
     assert len(sender.actions()) == 1
+
+
+# ---------------------------------------------------------------------------
+# nav_panel_target exit telemetry + panel hygiene (2026-06-07 15:03-15:06Z:
+# a 14-macro dot-starvation exhaustion logged the CONSTANT max_toggles as
+# {"toggles": 4} -- a flat lie next to 35 FocusLeftPanel presses -- and left
+# the panel OPEN for the retry to clean up).
+# ---------------------------------------------------------------------------
+
+class _AllMissReader:
+    """Compass dot NEVER appears -- the dot-starvation (glare/vision) scene."""
+    def read(self, frame):
+        return CompassRead.not_found()
+
+
+def _navtel_ctx(reader, status_fn, system="Acihaut"):
+    """nav_panel_target context with live-default kwargs in the test bodies."""
+    sender = FakeSender()
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None,
+        compass_reader=reader, frame_grabber=lambda: object(),
+        compass_samples=1,
+        status_supplier=status_fn,
+        current_system_supplier=lambda: system,
+    )
+    return ctx, sender
+
+
+def _cockpit_status():
+    """gui_focus=0 so _ensure_cockpit_focus presses NOTHING (both the entry
+    call and the exit-path call) -- keeps the FocusLeftPanel count clean."""
+    from types import SimpleNamespace
+    return SimpleNamespace(gui_focus=0, destination=None, in_supercruise=True)
+
+
+def test_nav_panel_dot_starvation_runs_full_macro_budget():
+    """2a: all-dot-miss with live defaults (max_rows=10, max_toggles=4) runs
+    exactly 14 macros (10+4 cap) and fails closed -- 14 macros x (open+close)
+    == 28 FocusLeftPanel presses, empirically proving no hidden early exit.
+    gui_focus=0 means the exit-path _ensure_cockpit_focus presses nothing, so
+    it can't confound the count."""
+    ctx, sender = _navtel_ctx(_AllMissReader(), _cockpit_status)
+    ok = STEP_REGISTRY["nav_panel_target"](
+        ctx, settle_s=0.0, verify_reads=1, max_rows=10, max_toggles=4)
+    assert ok is False
+    assert sender.events.count("FocusLeftPanel") == 28
+
+
+def test_nav_panel_unverified_payload_distinguishes_dot_starvation():
+    """2b: the Unverified payload reports the ACTUAL macro count and a cause
+    breakdown -- all dot misses, no wrong bodies, row never advanced."""
+    logged = []
+    ctx, sender = _navtel_ctx(_AllMissReader(), _cockpit_status)
+    ctx.record = lambda kind, payload: logged.append((kind, payload))
+    STEP_REGISTRY["nav_panel_target"](
+        ctx, settle_s=0.0, verify_reads=1, max_rows=10, max_toggles=4)
+    payload = [p for k, p in logged if k == "NavPanelTargetUnverified"][0]
+    assert payload["toggles"] == 14         # ACTUAL macros, not the constant
+    assert payload["row"] == 0              # dot misses never advance the row
+    assert payload["dot_misses"] == 14
+    assert payload["wrong_bodies"] == 0
+
+
+def test_nav_panel_rows_exhausted_payload_distinguishes_wrong_bodies():
+    """2c: dot ALWAYS found but identity ALWAYS wrong -> the row walks to
+    max_rows and exits there (macros==max_rows==10, BEFORE the 14-macro cap).
+    The payload reads wrong_bodies==10, dot_misses==0 -- a populated system,
+    not glare."""
+    from types import SimpleNamespace
+    logged = []
+    # symbolic destination name (a Nav Beacon) -> identity always False
+    status = lambda: SimpleNamespace(
+        gui_focus=0, in_supercruise=True,
+        destination=SimpleNamespace(name="$MULTIPLAYER_SCENARIO42_TITLE;"))
+    ctx, sender = _navtel_ctx(
+        FakeReader([_ahead(0.0)] * 200), status, system="Acihaut")
+    ctx.record = lambda kind, payload: logged.append((kind, payload))
+    ok = STEP_REGISTRY["nav_panel_target"](
+        ctx, settle_s=0.0, verify_reads=1, max_rows=10, max_toggles=4)
+    assert ok is False
+    payload = [p for k, p in logged if k == "NavPanelTargetUnverified"][0]
+    assert payload["toggles"] == 10
+    assert payload["row"] == 10
+    assert payload["wrong_bodies"] == 10
+    assert payload["dot_misses"] == 0
+
+
+def test_nav_panel_exhaustion_closes_the_panel():
+    """Panel hygiene: the failing pass left the panel OPEN (the retry had to
+    UI_Back x2). On exhaustion, _ensure_cockpit_focus runs best-effort before
+    returning False. Focus is 0 at ENTRY (so the macro loop runs to
+    exhaustion) but the blind macros desynced it to a panel (gui_focus=7) by
+    the exit path -> UI_Back fires to close it."""
+    from types import SimpleNamespace
+    # read 1 = the entry _ensure_cockpit_focus pre-check (cockpit, presses
+    # nothing); all later reads = panel open (the exit-path cleanup sees 7).
+    reads = {"n": 0}
+    def status():
+        reads["n"] += 1
+        focus = 0 if reads["n"] == 1 else 7
+        return SimpleNamespace(gui_focus=focus, in_supercruise=True,
+                               destination=None)
+    ctx, sender = _navtel_ctx(_AllMissReader(), status)
+    STEP_REGISTRY["nav_panel_target"](
+        ctx, settle_s=0.0, verify_reads=1, max_rows=10, max_toggles=4)
+    # the exit path's best-effort cleanup pressed UI_Back (panel was open)
+    assert "UI_Back" in sender.actions()
+    assert sender.actions()[-1] == "UI_Back"

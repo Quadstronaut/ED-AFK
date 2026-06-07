@@ -432,7 +432,7 @@ _STATUS_FLYING = SimpleNamespace(
     fsd_cooldown=False, fsd_mass_locked=False, overheating=False)
 
 
-def _preempt_harness(proc_name, *, second_step):
+def _preempt_harness(proc_name, *, second_step, overlay=None):
     """A two-step procedure for `proc_name`; the runner's sleeper injects a
     star smack DURING step 0's wait (exactly how a live smack lands: the hub's
     on_event fires from a waiter pump while the procedure is mid-step)."""
@@ -454,6 +454,7 @@ def _preempt_harness(proc_name, *, second_step):
         procedures=procs, sender=sender, clock=lambda: 0.0, sleeper=sleeper,
         status_supplier=lambda: _STATUS_FLYING,
         record=lambda name, payload: records.append((name, payload)),
+        overlay=overlay,
     )
     box["r"] = r
     return r, sender, records
@@ -502,6 +503,31 @@ def test_preempt_does_not_poison_operator_abort_or_next_run():
         name="smack_recovery", steps=(Step("set_throttle", {"pct": 50}),))
     r._run("smack_recovery")
     assert "SetSpeed50" in sender.actions(), "stale preempt aborted the next run"
+
+
+def test_preempt_prints_preempted_not_aborted(capsys):
+    """3a: 2026-06-07 14:24:09Z -- arrival's star-smack preempt printed
+    '[ABORTED] ... manual intervention needed' then smack_recovery dispatched
+    61ms later. A preempted run prints [PREEMPTED] + the reason, NEVER [ABORTED]
+    and never a manual-intervention clause (it's a scene handoff)."""
+    r, _, _ = _preempt_harness("arrival", second_step=Step("target_next_route"))
+    r._run("arrival")
+    out = capsys.readouterr().out
+    assert "[PREEMPTED]" in out
+    assert "star_smack" in out
+    assert "[ABORTED]" not in out
+    assert "manual intervention" not in out
+
+
+def test_preempt_uses_event_slot_not_status_slot():
+    """3b: the persistent STATUS slot belongs to true terminal aborts -- a
+    transient preempt goes to the EVENT slot only, leaving status empty."""
+    ov = _FakeOverlay()
+    r, _, _ = _preempt_harness(
+        "arrival", second_step=Step("target_next_route"), overlay=ov)
+    r._run("arrival")
+    assert ov.status_lines == []                            # status stays empty
+    assert any("[PREEMPTED]" in t for t in ov.events)      # event slot carries it
 
 
 def test_parallel_track_runs_alongside_main():

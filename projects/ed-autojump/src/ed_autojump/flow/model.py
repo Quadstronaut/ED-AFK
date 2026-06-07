@@ -25,6 +25,14 @@ class OnRequiredFail:
     retry_from: Optional[str] = None   # action name to resume from
     max_retries: int = 0
     backoff_s: float = 0.0
+    # State-aware retry override (operator-dictated, 2026-06-07 14:24-14:29Z burn):
+    # a PRE-anchor required fail that lands the ship ALREADY in supercruise must
+    # NOT restart the real-space ladder (target_ahead deselect + the in-SC
+    # engage guard make every real-space orient find nothing — 3 retries burned
+    # all-zero). When set AND status reads in_supercruise, resume from this
+    # action instead of retry_from. None = no override (arrival/startup), and the
+    # interpreter must never consult status in that case.
+    retry_from_if_supercruise: Optional[str] = None
 
 
 @dataclass(frozen=True)

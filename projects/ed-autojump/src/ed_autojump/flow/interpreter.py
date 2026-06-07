@@ -70,11 +70,34 @@ def run_procedure(
 
         if not ok and step.required:
             policy = proc.on_required_fail
-            # A retry_anchor at or before the failure wins over retry_from:
-            # once the procedure is past the anchor, failures return THERE
-            # (e.g. startup's 13s clearance wait) instead of restarting the
-            # whole recovery lane.
+            # Retry-target precedence (council-settled 2026-06-07, load-bearing):
+            #   (1) a retry_anchor at or before the failure wins — once the
+            #       procedure is past the anchor, failures return THERE (e.g.
+            #       the smack-recovery hop lock) instead of restarting the lane.
+            #   (2) else, if retry_from_if_supercruise is set AND the ship is
+            #       already in supercruise, resume from that action — the SC
+            #       branch (the 14:24-14:29Z burn: a PRE-anchor orient_compass
+            #       failed AFTER the SC charge completed, and 3 retries re-ran
+            #       the real-space ladder all-zero in SC).
+            #   (3) else retry_from, as before.
             target = proc.anchor_at_or_before(i)
+            if target is None and policy.retry_from_if_supercruise is not None:
+                # Two-read gate (conservative): Status.json rewrites only ~1s,
+                # so a single mid-transition read is untrustworthy. BOTH reads
+                # must be non-None AND in_supercruise truthy to take the SC
+                # branch — a false negative is exactly today's behavior, no
+                # worse. CRITICAL: the key-set check above short-circuits this,
+                # so status_supplier is NEVER called when the key is None
+                # (arrival/startup must not poll status on a required fail).
+                st1 = ctx.status_supplier()
+                ctx.sleeper(0.3)
+                st2 = ctx.status_supplier()
+                in_sc = (st1 is not None and st2 is not None
+                         and getattr(st1, "in_supercruise", False)
+                         and getattr(st2, "in_supercruise", False))
+                if in_sc:
+                    target = proc.index_of_action(
+                        policy.retry_from_if_supercruise)
             if target is None and policy.retry_from is not None:
                 target = proc.index_of_action(policy.retry_from)
             if target is not None and result.retries < policy.max_retries:

@@ -7,8 +7,12 @@ Real-space failures restart at step 0; in-supercruise failures return to
 the hop lock."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from ed_autojump.flow.context import StepContext
+from ed_autojump.flow.interpreter import run_procedure
 from ed_autojump.flow.loader import load_procedures
+from tests.flow import FakeSender
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
 
@@ -87,3 +91,59 @@ def test_first_throttle_is_zero_then_full_burn_before_the_pitch():
     proc = _smack()
     throttles = [s.params["pct"] for s in proc.steps if s.action == "set_throttle"]
     assert throttles == [0, 100, 100]
+
+
+# ---- state-aware retry: the toml carries the SC override ----------------------
+
+def test_toml_carries_supercruise_retry_key_at_the_anchor():
+    """Operator-dictated (2026-06-07 14:24-14:29Z burn): a pre-anchor fail in
+    supercruise must resume at the hop lock, not restart the real-space ladder.
+    The key targets target_next_route, which IS the one retry_anchor — so the
+    SC branch and the post-anchor branch converge on the same step."""
+    proc = _smack()
+    rfs = proc.on_required_fail.retry_from_if_supercruise
+    assert rfs == "target_next_route"
+    anchors = [i for i, s in enumerate(proc.steps) if s.retry_anchor]
+    assert len(anchors) == 1
+    assert proc.index_of_action(rfs) == anchors[0]
+
+
+# ---- scene: a pre-anchor orient_compass fail routes by SC vs real space ------
+
+def _scene_run(*, in_supercruise):
+    """Run the live smack_recovery procedure with a fake registry: every step
+    succeeds EXCEPT the first orient_compass (index 8, PRE-anchor), which fails
+    once then succeeds — so the first required fail drives the retry decision.
+    Status reads report `in_supercruise`. Returns the ProcedureRetry resume
+    action recorded by the interpreter."""
+    proc = _smack()
+    records = []
+    state = {"orient_failed": False}
+
+    def make(name):
+        def fn(ctx, **params):
+            if name == "orient_compass" and not state["orient_failed"]:
+                state["orient_failed"] = True
+                return False
+            return True
+        return fn
+
+    actions = {s.action for s in proc.steps}
+    registry = {a: make(a) for a in actions}
+    status = SimpleNamespace(in_supercruise=in_supercruise)
+    ctx = StepContext(
+        sender=FakeSender(), sleeper=lambda s: None,
+        status_supplier=lambda: status,
+        record=lambda kind, payload: records.append((kind, payload)),
+    )
+    run_procedure(proc, ctx, registry=registry)
+    resumes = [p["resume_at"] for k, p in records if k == "ProcedureRetry"]
+    return resumes[0] if resumes else None
+
+
+def test_scene_pre_anchor_orient_fail_in_supercruise_resumes_at_hop_lock():
+    assert _scene_run(in_supercruise=True) == "target_next_route"
+
+
+def test_scene_pre_anchor_orient_fail_in_real_space_resumes_at_throttle():
+    assert _scene_run(in_supercruise=False) == "set_throttle"

@@ -58,6 +58,7 @@ def load_procedure(path: str | Path) -> Procedure:
         retry_from=orf_table.get("retry_from"),
         max_retries=int(orf_table.get("max_retries", 0)),
         backoff_s=float(orf_table.get("backoff_s", 0.0)),
+        retry_from_if_supercruise=orf_table.get("retry_from_if_supercruise"),
     )
 
     return Procedure(
@@ -90,5 +91,13 @@ def validate_procedure(proc: Procedure, known_actions: Iterable[str]) -> list[st
     if rf is not None and proc.index_of_action(rf) is None:
         errors.append(
             f"{proc.name}: on_required_fail.retry_from {rf!r} matches no step"
+        )
+    # Same loud check for the SC-branch override: a typo here would silently
+    # fall through to retry_from at runtime and re-burn the real-space ladder.
+    rfs = proc.on_required_fail.retry_from_if_supercruise
+    if rfs is not None and proc.index_of_action(rfs) is None:
+        errors.append(
+            f"{proc.name}: on_required_fail.retry_from_if_supercruise {rfs!r} "
+            f"matches no step"
         )
     return errors

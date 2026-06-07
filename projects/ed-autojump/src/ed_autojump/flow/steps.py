@@ -523,8 +523,16 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
     # station/USS). `row` walks the panel; `macros` bounds total macro runs so
     # dot-miss slack (max_toggles) can't spin forever. NO pin-only-once
     # optimisation: cursor state after a macro is an unverified game assumption.
+    # Exit-cause counters (2026-06-07 15:03-15:06Z incident): the old
+    # exhaustion log reported the CONSTANT max_toggles ({"toggles": 4}) — a flat
+    # lie next to the 35 FocusLeftPanel presses actually logged in the window.
+    # Tracking dot_misses vs wrong_bodies distinguishes dot-starvation (vision/
+    # glare — no lock signal ever appeared) from rows-exhausted (a populated
+    # system whose star sits past max_rows) at a glance.
     row = 0
     macros = 0
+    dot_misses = 0
+    wrong_bodies = 0
     while row < max_rows and macros < max_rows + max_toggles:
         macros += 1
         if not _macro(row):
@@ -538,6 +546,7 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
                 break
             ctx.sleeper(settle_s)
         if not dot:
+            dot_misses += 1
             continue   # toggle landed on UNLOCK — SAME row again (slack)
         # layer 2: the lock must be the LOCAL STAR, not whatever row 0 was
         system = ctx.current_system_supplier()
@@ -551,6 +560,7 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
         dest = getattr(ctx.status_supplier() or object(), "destination", None)
         dest_name = getattr(dest, "name", None) if dest is not None else None
         if ident is False:
+            wrong_bodies += 1
             ctx.log("NavPanelTargetWrongBody",
                     {"row": row, "destination": dest_name, "system": system})
             row += 1   # scroll past the beacon/station next attempt
@@ -560,7 +570,17 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
                  "destination": dest_name,
                  "identity_checked": ident is True})
         return True
-    ctx.log("NavPanelTargetUnverified", {"toggles": max_toggles})
+    # Exhausted. Log the ACTUAL macro count + a cause breakdown so the diff
+    # between dot-starvation and rows-exhausted is readable at a glance, then
+    # leave the panel CLOSED: the failing pass left it OPEN (the retry had to
+    # clean up with UI_Back x2 / CockpitFocusRestored). Best-effort — ignore
+    # the return; never make the retry clean up a desynced panel. NOT on the
+    # success path (target_via_navpanel already closes the panel there).
+    ctx.log("NavPanelTargetUnverified",
+            {"toggles": macros, "row": row,
+             "dot_misses": dot_misses, "wrong_bodies": wrong_bodies,
+             "max_rows": max_rows, "max_toggles": max_toggles})
+    _ensure_cockpit_focus(ctx)
     return False
 
 

@@ -83,6 +83,51 @@ def test_validate_flags_unknown_action_and_bad_retry(tmp_path):
     assert any("nonexistent_step" in e for e in errors)
 
 
+def test_load_procedure_parses_retry_from_if_supercruise(tmp_path):
+    """State-aware retry override (operator-dictated, 2026-06-07): parsed off
+    the on_required_fail table like retry_from."""
+    f = _write(tmp_path / "smack_recovery.toml", """
+        [on_required_fail]
+        retry_from = "set_throttle"
+        retry_from_if_supercruise = "target_next_route"
+        max_retries = 3
+
+        steps = [
+          { action = "set_throttle", pct = 0 },
+          { action = "orient_compass", required = true },
+          { action = "target_next_route", required = true },
+        ]
+    """)
+    proc = load_procedure(f)
+    assert proc.on_required_fail.retry_from == "set_throttle"
+    assert proc.on_required_fail.retry_from_if_supercruise == "target_next_route"
+
+
+def test_load_procedure_defaults_retry_from_if_supercruise_none(tmp_path):
+    """Procedures without the key leave it None (arrival/startup must never
+    trigger the SC branch / status read)."""
+    f = _write(tmp_path / "arrival.toml", """
+        [on_required_fail]
+        retry_from = "x"
+        steps = [ { action = "x" } ]
+    """)
+    assert load_procedure(f).on_required_fail.retry_from_if_supercruise is None
+
+
+def test_validate_flags_unknown_retry_from_if_supercruise(tmp_path):
+    """A typo in retry_from_if_supercruise must fail validation loudly — left
+    silent it would fall through to retry_from and re-burn the real-space lane."""
+    f = _write(tmp_path / "bad.toml", """
+        [on_required_fail]
+        retry_from_if_supercruise = "no_such_step"
+        steps = [ { action = "wait", s = 1.0 } ]
+    """)
+    proc = load_procedure(f)
+    errors = validate_procedure(proc, known_actions={"wait"})
+    assert any("retry_from_if_supercruise" in e and "no_such_step" in e
+               for e in errors)
+
+
 def test_load_procedures_reads_a_directory(tmp_path):
     _write(tmp_path / "a.toml", 'steps = [ { action = "wait", s = 1.0 } ]')
     _write(tmp_path / "b.toml", 'steps = [ { action = "wait", s = 2.0 } ]')

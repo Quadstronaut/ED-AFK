@@ -326,7 +326,24 @@ class FlowRunner:
             result = run_procedure(proc, ctx)
             for th in threads:
                 th.join(timeout=15.0)
-            if result.aborted:
+            if result.aborted and self._preempt is not None:
+                # PREEMPTED, not aborted (2026-06-07 14:24:09Z: arrival's
+                # star-smack preempt printed "[ABORTED] ... manual intervention
+                # needed" then smack_recovery auto-dispatched 61ms later — the
+                # message lied). A preempt is a scene handoff, NOT a terminal
+                # abort: no "manual intervention", no failed-at clause, and the
+                # successor name is NOT hardcoded (run_live's queued event owns
+                # the dispatch). Transient EVENT slot only — never status():
+                # the persistent status line belongs to true terminal aborts
+                # (council intersection: event-slot + status-stays-empty).
+                msg = f"[PREEMPTED] {name} — {self._preempt}"
+                print(msg, flush=True)
+                if self.overlay is not None:
+                    try:
+                        self.overlay.event(msg)
+                    except Exception:  # noqa: BLE001
+                        pass
+            elif result.aborted:
                 # ABORTED = human eyes required (notification-only: NO
                 # auto-restart, NO retry). Name the failing step when there is
                 # one, but guard the operator-abort case where the last step

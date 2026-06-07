@@ -31,6 +31,17 @@ parallel_tracks = ["honk"]   # operator 0.5: re-honk in case the earlier one mis
 retry_from = "set_throttle"   # first occurrence = step 0 — real-space restart
 max_retries = 3
 backoff_s = 2.0
+# State-aware retry (operator-dictated, 2026-06-07: "fail in supercruise -> go
+# to target_next_route"). The 14:24-14:29Z burn: orient_compass (step 8,
+# PRE-anchor) failed AFTER the SC charge had completed mid-step; retry_from sent
+# it to step 0 and passes 2-4 re-ran the real-space ladder while in SC —
+# target_ahead deselected and the in-SC engage guard refused, so every orient
+# found nothing (all-zero found=false), burning all 3 retries to abort. When a
+# pre-anchor required step fails with the ship already in supercruise, resume at
+# the hop lock instead. NOTE: target_next_route also carries retry_anchor, so a
+# fail AT OR AFTER it already resumes there via precedence (1); this key only
+# governs the PRE-anchor-in-SC case.
+retry_from_if_supercruise = "target_next_route"
 
 steps = [
   # ── Real-space recovery during the smack cooldown ────────────────────────
