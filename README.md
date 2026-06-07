@@ -73,38 +73,31 @@ of steps living in its own TOML file** under `projects/ed-autojump/procedures/`.
 - The loader validates every procedure at startup: unknown action, unbound key,
   or bad `retry_from` and the bot **refuses to run** rather than improvising.
 
-Here's the `arrival` procedure verbatim — the one that runs on every jump:
+The four v1 procedures (all editable in `projects/ed-autojump/procedures/`):
 
-```toml
-[on_required_fail]
-retry_from = "sc_assist_orbit"   # re-orbit changes the geometry; a 2nd orient at the same obstructed angle would just fail again
-max_retries = 3
-backoff_s = 2.0
-
-steps = [
-  { action = "target_ahead" },                       # lock the arrival star (nav-panel top row)
-  { action = "sc_assist_orbit" },                    # orbit AROUND the star -> unobstruct the next hop
-  { action = "wait", s = 10.0 },                     # orbit settles; honk finishes in parallel
-  { action = "target_next_route" },                  # H: cancels SC-assist + locks next system
-  { action = "set_throttle", pct = 100 },
-  { action = "wait", s = 10.0 },
-  { action = "orient_compass", required = true },    # cyan compass; target now UNOBSTRUCTED; fails closed
-  { action = "engage_jump", required = true },       # SetSpeed100 + FSD; only after orient confirms
-]
-```
-
-The other v1 procedures:
-
-- **`startup`** — fresh load, ship sitting in normal space at a star. Pitch the
-  star to the compass edge, throttle, engage supercruise, orient, jump. No orbit
-  (orbit is arrival-only).
-- **`honk`** — the **one parallel track.** At the start of `arrival`/`startup`
-  the dispatcher launches it on a background thread: hold the discovery-scanner
-  key, and **terminate the moment the `FSSDiscoveryScan` event lands** (or a hard
-  timeout). It's a plain key hold, independent of everything else.
-- **`smack_recovery`** — the reflex for when you drop *inside* a star's
-  exclusion zone. Face directly away, wait out the long FSD cooldown, ride the
-  game's escape-vector marker back into supercruise, get clear, then jump.
+- **`arrival`** — runs on every live `FSDJump` event. Throttles to zero, scoops
+  fuel if needed (star class and fuel level gated), locks the arrival star via
+  the nav-panel macro (identity-verified, fails closed on a non-star row), orbits
+  with SC-assist to clear the target geometry, locks the next route hop (with
+  danger-class verification), burns clear, then coarse-orients via nav compass
+  (`orient_compass`, `required`), fine-orients via the HUD widget ring
+  (`orient_widget_ring`, `required`), engages the jump (`engage_jump`,
+  `required`), and holds alignment through the FSD spool (`hold_alignment`,
+  event-gated on `StartJump`). Honk runs in parallel throughout.
+- **`startup`** — fresh load in normal space at a star. Direct jump attempt
+  first; if a required step fails, the recovery lane locks the star, pitches it
+  astern, engages supercruise, orbits with SC-assist, then locks the hop, burns
+  clear, orients, and jumps. Honk runs in parallel.
+- **`honk`** — the parallel track. Switches to analysis mode (status-flag
+  gated), holds the fire-group trigger (`PrimaryFire`) until `FSSDiscoveryScan`
+  lands in the journal (~5 s), then releases.
+- **`smack_recovery`** — reflex for an emergency drop inside the exclusion zone
+  (`SupercruiseExit`, `BodyType:Star`). Kills thrust, locks the arrival star,
+  pitches it 180° astern (compass-gated), waits for the FSD cooldown flag to
+  clear (flag-gated, no clock), presses supercruise until a charge is live
+  (which spawns the escape-vector on the compass), centres the escape-vector
+  dot, and holds it to `SupercruiseEntry`. Then locks the hop, burns clear,
+  orients, and jumps.
 
 ---
 
@@ -112,24 +105,55 @@ The other v1 procedures:
 
 Every step is `{ action = "<name>", <params> }` and returns `ok: bool`. Mark a
 step `required = true` and a failure triggers the procedure's retry/abort policy.
+The canonical reference is `projects/ed-autojump/procedures/procedures.md`.
+
+**Input primitives**
 
 | action | does | fails when |
 |---|---|---|
 | `press` | press a bound ED action for `hold_s` | bind unbound |
 | `wait` | sleep `s` seconds | never |
-| `set_throttle` | press `SetSpeedN` for `pct ∈ {0,25,50,75,100}` | bind unbound |
+| `set_throttle` | press `SetSpeedN` for `pct ∈ {0,25,50,75,100}` | bind unbound or invalid pct |
 | `pitch` | dead-reckoned pitch up/down for `hold_s` (no vision) | bind unbound |
-| `pitch_compass` | compass-gated pitch until the star's dot hits the rim (`edge`) or goes centred + hollow (`behind`) | star not confirmed in budget |
-| `wait_for_event` | block until the journal logs `event` | timeout |
-| `target_ahead` | `SelectTarget` — locks the body ahead, or **clears** the target if nothing's there | bind unbound |
-| `target_next_route` | `TargetNextRouteSystem` (also cancels SC-assist) | bind unbound |
-| `sc_assist_orbit` | orbit the star via the nav-panel SC-assist macro — *get around it* | any bind unbound |
-| `engage_supercruise` | press `Supercruise`, confirm SC entry via Status flag | SC entry not logged in time |
-| `orient_compass` | `align_to_target` on the cyan nav compass | not aligned / no compass wiring |
-| `engage_jump` | re-check status, `SetSpeed100`, `HyperSuperCombination` | blocked flag, or bind unbound |
+| `pips_engines` | reset power distribution, then max engine pips | any bind unbound |
 
-`orient_compass` and `engage_jump` are the steps normally marked `required` —
-that pairing is *exactly* what makes the jump fail closed.
+**Targeting**
+
+| action | does | fails when |
+|---|---|---|
+| `target_ahead` | `SelectTarget` — locks the body ahead, or clears the target if nothing's there | bind unbound |
+| `target_next_route` | `TargetNextRouteSystem` (also cancels SC-assist), then verifies the resulting `FSDTarget` StarClass against the danger list — fails closed on D\*/N/H/W | bind unbound, no new FSDTarget, or danger-class star |
+| `nav_panel_target` | nav-panel macro: open → row 0 (closest body) → activate — targets the arrival star regardless of reticle aim | any bind unbound |
+| `ensure_analysis_mode` | gate on the AnalysisMode status flag; toggles the HUD if needed (bounded press count) | no status reader, toggle limit exceeded |
+
+**Jump / supercruise**
+
+| action | does | fails when |
+|---|---|---|
+| `engage_jump` | checks blocking flags, `SetSpeed100`, `Hyperspace` (granular jump) | any blocking flag, or bind unbound |
+| `engage_supercruise` | presses `Supercruise`, gates on `SupercruiseEntry` journal event or Supercruise status flag | FsdCharging clears without entry, or stuck-state watchdog fires |
+| `hold_alignment` | micro-corrects compass alignment during the FSD spool; exits on `StartJump` event or its state flag | FsdCharging clears without `StartJump`, FsdCooldown before any charge, or stuck-state watchdog |
+
+**Timing / wait gates**
+
+| action | does | fails when |
+|---|---|---|
+| `wait_cooldown_clear` | blocks until the `FsdCooldown` status flag clears (flag-gated, no clock) | no status reader |
+| `hold_until_event` | key down, wait for a named journal event, key up — key always released in finally | max_hold_s backstop exceeded |
+
+**Vision-gated steering**
+
+| action | does | fails when |
+|---|---|---|
+| `orient_compass` | yaw/pitch until the nav-compass target dot is centred and in front | vision uncalibrated, or alignment never converges inside `timeout_s` |
+| `orient_widget_ring` | fine-alignment pass using the HUD widget ring after coarse orient (no-op if disabled) | widget not detected and `widget_ring_on_miss = fail_closed` |
+| `pitch_compass` | compass-gated pitch until the target dot reaches `edge` (near rim) or `behind` (centred + hollow) | timeout or iteration limit |
+| `sc_assist_orbit` | nav-panel macro: open panel → lock star → activate SC-assist → close | any bind unbound |
+| `scoop_refuel` | approach scoopable star at `approach_pct` throttle, hold standoff by observed scoop rate fraction, drink until full (log-gated) — skipped if fuel ≥ `refuel_below` or arrival star is not scoopable | best-effort: skip/fail never blocks the jump |
+
+`orient_compass`, `orient_widget_ring`, `engage_jump`, and `hold_alignment` are the
+steps marked `required` in the jump lane — together they guarantee the bot never
+engages the FSD without a confirmed, maintained alignment.
 
 ---
 
@@ -160,13 +184,15 @@ behaviour is a new file in `procedures/`, not surgery on the existing ones.
 
 | | v1 (now) | v2+ (earmarked) |
 |---|---|---|
-| **In** | A→B navigation: arrive → honk → get clear → orient → jump | Hi-res, near-realtime compass vision (smooth turns, not jank-stepping) |
-| | Fail-closed jump gate | Brightness directional grid (know *which way* the star is) |
-| | Editable TOML procedures + step library | Refuel & docking procedures |
-| | | Ships *without* SC-assist / Advanced Docking Computer |
+| **In** | A→B navigation: arrive → honk → scoop → orient → jump | Hi-res, near-realtime compass vision (smooth turns, not jank-stepping) |
+| | Fail-closed jump gate (danger-class filter, status flags) | Brightness directional grid (know *which way* the star is) |
+| | Editable TOML procedures + step library | Docking procedures |
+| | Fuel-scoop approach (standoff, log-gated, rate-controlled) | Ships *without* SC-assist / Advanced Docking Computer |
+| | Spansh route auto-plotting (`--route-plot`) | |
+| | Game launch via MinEdLauncher, menu navigation | |
 
-**Out of v1 scope entirely:** FSS, DSS, EDDN publishing, Spansh auto-plot, the
-launcher/menu-nav wizard, and brightness/HUD detection. v1 **assumes** SC-assist
+**Out of v1 scope (deferred, framework stubs only):** FSS keyboard sweep, FSS
+CV-assisted, DSS. v1 **assumes** Supercruise Assist (blue-zone throttle mode)
 and an Advanced Docking Computer are fitted.
 
 ---

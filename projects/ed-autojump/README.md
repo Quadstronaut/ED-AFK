@@ -1,11 +1,13 @@
 # ed-autojump
 
 Autonomous exploration bot for Elite Dangerous: Odyssey. First tool in the
-ED-AFK monorepo. Launches the game, joins a private group, then honks,
-scoops, jumps overnight. Optionally FSS / DSS / docks.
+ED-AFK monorepo. Navigates a plotted route overnight: honk on arrival, scoop
+fuel at scoopable stars, orient the ship, jump. Optional game launch via
+MinEdLauncher. FSS, DSS, and docking are framework-only stubs deferred
+pending live calibration.
 
 > **Status:** v0.2 — Phases 0–6 + Phase 12 (main loop) + Phase 13
-> (headless launcher) production-ready on `main`. 385 tests under
+> (headless launcher) production-ready on `master`. 880 tests under
 > triple-test discipline. Phases 7–10 ship as framework + offline replay
 > tests; in-game evidence deferred pending live calibration. See SPEC.md
 > §17 for phase exit criteria; `calibration/README.md` and
