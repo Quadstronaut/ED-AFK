@@ -385,8 +385,64 @@ STEP_REGISTRY.update({
 })
 
 
+def _destination_is_local_star(st: Any, system_name: "str | None") -> "bool | None":
+    """Is Status.Destination the CURRENT system's star?
+
+    The 2026-06-07 10:30Z incident: nav_panel_target locked the NAV BEACON
+    (journal-identically to a star lock — the compass dot renders for any
+    locked target) and the orbit no-oped. Destination.Name is the only live
+    discriminator: the primary star carries the BARE system name ("Acihaut"),
+    secondaries the "<system> A".."<system> D" designation; beacons and
+    scenario rows carry "$..." symbol names; stations carry unrelated names.
+
+    Returns True (it's the star), False (it's something else / nothing is
+    locked), or None (no status or system unknown — cannot judge; callers
+    degrade to dot-only verification, loudly)."""
+    if st is None or not system_name:
+        return None
+    dest = getattr(st, "destination", None)
+    if dest is None:
+        return False          # nothing locked at all -> the lock didn't take
+    name = (getattr(dest, "name", "") or "").strip()
+    if not name or name.startswith("$"):
+        return False          # symbolic = beacon / scenario / signal row
+    if name == system_name:
+        return True           # primary star = bare system name
+    # secondary star designation: "<system> A".."<system> Z" (one letter)
+    if (name.startswith(system_name + " ")
+            and len(name) == len(system_name) + 2
+            and name[-1].isalpha()):
+        return True
+    return False
+
+
 def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
+    """Engage SC-assist on the locked star — GUARDED (2026-06-07 council):
+    the macro used to be a blind 5-keypress sequence that returned True
+    unconditionally; the 10:30Z run pressed its keys against a Nav Beacon
+    lock from a nose-anywhere pose and reported success while the ship sat
+    still. Now it refuses (fail closed) when not in supercruise or when the
+    destination is not the local star, and logs WHAT it engaged toward so a
+    no-op is loud. ED exposes no assist-engaged Status flag, so the post-
+    macro check is limited to 'still in supercruise' — live iteration owns
+    proving actual engagement."""
     from ..executor.navpanel import engage_supercruise_assist
+    st = ctx.status_supplier()
+    if st is not None:
+        if not getattr(st, "in_supercruise", False):
+            ctx.log("ScAssistOrbitRefused", {"reason": "not_in_supercruise"})
+            return False
+        system = ctx.current_system_supplier()
+        ident = _destination_is_local_star(st, system)
+        dest = getattr(st, "destination", None)
+        dest_name = getattr(dest, "name", None) if dest is not None else None
+        if ident is False:
+            ctx.log("ScAssistOrbitRefused",
+                    {"reason": "wrong_target", "destination": dest_name,
+                     "system": system})
+            return False
+        ctx.log("ScAssistOrbitSent",
+                {"destination": dest_name, "identity_checked": ident is True})
     # Blind macro — must start from cockpit focus (run 7 cycle 3: a macro
     # started on a desynced cursor opened the SYSTEM MAP and blinded vision
     # for 3 full arrival retries).
@@ -394,44 +450,56 @@ def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
         return False
     try:
         engage_supercruise_assist(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s)
-        return True
     except KeyError:
         ctx.log("BindMissing", {"step": "sc_assist_orbit"})
         return False
+    # The only observable post-state: a mid-macro emergency drop means the
+    # assist definitely did NOT take (and the smack dispatch owns the scene).
+    st = ctx.status_supplier()
+    if st is not None and not getattr(st, "in_supercruise", False):
+        ctx.log("ScAssistOrbitDropped", {})
+        return False
+    return True
 
 
 def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
                           verify_reads: int = 4,
-                          max_toggles: int = 3) -> bool:
-    """Nav-panel macro: target row 0 (the closest body, normally the arrival
-    star), VERIFIED by the compass and re-toggled until the lock holds.
+                          max_toggles: int = 4,
+                          max_rows: int = 4) -> bool:
+    """Nav-panel macro: lock the ARRIVAL STAR — compass-verified AND
+    identity-verified, scrolling past non-star rows (2026-06-07 council).
 
-    target_via_navpanel is a blind TOGGLE (2026-06-06 14:07, run 4): on an
-    already-locked star the second UI_Select lands on UNLOCK, the nav-compass
-    hologram vanishes (it only renders with a locked target), and
-    pitch_compass read found=False 31x while the ship sat nose-on the star.
-    The operator watched it happen ("it unselected the star"). Proven live
-    14:16: one more macro run re-locked it and the dot appeared instantly.
+    Two verification layers, each from a live failure:
 
-    So: run the macro, then read the compass a few times — the dot's
-    presence IS the lock signal. No dot -> the toggle landed on unlock (or
-    the panel desynced) -> run the macro again, up to max_toggles. Never
-    verified -> False (fail closed; a blind True sends pitch hunting a
-    hologram that isn't there). Without vision wired, fall back to the
-    original blind single run."""
+    1. COMPASS DOT (2026-06-06 14:07, run 4): target_via_navpanel is a blind
+       TOGGLE — on an already-locked star the second UI_Select lands on
+       UNLOCK, the hologram vanishes, and pitch hunted found=False 31x. No
+       dot -> re-run the macro on the SAME row, up to max_toggles.
+
+    2. LOCK IDENTITY (2026-06-07 10:30Z): "row 0 = star" is FALSE in a
+       populated system — the macro locked the NAV BEACON, the beacon's
+       compass dot passed layer 1, and the orbit no-oped. The dot proves *a*
+       lock, never the *correct* lock. So after the dot shows, compare
+       Status.Destination.Name against the current system name
+       (_destination_is_local_star); a wrong body scrolls one row down
+       (rows_down) and retries. Identity unknowable (status/system not
+       wired) -> accept on dot alone, logged loudly as identity_checked
+       false. Never verified -> False (fail closed).
+
+    Without vision wired, fall back to the original blind single run."""
     from ..executor.navpanel import target_via_navpanel
 
-    def _macro() -> bool:
+    def _macro(rows_down: int) -> bool:
         try:
             target_via_navpanel(ctx.sender, sleeper=ctx.sleeper,
-                                settle_s=settle_s)
+                                settle_s=settle_s, rows_down=rows_down)
             return True
         except KeyError:
             ctx.log("BindMissing", {"step": "nav_panel_target"})
             return False
 
     if ctx.compass_reader is None or ctx.frame_grabber is None:
-        return _macro()   # blind legacy path — nothing to verify with
+        return _macro(0)   # blind legacy path — nothing to verify with
 
     # The macro is BLIND — starting it from a map/panel is the desync source
     # (run 7 cycle 3: a desynced macro opened the SYSTEM MAP).
@@ -440,16 +508,42 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
 
     from ..executor.align import _measure
 
+    row = 0
     for attempt in range(max_toggles):
-        if not _macro():
+        if not _macro(row):
             return False
+        # layer 1: the compass dot is the lock signal
+        dot = False
         for _ in range(verify_reads):
             read = _measure(ctx.compass_reader, ctx.frame_grabber, 1)
             if read.found:
-                ctx.log("NavPanelTargetVerified",
-                        {"toggles": attempt + 1})
-                return True
+                dot = True
+                break
             ctx.sleeper(settle_s)
+        if not dot:
+            continue   # toggle landed on UNLOCK — same row again
+        # layer 2: the lock must be the LOCAL STAR, not whatever row 0 was
+        system = ctx.current_system_supplier()
+        ident = None
+        for _ in range(verify_reads):
+            st = ctx.status_supplier()
+            ident = _destination_is_local_star(st, system)
+            if ident is not False:
+                break   # True (verified) or None (unknowable) — stop polling
+            ctx.sleeper(settle_s)   # Status.json write latency ~1s
+        dest = getattr(ctx.status_supplier() or object(), "destination", None)
+        dest_name = getattr(dest, "name", None) if dest is not None else None
+        if ident is False:
+            ctx.log("NavPanelTargetWrongBody",
+                    {"row": row, "destination": dest_name, "system": system})
+            if row + 1 < max_rows:
+                row += 1   # scroll past the beacon/station next attempt
+            continue
+        ctx.log("NavPanelTargetVerified",
+                {"toggles": attempt + 1, "row": row,
+                 "destination": dest_name,
+                 "identity_checked": ident is True})
+        return True
     ctx.log("NavPanelTargetUnverified", {"toggles": max_toggles})
     return False
 

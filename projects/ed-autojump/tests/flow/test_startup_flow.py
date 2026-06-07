@@ -50,7 +50,9 @@ def test_recovery_lane_clears_the_star_before_the_hop():
     actions = [s.action for s in _startup().steps]
     assert actions[7:] == [
         "target_ahead", "set_throttle", "nav_panel_target", "pitch_compass",
-        "pips_engines", "engage_supercruise", "sc_assist_orbit",
+        "pips_engines", "engage_supercruise",
+        "orient_compass",      # 12b nose back on the star before the assist
+        "sc_assist_orbit",
         "target_next_route", "set_throttle", "wait",
         "orient_compass", "orient_widget_ring", "engage_jump",
         "hold_alignment",

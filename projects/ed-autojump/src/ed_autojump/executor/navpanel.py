@@ -113,6 +113,7 @@ def target_via_navpanel(
     sleeper: Callable[[float], None] = time.sleep,
     settle_s: float = DEFAULT_SETTLE_S,
     panel_focus_action: str = "FocusLeftPanel",
+    rows_down: int = 0,
 ) -> None:
     """Run the blind nav-panel macro that TARGETS the top row (the closest
     body — the arrival star on a smack drop) without engaging Supercruise
@@ -138,11 +139,21 @@ def target_via_navpanel(
     drop the ship may not have the star ahead of the reticle, so a regular
     SelectTarget would either lock nothing or lock the wrong body.
 
+    `rows_down` (ADDED 2026-06-07, council must-fix): "row 0 = the arrival
+    star" is ONLY true seconds after a hyperspace drop in an unpopulated
+    system. In a populated system the panel lists the NAV BEACON (and
+    stations) first — the 10:30Z incident locked the beacon and the orbit
+    no-oped. The caller verifies the lock identity via Status.Destination
+    and retries with rows_down+1 to scroll past non-star rows.
+
     Raises KeyError (via the sender) if any action is unbound; the bundled
     preset binds all of them.
     """
     sender.press(panel_focus_action)
     sleeper(settle_s)
+    for _ in range(max(0, rows_down)):
+        sender.press("UI_Down")
+        sleeper(settle_s)
     sender.press("UI_Select")
     sleeper(settle_s)
     sender.press("UI_Select")

@@ -63,6 +63,14 @@ class StepContext:
     # skips fail-safe (g2).
     arrival_star_class_supplier: Callable[[], Optional[str]] = lambda: None
 
+    # Name of the CURRENT system (last FSDJump/Location StarSystem). The
+    # star-lock identity check (2026-06-07 council: nav_panel_target locked
+    # the NAV BEACON and "verified" it) compares Status.Destination.Name
+    # against this — the primary star carries the bare system name, the
+    # secondaries "<system> A".."<system> D". None = not wired -> identity
+    # check degrades to dot-only verification, loudly.
+    current_system_supplier: Callable[[], Optional[str]] = lambda: None
+
     # ShipFuel from the latest Loadout (capacity + scoop max rate). None =
     # not wired / no Loadout seen -> scoop_refuel skips fail-safe (g1).
     ship_fuel_supplier: Callable[[], Optional[Any]] = lambda: None

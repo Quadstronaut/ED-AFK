@@ -161,6 +161,9 @@ class FlowRunner:
         # - tank size + equipped scoop max rate from the latest Loadout
         #   (written at every LoadGame, so backlog always provides one).
         self._arrival_star_class: Optional[str] = None
+        # Current system name (FSDJump/Location StarSystem, backlog AND live)
+        # — feeds the star-lock identity check (2026-06-07 council).
+        self._current_system: Optional[str] = None
         self._ship_fuel: Optional[ShipFuel] = None
 
     # ---- public state accessors ------------------------------------------
@@ -253,6 +256,7 @@ class FlowRunner:
             fsd_target_supplier=self._fsd_target_state,
             navroute_supplier=self._navroute_state,
             arrival_star_class_supplier=lambda: self._arrival_star_class,
+            current_system_supplier=lambda: self._current_system,
             ship_fuel_supplier=lambda: self._ship_fuel,
             record=self.record,
             frame_sink=self.frame_sink,
@@ -346,6 +350,11 @@ class FlowRunner:
 
     def _record_event_time(self, ev: Any) -> None:
         name = getattr(ev, "event", None)
+        if name == "FSDJump":
+            # Staleness instrument (2026-06-07 council): lets routing and
+            # diagnostics tell a fresh hyperspace arrival from an N-minute
+            # loiter — both scenes read in_supercruise=true.
+            self._event_times["jump"] = self.clock()
         if name == "SupercruiseExit" and getattr(ev, "body_type", None) == "Star":
             self._event_times["drop"] = self.clock()
             # Mid-procedure preemption: a star smack invalidates the scene
@@ -387,6 +396,13 @@ class FlowRunner:
             if (getattr(ev, "jump_type", None) == "Hyperspace"
                     and getattr(ev, "star_class", None)):
                 self._arrival_star_class = ev.star_class
+        elif name in ("FSDJump", "Location"):
+            # Current system name for the star-lock identity check
+            # (2026-06-07 council: row-0 locked the Nav Beacon; the only
+            # discriminator is Destination.Name vs the system name).
+            sysname = getattr(ev, "star_system", None)
+            if sysname:
+                self._current_system = sysname
         elif name == "Loadout":
             cap = getattr(getattr(ev, "fuel_capacity", None), "main", None)
             if cap:

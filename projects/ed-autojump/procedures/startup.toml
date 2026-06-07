@@ -59,7 +59,11 @@ steps = [
   { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 10 star astern (best effort)
   { action = "pips_engines" },                             # tap    | 11 pips again before the climb
   { action = "engage_supercruise", required = true },      # gated  | 12 event/state-gated on SupercruiseEntry
-  { action = "sc_assist_orbit" },                          # macro  | 13 EXCLUSIVE — SC-assist the star, still locked from step 9
+  # SC entry leaves the nose on the ESCAPE bearing, not the star — orient
+  # back onto the star lock before the assist macro (2026-06-07 council:
+  # assist refuses an unaligned engage). Best-effort like arrival's 3b.
+  { action = "orient_compass" },                           # vision | 12b nose back on the star
+  { action = "sc_assist_orbit" },                          # macro  | 13 EXCLUSIVE — guarded SC-assist; a refusal degrades to the direct jump below
   { action = "target_next_route", required = true },                        # gated  | 14 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },                  # tap    | 15
   { action = "wait", s = 13.0, retry_anchor = true },      # wait   | 16 clearance burn — failures at/after here RETURN HERE

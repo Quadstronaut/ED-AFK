@@ -17,7 +17,10 @@
 parallel_tracks = ["honk"]   # honk fires every system, no matter what
 
 [on_required_fail]
-retry_from = "sc_assist_orbit"   # re-orbit changes geometry; re-orienting alone would just fail again
+# nav_panel_target (was sc_assist_orbit, 2026-06-07 council): a retry must
+# re-establish the LOCK and the POSE — re-orbiting alone can't fix a wrong
+# lock or an off-star nose, which are the two ways the lane actually fails.
+retry_from = "nav_panel_target"
 max_retries = 3
 backoff_s = 2.0
 
@@ -33,8 +36,23 @@ steps = [
   # be pushed toward 1.0 once proven. budget_s is a FAIL backstop only.
   # BEST-EFFORT: skip/fail never blocks the orbit below.
   { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.70, full_epsilon = 0.2 },  # gated  | 2 pit stop
-  { action = "nav_panel_target" },                  # macro  | 3 EXCLUSIVE — star = nav panel row 0 (closest body)
-  { action = "sc_assist_orbit" },                   # macro  | 4 EXCLUSIVE — SC-assist orbit around the star
+  # Star lock is now IDENTITY-VERIFIED (2026-06-07 council, 10:30Z incident:
+  # row 0 was the NAV BEACON in populated Acihaut and the "verified" lock
+  # passed on the beacon's compass dot). The step scrolls past non-star rows
+  # and fails closed — required, because a wrong lock must never reach the
+  # orbit. A required fail retries from here (lock + pose are one unit).
+  { action = "nav_panel_target", required = true },  # macro  | 3 EXCLUSIVE — verified star lock
+  # Nose ON the star before the assist macro (operator, 10:30Z: "if you
+  # don't point the ship towards the body you're going to orbit, it won't
+  # go to it. it's not magic."). Best-effort: a vision miss falls through
+  # and the orbit's own guards decide.
+  { action = "orient_compass" },                     # vision | 3b nose on the locked star
+  # Orbit is guarded now (in-SC + local-star destination, fail closed, logs
+  # ScAssistOrbitSent destination=X) but stays BEST-EFFORT: a refused orbit
+  # degrades to the direct-jump path below — the marathon's proven-good
+  # flow. ED exposes no assist-engaged flag; live iteration owns proving
+  # actual engagement.
+  { action = "sc_assist_orbit" },                    # macro  | 4 EXCLUSIVE — guarded SC-assist orbit
   { action = "wait", s = 13.0 },                    # wait   | 5 let orbit acquire
   { action = "target_next_route", required = true },                # gated  | 6 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },           # tap    | 7 burn

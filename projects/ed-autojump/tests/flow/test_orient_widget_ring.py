@@ -335,8 +335,10 @@ def _fsd_target_seq():
 def test_arrival_has_widget_ring_after_compass():
     procs = load_procedures(PROC_DIR)
     actions = [s.action for s in procs["arrival"].steps]
-    # (a) structural: orient_widget_ring immediately follows orient_compass
-    i = actions.index("orient_compass")
+    # (a) structural: orient_widget_ring immediately follows the JUMP-ALIGN
+    # orient_compass (the LAST one — arrival 3b added an earlier nose-on-star
+    # orient before the orbit, 2026-06-07, which has no fine pass)
+    i = len(actions) - 1 - actions[::-1].index("orient_compass")
     assert actions[i + 1] == "orient_widget_ring"
 
     # (b) exercise the no-op path (not vacuously): compass SUCCEEDS, flag OFF ->
