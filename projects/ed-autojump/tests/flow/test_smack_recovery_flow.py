@@ -1,8 +1,10 @@
-"""Wiring tests for the 2026-06-07 operator-dictated smack_recovery v6:
+"""Wiring tests for the operator-dictated smack_recovery v7 (2026-06-07):
 throttle 0 -> honk (parallel) -> pips -> star lock -> throttle 100 -> pitch
-180 -> cooldown gate -> plain SC entry -> hop lock (retry anchor) ->
-throttle -> 13s -> orient -> jump. Real-space failures restart at step 0;
-in-supercruise failures return to the hop lock."""
+180 -> cooldown gate -> DESELECT (star astern, T clears) -> charge until
+LIVE (spawns the escape vector) -> orient to the vector -> hold to SC
+entry -> hop lock (retry anchor) -> throttle -> 13s -> orient -> jump.
+Real-space failures restart at step 0; in-supercruise failures return to
+the hop lock."""
 
 from pathlib import Path
 
@@ -15,7 +17,7 @@ def _smack():
     return load_procedures(PROC_DIR)["smack_recovery"]
 
 
-def test_v6_step_order():
+def test_v7_step_order():
     actions = [s.action for s in _smack().steps]
     assert actions == [
         "set_throttle",        # 0  throttle 0
@@ -24,7 +26,10 @@ def test_v6_step_order():
         "set_throttle",        # 2  throttle 100 (operator: burn through the flip)
         "pitch_compass",       # 3  pitch 180 — hollow dot centered
         "wait_cooldown_clear", # 4  FsdCooldown flag gate
-        "engage_supercruise",  # 5  plain: gates on ENTRY
+        "target_ahead",        # 4.5 T — star astern, nothing ahead -> clears
+        "engage_supercruise",  # 5  until_charging: live charge spawns the vector
+        "orient_compass",      # 5.5 center the escape-vector dot
+        "hold_alignment",      # 5.6 hold until SupercruiseEntry
         "target_next_route",   # 6  hop lock — SC-segment retry anchor
         "set_throttle",        # 7  100 again (SC entry resets throttle)
         "wait",                # 7.5 13s clear of the star
@@ -54,16 +59,28 @@ def test_retry_split_real_space_vs_supercruise():
     assert proc.index_of_action("engage_supercruise") < anchors[0]
 
 
-def test_engage_supercruise_is_plain_entry_gated():
+def test_escape_vector_segment_charge_orient_hold():
+    """v7 (operator, 2026-06-07): the smack charge spawns an ESCAPE VECTOR
+    the ship must center before ED accepts entry. Deselect first (star is
+    perfectly behind, T clears), charge until LIVE, orient to the spawned
+    dot, hold until SupercruiseEntry."""
     proc = _smack()
-    sc = next(s for s in proc.steps if s.action == "engage_supercruise")
-    # Plain mode (operator 2026-06-07: "you speed up, you hit the
-    # supercruise, you'll go") — no until_charging, success = SC ENTRY.
-    assert "until_charging" not in sc.params
+    actions = [s.action for s in proc.steps]
+    sc_i = actions.index("engage_supercruise")
+    assert proc.steps[sc_i - 1].action == "target_ahead"
+    sc = proc.steps[sc_i]
+    assert sc.params["until_charging"] is True   # done = live charge, NOT entry
     assert sc.params["presses"] == 3
     assert sc.params["between_press_s"] == 15.0
     assert sc.params["max_charge_s"] == 240.0
     assert sc.required is True
+    # orient to the vector, then hold gated on the ENTRY event
+    assert proc.steps[sc_i + 1].action == "orient_compass"
+    assert proc.steps[sc_i + 1].required is True
+    hold = proc.steps[sc_i + 2]
+    assert hold.action == "hold_alignment"
+    assert hold.params["until_event"] == "SupercruiseEntry"
+    assert hold.required is True
 
 
 def test_first_throttle_is_zero_then_full_burn_before_the_pitch():
