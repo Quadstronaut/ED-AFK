@@ -1,70 +1,56 @@
 # Reflex: emergency drop INSIDE the star's exclusion zone (SupercruiseExit,
-# BodyType:Star). Slow throttle, target the arrival star via nav panel
-# (row 0 = closest body â€” works even when the star isn't ahead of the
-# reticle), pitch it BEHIND, wait the smack cooldown out, deselect targets,
-# fire the FSD WHILE STILL INSIDE the exclusion zone. With no body
-# targeted and the FSD lit inside an exclusion zone, the game spawns an
-# ESCAPE VECTOR compass target â€” orient_compass homes on that spawned
-# vector during the SC charge even though no body is selected. Once SC
-# entry confirms, throttle up, lock the next route star, fly 13s to clear
-# the arrival star, re-orient, jump (log-gated on StartJump).
+# BodyType:Star).
+#
+# v6 (operator-dictated, 2026-06-07 line-by-line review): throttle 0, honk
+# rides along in parallel (in case the arrival honk missed), all pips to
+# engines, lock the star (nav panel row 0), THROTTLE 100, pitch it 180
+# astern (hollow dot, centered), wait the smack cooldown out (flag-gated),
+# press supercruise until it takes — success is SC ENTRY ("you speed up,
+# you hit the supercruise, you'll go") — then lock the hop, throttle 100
+# again (SC entry resets it), 13s clear of the star, orient, jump.
+#
+# Retry split (operator): "if fail in real space go to 0, if fail in
+# supercruise go to 6" — retry_from hits the FIRST set_throttle (step 0);
+# the hop lock carries retry_anchor = true, so required failures at or
+# after it return THERE instead.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
-#   wait    passive block on journal event or clock â€” no input sent
-#   hold    key down â†’ event â†’ key up; used in parallel honk track
-#   macro   multi-key UI-state sequence â€” EXCLUSIVE, owns input
-#   vision  closed-loop pitch/yaw + frame capture â€” EXCLUSIVE, owns input + screen
-# retry_from = nav_panel_target (NOT pitch_compass, 2026-06-06 14:16): the
-# macro is a TOGGLE, so a retry that skips it can be pitching at a target
-# that got UNLOCKED -- the step verifies the lock via the compass now, and
-# every retry must re-establish it.
+#   wait    passive block on journal event or clock — no input sent
+#   hold    key down → event → key up; used in parallel honk track
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+parallel_tracks = ["honk"]   # operator 0.5: re-honk in case the earlier one missed; an already-honked system just times the hold out in parallel
+
 [on_required_fail]
-retry_from = "nav_panel_target"
+retry_from = "set_throttle"   # first occurrence = step 0 — real-space restart
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  # â”€â”€ Real-space recovery during the smack cooldown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  # THROTTLE 0 until the star is BEHIND (pitch-star-first rule, 2026-06-06
-  # 14:10: the old pct=50 here thrust the ship nose-on INTO the star surface
-  # for minutes while pitch_compass hunted a missing target lock).
-  { action = "set_throttle", pct = 0 },                                                       # tap    | 0
-  { action = "nav_panel_target", required = true },                                           # macro  | 1 EXCLUSIVE â€” row 0 = arrival star; compass-verified lock
+  # ── Real-space recovery during the smack cooldown ────────────────────────
+  { action = "set_throttle", pct = 0 },                                                       # tap    | 0 kill thrust
+  { action = "pips_engines" },                                                                # tap    | 0.6 all pips ENG
+  { action = "nav_panel_target", required = true },                                           # macro  | 1 EXCLUSIVE — star = row 0; compass-verified lock
+  { action = "set_throttle", pct = 100 },                                                     # tap    | 2 full burn through the flip (operator order)
   # timeout_s/max_iters are FAILSAFE ceilings (the gate is the compass read,
-  # never the clock): run 3 (2026-06-06 13:59) was converging at mag 0.40 when
-  # the default 30s expired â€” proportional taps need ~2.2s/iter and a wrecked
-  # pose can take ~25 iters (flip + center both axes).
-  # center_frac 0.35 (was default 0.25, widened 2026-06-06 run 5): the gate
-  # only needs "roughly astern" before throttling away; read noise is ~0.07
-  # and run 5 bounced at mag 0.29-0.40 for 17 iterations against the 0.25
-  # gate, burning the whole budget a hair short.
-  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 2 EXCLUSIVE â€” pitch star behind
-  { action = "wait_cooldown_clear", required = true },                                       # wait   | 3 smack cooldown â€” FsdCooldown flag-gated, no timer
+  # never the clock); center_frac 0.35 = "hollow dot and center" with ~0.07
+  # read noise headroom (2026-06-06 run 5).
+  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 3 pitch 180 — star astern
+  { action = "wait_cooldown_clear", required = true },                                        # wait   | 4 smack cooldown — FsdCooldown flag-gated, no timer
+  # Plain mode: success = SC ENTRY (SupercruiseEntry event / Supercruise
+  # flag). ED refuses the press while still deep in the exclusion zone —
+  # re-press every 15s (max 3) while the burn carries us out; 240s is the
+  # wedged-FSD watchdog, never a success gate.
+  { action = "engage_supercruise", required = true, presses = 3, between_press_s = 15.0, max_charge_s = 240.0 },  # gated  | 5 press until it takes
 
-  # â”€â”€ Get a LIVE charge, align FRONT to the ROUTE HOP, hold to entry â”€â”€â”€â”€â”€
-  # REDESIGN v5 (2026-06-06 16:39, CONTROLLED EXPERIMENT): v4's anti-star
-  # alignment sat at mag 0.02-0.15 astern through THREE 240s entry waits
-  # (12+ min of burn, no entry). Locking the ROUTE HOP and aligning FRONT
-  # to its compass dot produced SC ENTRY IN 35 SECONDS -- twice now (run 12
-  # accidental, 16:39 controlled). ED's escape acceptance follows the
-  # locked destination, not the anti-star bearing. Bonus: target_next_route
-  # is danger-gated, and a locked hop ALWAYS renders a compass dot (v3's
-  # lesson). Charge first (refusal re-press, never re-press a live one),
-  # then lock-hop -> front-orient -> hold to entry.
-  { action = "set_throttle", pct = 100 },                                                     # tap    | 4a full burn (star astern from step 2)
-  { action = "engage_supercruise", required = true, until_charging = true, presses = 30, between_press_s = 8.0, max_charge_s = 240.0 },  # gated  | 5 press until a charge is LIVE
-  { action = "target_next_route", required = true },                                          # gated  | 6 lock the HOP (danger-gated)
-  { action = "orient_compass", required = true },                                             # vision | 7a FRONT-align to the hop dot
-  { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 7b gentle holds until entry â€” the 35s path
-
-  # â”€â”€ In supercruise: clear the star, jump (hop already locked) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  { action = "set_throttle", pct = 100 },                                                     # tap    | 8
-  { action = "target_next_route", required = true },                                                           # gated  | 9 re-confirm (no-op when already locked)
-  { action = "wait", s = 13.0 },                                                              # wait   | 10 fly clear of arrival star â€” TRAJECTORY PACING, not a gate; later version: replace with a distance heuristic (operator-approved time-based for now, 2026-06-06)
-  { action = "orient_compass", required = true },                                             # vision | 11 EXCLUSIVE coarse
-  { action = "orient_widget_ring", required = true },                                         # vision | 12 fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },                                                # gated  | 13a FSD jump
-  { action = "hold_alignment", required = true },                                             # vision | 13b hold cone until StartJump â€” event/state-gated, no clock
+  # ── In supercruise: lock the hop, clear the star, jump ───────────────────
+  { action = "target_next_route", required = true, retry_anchor = true },                     # gated  | 6 hop lock — SC failures return HERE
+  { action = "set_throttle", pct = 100 },                                                     # tap    | 7 SC entry reset the throttle
+  { action = "wait", s = 13.0 },                                                              # wait   | 7.5 fly clear of the star — TRAJECTORY PACING, not a gate
+  { action = "orient_compass", required = true },                                             # vision | 8 EXCLUSIVE coarse
+  { action = "orient_widget_ring", required = true },                                         # vision | 9 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },                                                # gated  | 10 FSD jump
+  { action = "hold_alignment", required = true },                                             # vision | 11 hold cone until StartJump — event/state-gated, no clock
 ]
