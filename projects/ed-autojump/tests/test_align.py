@@ -101,6 +101,71 @@ def test_behind_low_target_is_brought_around_then_aligned():
     assert sim.in_front is True
 
 
+class _Recorder:
+    """Sender that only records (action, hold) pairs."""
+
+    def __init__(self):
+        self.calls = []
+
+    def press(self, action, *, hold=0.05):
+        self.calls.append((action, hold))
+
+
+def test_single_behind_flicker_does_not_fire_hard_flip():
+    """2026-06-06 watch-list item: a SINGLE flipped behind median (classifier
+    noise at the filled/hollow boundary) used to fire _correct's behind-flip
+    -- a max_press hard pitch that wrecks a converging pose. The flip now
+    needs 2 CONSECUTIVE behind reads, mirroring pitch_compass's
+    front-flicker gate. One spurious behind beat -> press NOTHING."""
+    reads = [
+        CompassRead(found=True, offset_x=0.5, offset_y=0.0, in_front=True, confidence=0.9),
+        # spurious behind read, same position -> must hold position
+        CompassRead(found=True, offset_x=0.5, offset_y=0.1, in_front=False, confidence=0.9),
+        # flicker passed -> normal proportional correction resumes
+        CompassRead(found=True, offset_x=0.05, offset_y=0.0, in_front=True, confidence=0.9),
+    ]
+    sender = _Recorder()
+    out = align_to_target(_SeqReader(reads), sender, capture=lambda: None,
+                          sleeper=lambda s: None, clock=lambda: 0.0,
+                          samples=1, max_iters=3)
+    assert out.aligned is True
+    actions = [a for a, _ in sender.calls]
+    assert all(a in ("YawRightButton", "YawLeftButton") for a in actions), \
+        f"behind-flip fired on a single flicked read: {actions}"
+    assert len(actions) == 1     # iter0 yaw; iter1 damped (no press); iter2 aligned
+
+
+def test_two_consecutive_behind_reads_fire_the_flip():
+    """The damping must not eat REAL behind targets: the second consecutive
+    behind read fires the hard flip as before."""
+    reads = [
+        CompassRead(found=True, offset_x=0.0, offset_y=0.6, in_front=False, confidence=0.9),
+        CompassRead(found=True, offset_x=0.0, offset_y=0.6, in_front=False, confidence=0.9),
+    ]
+    sender = _Recorder()
+    align_to_target(_SeqReader(reads), sender, capture=lambda: None,
+                    sleeper=lambda s: None, clock=lambda: 0.0,
+                    samples=1, max_iters=2)
+    assert [a for a, _ in sender.calls] == ["PitchUpButton"], \
+        "second consecutive behind read must fire the flip"
+
+
+def test_behind_streak_resets_on_front_read():
+    """behind, front, behind -- the two behind reads are NOT consecutive;
+    neither may fire the flip."""
+    reads = [
+        CompassRead(found=True, offset_x=0.5, offset_y=0.1, in_front=False, confidence=0.9),
+        CompassRead(found=True, offset_x=0.5, offset_y=0.0, in_front=True, confidence=0.9),
+        CompassRead(found=True, offset_x=0.5, offset_y=0.1, in_front=False, confidence=0.9),
+    ]
+    sender = _Recorder()
+    align_to_target(_SeqReader(reads), sender, capture=lambda: None,
+                    sleeper=lambda s: None, clock=lambda: 0.0,
+                    samples=1, max_iters=3)
+    assert "PitchUpButton" not in [a for a, _ in sender.calls]
+    assert "PitchDownButton" not in [a for a, _ in sender.calls]
+
+
 def test_never_found_reports_not_aligned():
     sim = _Sim(found=False)
     out = _run(sim, max_iters=5)
@@ -382,9 +447,14 @@ def test_on_iter_reports_behind_flip_at_max_press():
     payloads = []
     out = _run(sim, on_iter=payloads.append)
     assert out.aligned is True
+    # Beat 0 is the behind-flicker damping gate (2 consecutive behind reads
+    # required since 2026-06-06): verdict reported, NO press.
     assert payloads[0]["in_front"] is False
-    assert payloads[0]["action"] == "PitchUpButton"
-    assert payloads[0]["hold"] == 0.70       # behind-flip is always max_press
+    assert payloads[0]["action"] is None
+    # Beat 1 confirms behind -> the hard flip fires, always at max_press.
+    assert payloads[1]["in_front"] is False
+    assert payloads[1]["action"] == "PitchUpButton"
+    assert payloads[1]["hold"] == 0.70       # behind-flip is always max_press
 
 
 def test_on_iter_reports_search_when_not_found():

@@ -231,6 +231,7 @@ def align_to_target(
     """
     start = clock()
     last = CompassRead.not_found()
+    behinds = 0  # consecutive behind reads — gates the hard behind-flip
 
     for i in range(max_iters):
         if clock() - start > timeout_s:
@@ -254,6 +255,16 @@ def align_to_target(
 
         aligned_now = read.found and read.in_front and read.magnitude <= align_tol
 
+        # Behind-flicker damping (2026-06-06 watch-list item, mirrors
+        # pitch_compass's front-flicker gate): a single flipped behind read
+        # is classifier noise at the filled/hollow boundary, and the
+        # behind-flip it fires is a max_press hard pitch that wrecks a
+        # converging pose. The flip needs 2 CONSECUTIVE behind beats; one
+        # spurious beat presses nothing and holds position. A real behind
+        # target costs one extra settle cycle, a noise beat costs zero.
+        behinds = behinds + 1 if (read.found and not read.in_front) else 0
+        behind_flicker = read.found and not read.in_front and behinds < 2
+
         action: Optional[str] = None
         hold: Optional[float] = None
         if aligned_now:
@@ -262,6 +273,8 @@ def align_to_target(
             # Can't see the dot — rotate a little to bring it into view.
             action, hold = "YawRightButton", search_press
             sender.press(action, hold=hold)
+        elif behind_flicker:
+            pass                                   # damped — hold position
         else:
             pressed = _correct(sender, read, gain=gain, min_press=min_press,
                                max_press=max_press, deadzone=deadzone)
