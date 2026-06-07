@@ -8,6 +8,15 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 
+@dataclass(frozen=True)
+class ShipFuel:
+    """Fuel facts from the latest Loadout: tank size and the equipped
+    scoop's table max rate (None when no scoop / unknown module — the
+    scoop_refuel step skips fail-safe on None rather than guess a rate)."""
+    capacity_t: float
+    scoop_max_rate_t_s: Optional[float]
+
+
 @dataclass
 class StepContext:
     sender: Any
@@ -47,6 +56,16 @@ class StepContext:
     # that press emits no new FSDTarget event, so Status.Destination +
     # the route's StarClass are the only confirmation (2026-06-06 dead run).
     navroute_supplier: Callable[[], Optional[Any]] = lambda: None
+
+    # StarClass of the CURRENT system's arrival star — the FlowRunner tracks
+    # the last Hyperspace StartJump (supercruise StartJumps carry null and
+    # never clobber it). None = not wired / no jump seen -> scoop_refuel
+    # skips fail-safe (g2).
+    arrival_star_class_supplier: Callable[[], Optional[str]] = lambda: None
+
+    # ShipFuel from the latest Loadout (capacity + scoop max rate). None =
+    # not wired / no Loadout seen -> scoop_refuel skips fail-safe (g1).
+    ship_fuel_supplier: Callable[[], Optional[Any]] = lambda: None
 
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None

@@ -1,7 +1,7 @@
 [ship]
-expected_ship = "cutter"
+expected_ship = "mandalay"
 expected_max_jump_range_ly = 31.288
-expected_fuel_capacity_t = 64.0
+expected_fuel_capacity_t = 32.0
 
 [routing]
 mode = "external_spansh"
@@ -9,7 +9,8 @@ destination = "Beagle Point"
 efficiency = 60
 range_margin = 0.97
 fuel_safety_threshold = 0.20
-refuel_threshold = 0.70
+# refuel trigger lives on the scoop_refuel step in procedures/arrival.toml
+# (refuel_below) -- the old refuel_threshold knob here was never wired.
 
 [exploration]
 honk = true

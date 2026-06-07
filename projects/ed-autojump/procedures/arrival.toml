@@ -17,6 +17,16 @@ backoff_s = 2.0
 
 steps = [
   { action = "set_throttle", pct = 0 },             # tap    | 0
+  # Scoop pit stop (spec 2026-06-06-scoop-refuel-design, council-ratified):
+  # arrival pose is nose-into-star, so when the arrival star is scoopable
+  # (KGBFOAM via last Hyperspace StartJump) and the tank is below
+  # refuel_below, fly straight in at 25% until ScoopingFuel, keep closing to
+  # ~50% of the 6A's 0.878 t/s table max, cut throttle, drink until full.
+  # Status.json-gated throughout; budget_s is the operator's 5-min FAIL
+  # backstop only. BEST-EFFORT: skip/fail never blocks the climb-out below
+  # (nav_panel_target -> star astern -> sc_assist_orbit IS the climb-out).
+  # Honk overlaps this hold via parallel_tracks -- no time wasted.
+  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.50, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.70, full_epsilon = 0.2 },  # gated  | 0b pit stop
   # Pitch-star-first (ADDED 2026-06-06: 2 of 4 arrivals smacked ~25s after
   # FSDJump â€” the ship arrives nose-INTO the star and the SC-assist
   # acquisition starts from that pose; the operator's standing rule is the

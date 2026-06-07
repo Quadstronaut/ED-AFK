@@ -931,10 +931,182 @@ def _correct_widget_ring(sender, read, *, gain_s_per_px, min_press, max_press):
     return None
 
 
+def _scoop_window_rate(samples: list, now: float,
+                       window_s: float) -> "float | None":
+    """Scoop rate (t/s) from CHANGED-ONLY (t, fuel) samples.
+
+    The StatusReader returns its cached snapshot when Status.json's mtime
+    hasn't moved, so naive per-poll deltas read rate=0 between writes
+    (council must-fix: stale-poll trap). Callers store a sample only when
+    FuelMain actually changed; here:
+    - >=2 changed samples inside the window -> slope across them.
+    - newest change OLDER than the window -> nothing has flowed for
+      window_s -> a TRUE 0.0 (stall evidence).
+    - otherwise -> None (not enough data yet; never judge on None)."""
+    if not samples:
+        return None
+    recent = [s for s in samples if s[0] >= now - window_s]
+    if len(recent) >= 2 and recent[-1][0] > recent[0][0]:
+        return (recent[-1][1] - recent[0][1]) / (recent[-1][0] - recent[0][0])
+    if samples[-1][0] < now - window_s:
+        return 0.0
+    return None
+
+
+def step_scoop_refuel(
+    ctx: StepContext, *,
+    approach_pct: int = 25,
+    standoff_frac: float = 0.50,
+    rate_window_s: float = 2.0,
+    budget_s: float = 300.0,
+    refuel_below: float = 0.70,
+    full_epsilon: float = 0.2,
+    poll_s: float = 0.5,
+) -> bool:
+    """Arrival pit stop (spec 2026-06-06-scoop-refuel-design, operator design
+    council-ratified): fly straight into the arrival star — the hyperspace
+    exit pose is already nose-into-star — until the ScoopingFuel flag shows,
+    keep closing until the observed rate hits `standoff_frac` of the equipped
+    scoop's table max, then cut throttle and drink until full.
+
+    Gates are Status.json reads; `budget_s` (operator-mandated 5 min) is a
+    FAIL backstop only, never a success gate. Best-effort by design: every
+    skip/DONE returns True, every FAIL returns False with throttle zeroed,
+    and arrival's climb-out (nav_panel_target -> pitch star astern ->
+    sc_assist_orbit) runs either way. A smack mid-scoop preempts the whole
+    arrival via should_abort (arrival is in _PREEMPT_ON_SMACK)."""
+    # ---- skip gates (no-op success; fail safe = don't fly at a star blind)
+    st = ctx.status_supplier()
+    if st is None or getattr(st, "fuel", None) is None:
+        ctx.log("ScoopRefuelSkipped", {"reason": "no_status_fuel"})
+        return True
+    ship = ctx.ship_fuel_supplier()
+    capacity = getattr(ship, "capacity_t", None) if ship is not None else None
+    max_rate = getattr(ship, "scoop_max_rate_t_s", None) if ship is not None else None
+    if not capacity or not max_rate:
+        # No Loadout seen, no scoop fitted, or unknown scoop module — never
+        # guess a rate (g1).
+        ctx.log("ScoopRefuelSkipped", {"reason": "no_ship_fuel_facts",
+                                       "capacity": capacity,
+                                       "max_rate": max_rate})
+        return True
+    star_class = ctx.arrival_star_class_supplier()
+    from ..fsd.danger import is_scoopable
+    if not star_class or not is_scoopable(star_class):
+        ctx.log("ScoopRefuelSkipped", {"reason": "not_scoopable",
+                                       "star_class": star_class})
+        return True
+    fuel_start = st.fuel.fuel_main
+    if fuel_start / capacity >= refuel_below:
+        ctx.log("ScoopRefuelSkipped", {"reason": "tank_healthy",
+                                       "fuel": fuel_start,
+                                       "capacity": capacity})
+        return True
+    if fuel_start >= capacity - full_epsilon:
+        ctx.log("ScoopRefuelSkipped", {"reason": "already_full",
+                                       "fuel": fuel_start})
+        return True
+
+    standoff_rate = standoff_frac * max_rate
+    t0 = ctx.clock()
+    deadline = t0 + budget_s   # FAIL backstop ONLY
+    # Event-gates-need-state-check law: already scooping on entry (restart
+    # mid-scoop) -> straight to the rate phase, no waiting on a flag that
+    # already holds.
+    state = "scoop" if getattr(st, "scooping_fuel", False) else "approach"
+    ctx.log("ScoopStart", {"fuel": fuel_start, "capacity": capacity,
+                           "star_class": star_class, "state": state,
+                           "max_rate": max_rate,
+                           "standoff_rate": standoff_rate})
+    # Both entry states approach at `approach_pct` (operator: keep closing
+    # until ~50% rate). 25 = the lowest non-zero SetSpeed bind.
+    if not step_set_throttle(ctx, pct=approach_pct):
+        return False
+    samples: list[tuple[float, float]] = [(t0, fuel_start)]
+    last_fuel = fuel_start
+    fuel = fuel_start
+    reapproached = False
+    last_rate_log = t0
+    reason = None
+
+    def _finish(why: str, *, ok: bool, zero_throttle: bool = True) -> bool:
+        now = ctx.clock()
+        if zero_throttle:
+            step_set_throttle(ctx, pct=0)
+        ctx.log("ScoopRefuelOutcome", {
+            "reason": why, "fuel_start": fuel_start, "fuel_end": fuel,
+            "scooped_t": fuel - fuel_start, "duration_s": now - t0,
+            "state": state, "budget_s": budget_s,
+            "standoff_rate": standoff_rate})
+        return ok
+
+    while True:
+        if ctx.should_abort():
+            # Operator panic or smack-preempt: stop pressing keys NOW — the
+            # established in-step contract (no exit tap; on a smack the ship
+            # is in normal space anyway, and on panic the operator owns it).
+            return _finish("abort", ok=False, zero_throttle=False)
+        now = ctx.clock()
+        if now >= deadline:
+            return _finish({"approach": "no_scoop", "scoop": "slow_scoop",
+                            "hold": "partial"}[state], ok=False)
+        st = ctx.status_supplier()
+        if st is None or getattr(st, "fuel", None) is None:
+            ctx.sleeper(poll_s)
+            continue
+        fuel = st.fuel.fuel_main
+        if fuel != last_fuel:
+            samples.append((now, fuel))
+            last_fuel = fuel
+            # Bound memory: only the window matters (+1 older sample for the
+            # true-zero check).
+            cutoff = now - (rate_window_s * 2)
+            while len(samples) > 2 and samples[1][0] < cutoff:
+                samples.pop(0)
+        if fuel >= capacity - full_epsilon:
+            return _finish("full", ok=True)
+        rate = _scoop_window_rate(samples, now, rate_window_s)
+        scooping = getattr(st, "scooping_fuel", False)
+        if rate is not None and now - last_rate_log >= 5.0:
+            ctx.log("ScoopRate", {"rate": rate,
+                                  "frac_of_max": rate / max_rate,
+                                  "fuel": fuel, "state": state})
+            last_rate_log = now
+        if state == "approach":
+            if scooping:
+                state = "scoop"
+                # Rate judgement starts fresh from scoop onset.
+                samples = [(now, fuel)]
+                last_fuel = fuel
+        elif state == "scoop":
+            if rate is not None and rate >= standoff_rate:
+                ctx.log("ScoopStandoff", {"rate": rate, "fuel": fuel})
+                if not step_set_throttle(ctx, pct=0):
+                    return _finish("throttle_bind_missing", ok=False,
+                                   zero_throttle=False)
+                state = "hold"
+        else:  # hold
+            if not scooping and rate == 0.0:
+                if reapproached:
+                    # Second stall: don't burn the rest of the budget parked
+                    # outside the band — fail out to the climb-out.
+                    return _finish("stalled", ok=False)
+                ctx.log("ScoopStall", {"fuel": fuel})
+                if not step_set_throttle(ctx, pct=approach_pct):
+                    return _finish("throttle_bind_missing", ok=False)
+                state = "approach"
+                samples = [(now, fuel)]
+                last_fuel = fuel
+                reapproached = True
+        ctx.sleeper(poll_s)
+
+
 # Steps that OWN input: multi-key UI macros where a stray concurrent keypress
 # (e.g. the heat watchdog's DeployHeatSink) could desync the panel UI state.
 # The interpreter wraps these in ctx.exclusive_guard; the heat watchdog skips
 # its tick while any is running (spec 2026-06-06-heat-watchdog-design).
+# scoop_refuel is deliberately NOT here: its taps are SetSpeed keys, no UI
+# panel state, and the watchdog must stay live through the whole scoop.
 INPUT_EXCLUSIVE_ACTIONS = frozenset({"sc_assist_orbit", "nav_panel_target"})
 
 STEP_REGISTRY.update({
@@ -944,4 +1116,5 @@ STEP_REGISTRY.update({
     "pitch_compass": step_pitch_compass,
     "hold_alignment": step_hold_alignment,
     "orient_widget_ring": step_orient_widget_ring,
+    "scoop_refuel": step_scoop_refuel,
 })

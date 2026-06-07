@@ -1,0 +1,359 @@
+"""scoop_refuel: the arrival pit stop (spec 2026-06-06-scoop-refuel-design).
+
+The step is a Status.json-gated state machine, so every test drives it with
+a scripted status-by-time function and a fake clock advanced by the sleeper —
+no real sleeps, no real game.
+"""
+
+from pathlib import Path
+from types import SimpleNamespace
+
+from ed_autojump.flow.context import ShipFuel, StepContext
+from ed_autojump.flow.dispatcher import FlowRunner
+from ed_autojump.flow.loader import load_procedures
+from ed_autojump.flow.steps import STEP_REGISTRY, _scoop_window_rate
+from ed_autojump.fsd.scoops import scoop_max_rate_t_s
+from tests.flow import FakeSender
+
+PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
+
+_SIX_A = ShipFuel(capacity_t=16.0, scoop_max_rate_t_s=0.878)  # small tank = fast tests
+
+
+class _Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+def _st(fuel, scooping=False):
+    return SimpleNamespace(fuel=SimpleNamespace(fuel_main=fuel),
+                           scooping_fuel=scooping)
+
+
+def _ctx(script, *, clock=None, sender=None, ship=_SIX_A, star="G",
+         abort=None, log=None):
+    """script: callable(t) -> Status-like or None."""
+    clock = clock or _Clock()
+    sender = sender or FakeSender()
+    return StepContext(
+        sender=sender,
+        clock=clock,
+        sleeper=lambda s: setattr(clock, "t", clock.t + s),
+        status_supplier=lambda: script(clock.t),
+        arrival_star_class_supplier=lambda: star,
+        ship_fuel_supplier=lambda: ship,
+        should_abort=abort or (lambda: False),
+        record=log,
+    )
+
+
+def _recorder():
+    rows = []
+    return rows, lambda kind, payload: rows.append((kind, payload))
+
+
+# ---- rate math: the stale-poll trap (council must-fix) ---------------------
+
+def test_window_rate_is_slope_over_changed_samples():
+    samples = [(0.0, 10.0), (1.0, 10.5), (2.0, 11.0)]
+    assert _scoop_window_rate(samples, now=2.0, window_s=2.0) == 0.5
+
+
+def test_window_rate_single_recent_change_is_unknown_not_zero():
+    # One changed sample inside the window = Status.json simply hasn't been
+    # rewritten yet. Reading that as rate=0 was the stale-poll trap — it
+    # must be None (no judgement), never 0.0 (stall evidence).
+    samples = [(1.5, 10.0)]
+    assert _scoop_window_rate(samples, now=2.0, window_s=2.0) is None
+
+
+def test_window_rate_no_change_beyond_window_is_true_zero():
+    # The newest CHANGE is older than the whole window: nothing has flowed
+    # for window_s — that is a true 0.0 (stall evidence).
+    samples = [(0.0, 10.0)]
+    assert _scoop_window_rate(samples, now=3.0, window_s=2.0) == 0.0
+
+
+def test_window_rate_empty_is_unknown():
+    assert _scoop_window_rate([], now=1.0, window_s=2.0) is None
+
+
+# ---- scoop table lookup ----------------------------------------------------
+
+def test_scoop_table_6a_matches_edcd():
+    assert scoop_max_rate_t_s("int_fuelscoop_size6_class5") == 0.878
+
+
+def test_scoop_table_1e_smallest():
+    assert scoop_max_rate_t_s("int_fuelscoop_size1_class1") == 0.018
+
+
+def test_scoop_table_unknown_items_are_none():
+    # Never guess a rate: a non-scoop module and an out-of-table size both
+    # report None and the step skips fail-safe (g1).
+    assert scoop_max_rate_t_s("int_dockingcomputer_advanced") is None
+    assert scoop_max_rate_t_s("int_fuelscoop_size9_class5") is None
+
+
+# ---- skip gates (no-op success, no presses) --------------------------------
+
+def test_skip_without_status_fuel():
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(lambda t: None, sender=sender, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert sender.actions() == []
+    assert rows[0] == ("ScoopRefuelSkipped", {"reason": "no_status_fuel"})
+
+
+def test_skip_without_ship_fuel_facts():
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(lambda t: _st(5.0), sender=sender, ship=None, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert sender.actions() == []
+    assert rows[0][1]["reason"] == "no_ship_fuel_facts"
+
+
+def test_skip_unknown_scoop_rate():
+    # Loadout seen but the scoop module wasn't recognized -> rate None -> g1.
+    rows, log = _recorder()
+    ctx = _ctx(lambda t: _st(5.0),
+               ship=ShipFuel(capacity_t=16.0, scoop_max_rate_t_s=None),
+               log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert rows[0][1]["reason"] == "no_ship_fuel_facts"
+
+
+def test_skip_non_scoopable_star():
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(lambda t: _st(5.0), sender=sender, star="DA", log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert sender.actions() == []
+    assert rows[0][1]["reason"] == "not_scoopable"
+
+
+def test_skip_unknown_star_class():
+    rows, log = _recorder()
+    ctx = _ctx(lambda t: _st(5.0), star=None, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert rows[0][1]["reason"] == "not_scoopable"
+
+
+def test_skip_tank_healthy():
+    # 12/16 = 0.75 >= refuel_below 0.70 -> no pit stop.
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(lambda t: _st(12.0), sender=sender, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    assert sender.actions() == []
+    assert rows[0][1]["reason"] == "tank_healthy"
+
+
+# ---- the full pit stop -----------------------------------------------------
+
+def _happy_script(t):
+    """Approach 2s -> scoop band at 0.3 t/s (below the 0.439 standoff) ->
+    fast band at 0.6 t/s from t=6 -> tank (16t, eps 0.2) full at ~13.7s."""
+    if t < 2.0:
+        return _st(10.0, scooping=False)
+    if t < 6.0:
+        return _st(10.0 + 0.3 * (t - 2.0), scooping=True)
+    return _st(min(16.0, 11.2 + 0.6 * (t - 6.0)), scooping=True)
+
+
+def test_happy_path_approach_standoff_hold_full():
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(_happy_script, sender=sender, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+
+    kinds = [k for k, _ in rows]
+    assert "ScoopStart" in kinds
+    assert "ScoopStandoff" in kinds          # rate crossed 50% of max
+    outcome = dict(rows)["ScoopRefuelOutcome"]
+    assert outcome["reason"] == "full"
+    assert outcome["fuel_end"] >= 15.8       # capacity - full_epsilon
+    assert outcome["scooped_t"] > 5.0
+
+    acts = sender.actions()
+    # Approach throttle first; throttle CUT at standoff (before the final
+    # zero in DONE).
+    assert acts[0] == "SetSpeed25"
+    assert "SetSpeedZero" in acts
+    assert acts.index("SetSpeed25") < acts.index("SetSpeedZero")
+
+
+def test_entry_already_scooping_goes_straight_to_rate_phase():
+    # Event-gates-need-state-check law: restarted mid-scoop, the flag
+    # already holds — never wait for a transition that won't come.
+    rows, log = _recorder()
+    ctx = _ctx(lambda t: _st(min(16.0, 10.0 + 0.6 * t), scooping=True),
+               log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    start = dict(rows)["ScoopStart"]
+    assert start["state"] == "scoop"
+    assert dict(rows)["ScoopRefuelOutcome"]["reason"] == "full"
+
+
+def test_already_full_skips_without_flying():
+    rows, log = _recorder()
+    sender = FakeSender()
+    # 11/16 = 0.69 < refuel_below, but within full_epsilon=6 of capacity.
+    ctx = _ctx(lambda t: _st(11.0), sender=sender, log=log,
+               ship=_SIX_A)
+    ok = STEP_REGISTRY["scoop_refuel"](ctx, full_epsilon=6.0)
+    assert ok is True
+    assert sender.actions() == []
+    assert rows[0][1]["reason"] == "already_full"
+
+
+def test_budget_is_a_fail_backstop_never_success():
+    # Star never grants the flag (e.g. a non-scoopable close companion was
+    # the actual body ahead): the 5-min budget FAILS the step — throttle
+    # zeroed, arrival continues into the climb-out (step is non-required).
+    rows, log = _recorder()
+    sender = FakeSender()
+    clock = _Clock()
+    ctx = _ctx(lambda t: _st(5.0, scooping=False), clock=clock,
+               sender=sender, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx, budget_s=30.0) is False
+    outcome = dict(rows)["ScoopRefuelOutcome"]
+    assert outcome["reason"] == "no_scoop"
+    assert clock.t >= 30.0
+    assert sender.actions()[-1] == "SetSpeedZero"   # never left throttled-in
+
+
+def test_budget_fail_mid_scoop_is_slow_scoop():
+    rows, log = _recorder()
+    # Scooping but glacially: rate 0.05 t/s never hits standoff, tank never
+    # fills inside the budget.
+    ctx = _ctx(lambda t: _st(5.0 + 0.05 * t, scooping=True), log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx, budget_s=20.0) is False
+    assert dict(rows)["ScoopRefuelOutcome"]["reason"] == "slow_scoop"
+
+
+def test_stall_in_hold_reapproaches_once():
+    rows, log = _recorder()
+    sender = FakeSender()
+
+    def script(t):
+        if t < 1.0:
+            return _st(10.0, scooping=False)
+        if t < 4.0:                       # fast band -> standoff -> hold
+            return _st(10.0 + 0.6 * (t - 1.0), scooping=True)
+        if t < 9.0:                       # drifted out: flag drops, flow stops
+            return _st(11.8, scooping=False)
+        return _st(min(16.0, 11.8 + 0.6 * (t - 9.0)), scooping=True)
+
+    ctx = _ctx(script, sender=sender, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is True
+    kinds = [k for k, _ in rows]
+    assert "ScoopStall" in kinds
+    assert dict(rows)["ScoopRefuelOutcome"]["reason"] == "full"
+    # throttle: 25 (approach), 0 (standoff), 25 (re-approach), 0 (standoff),
+    # 0 (DONE) — at minimum two approach presses.
+    assert sender.actions().count("SetSpeed25") == 2
+
+
+def test_abort_stops_pressing_immediately():
+    # Smack-preempt and operator panic both arrive via should_abort: the
+    # step must exit within one poll WITHOUT a trailing throttle tap (the
+    # in-step contract: after abort, no more presses).
+    rows, log = _recorder()
+    sender = FakeSender()
+    clock = _Clock()
+    polls = {"n": 0}
+
+    def abort():
+        polls["n"] += 1
+        return polls["n"] > 3
+
+    ctx = _ctx(lambda t: _st(5.0, scooping=False), clock=clock,
+               sender=sender, abort=abort, log=log)
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is False
+    assert dict(rows)["ScoopRefuelOutcome"]["reason"] == "abort"
+    assert sender.actions() == ["SetSpeed25"]       # approach tap only
+
+
+def test_unbound_throttle_fails_clean():
+    sender = FakeSender(unbound={"SetSpeed25"})
+    ctx = _ctx(lambda t: _st(5.0))
+    ctx.sender = sender
+    assert STEP_REGISTRY["scoop_refuel"](ctx) is False
+
+
+# ---- dispatcher wiring -----------------------------------------------------
+
+def _runner():
+    return FlowRunner(procedures={}, sender=FakeSender())
+
+
+def _ev(name, **kw):
+    return SimpleNamespace(event=name, **kw)
+
+
+def test_hyperspace_startjump_tracks_arrival_star():
+    r = _runner()
+    r._apply_state(_ev("StartJump", jump_type="Hyperspace", star_class="K"))
+    assert r._arrival_star_class == "K"
+
+
+def test_supercruise_startjump_does_not_clobber():
+    # Council must-fix: SC StartJumps carry star_class=None — after any SC
+    # entry the tracked arrival star must survive, or g2 skips forever.
+    r = _runner()
+    r._apply_state(_ev("StartJump", jump_type="Hyperspace", star_class="G"))
+    r._apply_state(_ev("StartJump", jump_type="Supercruise", star_class=None))
+    assert r._arrival_star_class == "G"
+
+
+def test_loadout_tracks_capacity_and_scoop_rate():
+    r = _runner()
+    r._apply_state(_ev(
+        "Loadout",
+        fuel_capacity=SimpleNamespace(main=32.0),
+        modules=[SimpleNamespace(item="int_dockingcomputer_advanced"),
+                 SimpleNamespace(item="int_fuelscoop_size6_class5")],
+    ))
+    assert r._ship_fuel == ShipFuel(capacity_t=32.0, scoop_max_rate_t_s=0.878)
+
+
+def test_loadout_without_scoop_has_no_rate():
+    r = _runner()
+    r._apply_state(_ev("Loadout",
+                       fuel_capacity=SimpleNamespace(main=32.0),
+                       modules=[SimpleNamespace(item="int_hyperdrive_size5_class5")]))
+    assert r._ship_fuel.capacity_t == 32.0
+    assert r._ship_fuel.scoop_max_rate_t_s is None
+
+
+def test_context_wires_the_suppliers():
+    r = _runner()
+    r._apply_state(_ev("StartJump", jump_type="Hyperspace", star_class="M"))
+    r._apply_state(_ev("Loadout",
+                       fuel_capacity=SimpleNamespace(main=32.0),
+                       modules=[SimpleNamespace(item="int_fuelscoop_size6_class5")]))
+    ctx = r._make_context()
+    assert ctx.arrival_star_class_supplier() == "M"
+    assert ctx.ship_fuel_supplier().scoop_max_rate_t_s == 0.878
+
+
+# ---- procedure wiring (nothing stays unwired) ------------------------------
+
+def test_arrival_runs_the_pit_stop_before_the_climb_out():
+    procs = load_procedures(PROC_DIR)
+    actions = [s.action for s in procs["arrival"].steps]
+    assert "scoop_refuel" in actions
+    # Pit stop sits between the throttle-zero and the climb-out macros: the
+    # scoop exploits the nose-into-star arrival pose; nav_panel_target +
+    # pitch-astern + sc_assist_orbit AFTER it are the operator's climb-out.
+    assert actions.index("scoop_refuel") < actions.index("nav_panel_target")
+    scoop = next(s for s in procs["arrival"].steps
+                 if s.action == "scoop_refuel")
+    assert scoop.required is False           # best-effort by design
+    assert scoop.params["budget_s"] == 300.0  # operator's 5-minute backstop

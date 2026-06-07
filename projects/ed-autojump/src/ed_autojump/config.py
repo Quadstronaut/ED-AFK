@@ -32,9 +32,9 @@ DEFAULT_DANGER_CLASSES = (
 
 @dataclass
 class ShipConfig:
-    expected_ship: str = "cutter"
+    expected_ship: str = "mandalay"
     expected_max_jump_range_ly: float = 31.288
-    expected_fuel_capacity_t: float = 64.0
+    expected_fuel_capacity_t: float = 32.0
     required_modules: tuple[str, ...] = (
         "int_fuelscoop_*",
         "int_detailedsurfacescanner_tiny",
@@ -49,7 +49,9 @@ class RoutingConfig:
     efficiency: int = 60
     range_margin: float = 0.97
     fuel_safety_threshold: float = 0.20
-    refuel_threshold: float = 0.70
+    # refuel_threshold DELETED 2026-06-06: it sat unwired since v1. The live
+    # scoop-trigger knob is `refuel_below` on the scoop_refuel step in
+    # arrival.toml (step params are where every other flight tunable lives).
     danger_classes: tuple[str, ...] = DEFAULT_DANGER_CLASSES
 
 

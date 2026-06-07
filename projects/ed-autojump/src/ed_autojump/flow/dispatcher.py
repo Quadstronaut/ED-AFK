@@ -11,7 +11,8 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
-from .context import StepContext
+from ..fsd.scoops import scoop_max_rate_t_s
+from .context import ShipFuel, StepContext
 from .interpreter import run_procedure
 from .model import Procedure
 
@@ -152,6 +153,15 @@ class FlowRunner:
         # reads these to tell a NEW target from a stale one.
         self._fsd_target_seq = 0
         self._latest_fsd_target: Optional[Any] = None
+        # scoop_refuel inputs (spec 2026-06-06-scoop-refuel-design §4.3),
+        # fed by backlog AND live events like _smacked:
+        # - the CURRENT system's arrival-star class = the last HYPERSPACE
+        #   StartJump's StarClass (FSDTarget at arrival time is the NEXT hop;
+        #   supercruise StartJumps carry null and must not clobber).
+        # - tank size + equipped scoop max rate from the latest Loadout
+        #   (written at every LoadGame, so backlog always provides one).
+        self._arrival_star_class: Optional[str] = None
+        self._ship_fuel: Optional[ShipFuel] = None
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
@@ -242,6 +252,8 @@ class FlowRunner:
             exclusive_guard=self._exclusive_input,
             fsd_target_supplier=self._fsd_target_state,
             navroute_supplier=self._navroute_state,
+            arrival_star_class_supplier=lambda: self._arrival_star_class,
+            ship_fuel_supplier=lambda: self._ship_fuel,
             record=self.record,
             frame_sink=self.frame_sink,
         )
@@ -359,12 +371,32 @@ class FlowRunner:
             self._smacked = False
 
     def _apply_state(self, ev: Any) -> None:
-        """Track the latest FSDTarget (+ a monotone seq) so the
-        target_next_route danger gate can verify the NEW target's StarClass.
-        Called exactly once per event via the hub's on_event."""
-        if getattr(ev, "event", None) == "FSDTarget":
+        """Track per-event state for steps. Called exactly once per event via
+        the hub's on_event (backlog AND live, so restarts repopulate it)."""
+        name = getattr(ev, "event", None)
+        if name == "FSDTarget":
+            # Latest FSDTarget (+ a monotone seq) so the target_next_route
+            # danger gate can verify the NEW target's StarClass.
             self._fsd_target_seq += 1
             self._latest_fsd_target = ev
+        elif name == "StartJump":
+            # Hyperspace-only: this StartJump's StarClass is the star the
+            # ship arrives AT, i.e. the current system once FSDJump lands.
+            # A supercruise StartJump carries star_class=None — ignoring it
+            # (rather than clobbering) is council must-fix #3, pinned by test.
+            if (getattr(ev, "jump_type", None) == "Hyperspace"
+                    and getattr(ev, "star_class", None)):
+                self._arrival_star_class = ev.star_class
+        elif name == "Loadout":
+            cap = getattr(getattr(ev, "fuel_capacity", None), "main", None)
+            if cap:
+                scoop_item = next(
+                    (m.item for m in getattr(ev, "modules", ())
+                     if m.item.startswith("int_fuelscoop_")), None)
+                rate = (scoop_max_rate_t_s(scoop_item)
+                        if scoop_item is not None else None)
+                self._ship_fuel = ShipFuel(capacity_t=float(cap),
+                                           scoop_max_rate_t_s=rate)
 
     def _fsd_target_state(self) -> tuple:
         return (self._fsd_target_seq, self._latest_fsd_target)

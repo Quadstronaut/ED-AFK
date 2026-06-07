@@ -14,6 +14,7 @@ from .danger import (
     is_dangerous,
     is_scoopable,
 )
+from .scoops import scoop_max_rate_t_s
 
 __all__ = [
     "FsdSpec",
@@ -26,4 +27,5 @@ __all__ = [
     "SCOOPABLE_CLASSES",
     "is_dangerous",
     "is_scoopable",
+    "scoop_max_rate_t_s",
 ]
