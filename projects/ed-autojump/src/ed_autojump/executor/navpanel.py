@@ -114,6 +114,8 @@ def target_via_navpanel(
     settle_s: float = DEFAULT_SETTLE_S,
     panel_focus_action: str = "FocusLeftPanel",
     rows_down: int = 0,
+    pin_to_top: bool = False,
+    pin_hold_s: float = 4.0,
 ) -> None:
     """Run the blind nav-panel macro that TARGETS the top row (the closest
     body — the arrival star on a smack drop) without engaging Supercruise
@@ -146,11 +148,26 @@ def target_via_navpanel(
     no-oped. The caller verifies the lock identity via Status.Destination
     and retries with rows_down+1 to scroll past non-star rows.
 
+    `pin_to_top` (2026-06-07, OPERATOR-TESTED mechanics — Col 285 OE-N
+    b8-3): the panel CURSOR PERSISTS across panel closes and across jumps
+    (it opened at ~row 10 one system after the first live refuel and the
+    rows_down walk scrolled AWAY from the star). The tested facts: a HELD
+    up-key stops and sticks at the top row, but TAPPING at the top WRAPS
+    to the bottom — so the pin is the operator's exact sequence: tap DOWN
+    once (off any top-edge state), then HOLD up for `pin_hold_s`. The hold
+    saturates at row 0, so over-holding is safe — duration costs only
+    time, never correctness. NEVER convert this to a tap burst.
+
     Raises KeyError (via the sender) if any action is unbound; the bundled
     preset binds all of them.
     """
     sender.press(panel_focus_action)
     sleeper(settle_s)
+    if pin_to_top:
+        sender.press("UI_Down")          # one tap down, off the top edge
+        sleeper(settle_s)
+        sender.press("UI_Up", hold=pin_hold_s)   # HELD: saturates at row 0
+        sleeper(settle_s)
     for _ in range(max(0, rows_down)):
         sender.press("UI_Down")
         sleeper(settle_s)

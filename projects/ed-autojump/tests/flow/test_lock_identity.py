@@ -72,20 +72,6 @@ def _nav_ctx(status_fn, system="Acihaut"):
     return ctx, sender
 
 
-def test_nav_panel_target_scrolls_past_the_beacon_to_the_star():
-    sender_holder = []
-    def status():
-        # row 0 lock reads as the beacon until the macro scrolls (UI_Down),
-        # then the row-1 lock reads as the star
-        scrolled = "UI_Down" in sender_holder[0].events
-        return _status("Acihaut" if scrolled else "$MULTIPLAYER_SCENARIO42_TITLE;")
-    ctx, sender = _nav_ctx(status)
-    sender_holder.append(sender)
-    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0)
-    assert ok is True
-    assert sender.events.count("UI_Down") == 1   # scrolled exactly one row
-
-
 def test_nav_panel_target_fails_closed_when_no_row_is_the_star():
     ctx, sender = _nav_ctx(lambda: _status("$MULTIPLAYER_SCENARIO42_TITLE;"))
     ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0)
@@ -135,12 +121,49 @@ def test_orbit_engages_on_a_verified_star_lock():
 
 # ---- arrival wiring -----------------------------------------------------------
 
-def test_arrival_lock_orient_orbit_order_and_gates():
+def test_arrival_lock_then_orbit_order_and_gates():
     proc = load_procedures(PROC_DIR)["arrival"]
     actions = [s.action for s in proc.steps]
     i = actions.index("nav_panel_target")
-    assert actions[i:i + 3] == ["nav_panel_target", "orient_compass",
-                                "sc_assist_orbit"]
+    # 3b orient DROPPED (operator, 2026-06-07 phase-1: post-refuel pose
+    # engages the assist fine — "I think it's moot")
+    assert actions[i:i + 2] == ["nav_panel_target", "sc_assist_orbit"]
     assert proc.steps[i].required is True         # wrong lock never flows on
-    # a required fail re-establishes lock + pose together
+    # a required fail re-establishes the lock before re-orbiting
     assert proc.on_required_fail.retry_from == "nav_panel_target"
+
+
+def test_nav_panel_target_pins_cursor_with_held_up_never_taps():
+    """Operator-tested (2026-06-07): the panel cursor persists across jumps
+    (opened at ~row 10 one system after the first refuel); a HELD up-key
+    saturates at the top but TAPS at the top WRAP to the bottom. The pin is
+    the operator's exact sequence — tap DOWN once, then HOLD up — and must
+    never regress into a tap burst."""
+    ctx, sender = _nav_ctx(lambda: _status("Acihaut"))
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0, pin_hold_s=4.0)
+    assert ok is True
+    first_select = sender.events.index("UI_Select")
+    pre = sender.events[1:first_select]
+    assert pre == ["UI_Down", "UI_Up"]             # tap down, then up ONCE
+    assert ("UI_Up", 4.0) in sender.holds          # ...and that up was HELD
+
+
+def test_row_walk_happens_after_the_pin():
+    """When the verified lock needs a scroll (beacon on row 0), the walk's
+    UI_Down lands AFTER the held-up pin, from a true row-0 origin."""
+    sender_holder = []
+    def status():
+        scrolled = [a for a, h in sender_holder[0].holds
+                    if a == "UI_Up" and h >= 1.0]
+        # wrong body until the SECOND macro run (one pin-hold per run)
+        return _status("Acihaut" if len(scrolled) >= 2
+                       else "$MULTIPLAYER_SCENARIO42_TITLE;")
+    ctx, sender = _nav_ctx(status)
+    sender_holder.append(sender)
+    ok = STEP_REGISTRY["nav_panel_target"](ctx, settle_s=0.0, pin_hold_s=4.0)
+    assert ok is True
+    # second macro run: ... UI_Up(held) -> UI_Down (the row-1 walk) -> select
+    last_up = len(sender.events) - 1 - sender.events[::-1].index("UI_Up")
+    walk = sender.events[last_up + 1:]
+    assert walk.count("UI_Down") == 1
+    assert walk.index("UI_Down") < walk.index("UI_Select")

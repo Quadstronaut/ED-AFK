@@ -42,11 +42,9 @@ steps = [
   # and fails closed — required, because a wrong lock must never reach the
   # orbit. A required fail retries from here (lock + pose are one unit).
   { action = "nav_panel_target", required = true },  # macro  | 3 EXCLUSIVE — verified star lock
-  # Nose ON the star before the assist macro (operator, 10:30Z: "if you
-  # don't point the ship towards the body you're going to orbit, it won't
-  # go to it. it's not magic."). Best-effort: a vision miss falls through
-  # and the orbit's own guards decide.
-  { action = "orient_compass" },                     # vision | 3b nose on the locked star
+  # (3b orient-to-star DROPPED 2026-06-07 phase-1: operator call — the
+  # post-refuel pose engages the assist fine without it; "I think it's
+  # moot." First live refuel + orbit ran clean.)
   # Orbit is guarded now (in-SC + local-star destination, fail closed, logs
   # ScAssistOrbitSent destination=X) but stays BEST-EFFORT: a refused orbit
   # degrades to the direct-jump path below — the marathon's proven-good

@@ -465,7 +465,9 @@ def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
 def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
                           verify_reads: int = 4,
                           max_toggles: int = 4,
-                          max_rows: int = 4) -> bool:
+                          max_rows: int = 4,
+                          pin_to_top: bool = True,
+                          pin_hold_s: float = 4.0) -> bool:
     """Nav-panel macro: lock the ARRIVAL STAR — compass-verified AND
     identity-verified, scrolling past non-star rows (2026-06-07 council).
 
@@ -491,8 +493,14 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
 
     def _macro(rows_down: int) -> bool:
         try:
+            # pin_to_top (2026-06-07, operator-tested): the panel cursor
+            # persists across jumps — it opened at ~row 10 one system after
+            # the first refuel and the row walk scrolled AWAY from the star.
+            # Pin = tap down once + HOLD up (held saturates at top; taps at
+            # the top WRAP — never a tap burst).
             target_via_navpanel(ctx.sender, sleeper=ctx.sleeper,
-                                settle_s=settle_s, rows_down=rows_down)
+                                settle_s=settle_s, rows_down=rows_down,
+                                pin_to_top=pin_to_top, pin_hold_s=pin_hold_s)
             return True
         except KeyError:
             ctx.log("BindMissing", {"step": "nav_panel_target"})
