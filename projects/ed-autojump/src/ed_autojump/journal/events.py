@@ -151,6 +151,16 @@ class SupercruiseExit(Event):
     body_type: Optional[str] = Field(default=None, alias="BodyType")
 
 
+class NavRouteClear(Event):
+    """Written when the plotted route is cleared — emitted BOTH at the final
+    hop (in witchspace, ~10s before the destination FSDJump) AND on a manual
+    re-plot. It carries no payload of its own, so route-completion detection
+    correlates it with the following FSDJump's SystemAddress rather than
+    triggering off this event alone (see dispatcher route-complete latch)."""
+
+    event: Literal["NavRouteClear"]
+
+
 class Music(Event):
     """Fires every time the game's music track changes.
 
@@ -201,6 +211,7 @@ AnyEvent = Union[
     HullDamage,
     SupercruiseEntry,
     SupercruiseExit,
+    NavRouteClear,
     Music,
     LoadGame,
     Event,
@@ -221,6 +232,7 @@ _EVENT_MODELS: dict[str, type[Event]] = {
     "HullDamage": HullDamage,
     "SupercruiseEntry": SupercruiseEntry,
     "SupercruiseExit": SupercruiseExit,
+    "NavRouteClear": NavRouteClear,
     "Music": Music,
     "LoadGame": LoadGame,
 }

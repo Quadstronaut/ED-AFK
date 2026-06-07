@@ -15,6 +15,7 @@ from .events import (
     HullDamage,
     SupercruiseEntry,
     SupercruiseExit,
+    NavRouteClear,
     parse_event,
 )
 from .tail import JournalTail
@@ -34,6 +35,7 @@ __all__ = [
     "HullDamage",
     "SupercruiseEntry",
     "SupercruiseExit",
+    "NavRouteClear",
     "parse_event",
     "JournalTail",
 ]

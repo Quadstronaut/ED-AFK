@@ -14,6 +14,7 @@ from ed_autojump.journal import (
     FuelScoop,
     JournalTail,
     Loadout,
+    NavRouteClear,
     StartJump,
     parse_event,
 )
@@ -101,6 +102,16 @@ def test_parse_fss_discovery_scan(sample_journal: Path):
     assert isinstance(ev, FSSDiscoveryScan)
     assert ev.progress == pytest.approx(1.0)
     assert ev.body_count == 12
+
+
+def test_parse_navroute_clear_is_typed():
+    """NavRouteClear must parse to its typed model so the dispatcher's route-
+    complete latch can dispatch on it (it ALSO fires on a manual re-plot, hence
+    the correlation gate downstream)."""
+    raw = '{"timestamp":"2026-06-07T12:00:00Z","event":"NavRouteClear"}'
+    ev = parse_event(raw)
+    assert isinstance(ev, NavRouteClear)
+    assert ev.event == "NavRouteClear"
 
 
 def test_parse_event_unknown_falls_back_to_envelope():

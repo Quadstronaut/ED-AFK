@@ -1,0 +1,40 @@
+# ROUTE COMPLETE terminal (council-ratified 2026-06-07). Runs ONCE when the
+# bot arrives at the LAST waypoint of the plotted route — instead of arrival,
+# which would find no next hop, watchdog 60s, retry 3x, and mis-report a clean
+# success as "[ABORTED] manual intervention needed" (~5m40s of false alarm).
+#
+# This is the FRONT HALF of arrival.toml — its steps 1-5 only: cut throttle,
+# best-effort scoop, lock the star, SC-assist orbit, settle. NO target_next_route
+# (there IS no next hop), NO orient/engage_jump (we are not jumping again), NO
+# hold_alignment. It reaches the proven SC-assist-orbit end state and STOPS;
+# the live loop then idles (dispatch_route_complete returns, no further FSDJump).
+#
+# step kinds (tag at start of each step comment):
+#   tap     atomic keypress, no precondition, no wait
+#   gated   keypress with Status.json precondition (fails closed on bad flag)
+#   wait    passive block on journal event or clock — no input sent
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+parallel_tracks = ["honk"]   # honk fires on this arrival like any other
+
+[on_required_fail]
+# Same anchor as arrival: a required fail re-establishes the LOCK and the POSE
+# (re-orbiting alone can't fix a wrong lock or an off-star nose). Bounded so a
+# terminal park never grinds forever.
+retry_from = "nav_panel_target"
+max_retries = 3
+backoff_s = 2.0
+
+steps = [
+  { action = "set_throttle", pct = 0 },             # tap    | 1 in case hyperspace auto-dethrottle is off
+  # Scoop pit stop — BEST-EFFORT, identical params to arrival step 2. Skip/fail
+  # never blocks the orbit below. (Topping the tank at the parked star is just
+  # as welcome at route end as mid-route.)
+  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.70, full_epsilon = 0.2 },  # gated  | 2 pit stop
+  # Identity-verified star lock (required) — a wrong lock must never reach the
+  # orbit; a required fail retries from here (lock + pose are one unit).
+  { action = "nav_panel_target", required = true },  # macro  | 3 EXCLUSIVE — verified star lock
+  # Guarded SC-assist orbit (best-effort, fails closed on a bad scene). This is
+  # the parked end state.
+  { action = "sc_assist_orbit" },                    # macro  | 4 EXCLUSIVE — guarded SC-assist orbit
+  { action = "wait", s = 13.0 },                    # wait   | 5 let orbit acquire, then STOP — route complete
+]

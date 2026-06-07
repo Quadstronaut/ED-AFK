@@ -26,6 +26,14 @@ from .model import Procedure
 # own retry path expects.
 _PREEMPT_ON_SMACK = frozenset({"arrival", "startup"})
 
+# Route-complete correlation join window. NavRouteClear fires in witchspace
+# ~10s before the destination FSDJump; this is the max gap (in JOURNAL
+# timestamps, not wall clock) we accept between that clear and the arriving
+# FSDJump before treating the clear as belonging to a different event (e.g. a
+# manual re-plot minutes earlier). This is a CORRELATION window between two
+# journal events — NOT a wall-clock success/failure gate (house rule).
+_CLEAR_JOIN_WINDOW_S = 60.0
+
 
 class _TailHub:
     """Single consumer of JournalTail; fans every event out to ALL subscribers.
@@ -174,6 +182,19 @@ class FlowRunner:
         # restart as a fresh arrival — the 11:57Z incident). scoop_refuel's
         # stale-arrival skip derives its age from this.
         self._last_fsdjump_utc: Optional[datetime] = None
+        # Route-complete detection (council-ratified 2026-06-07). The final hop
+        # emits FSDTarget RemainingJumpsInRoute:1 -> StartJump Hyperspace ->
+        # NavRouteClear (in witchspace, ~10s pre-arrival) -> FSDJump to the
+        # destination. NavRouteClear ALSO fires on a manual re-plot, so it is
+        # NOT the trigger by itself: we cache the LAST waypoint while the route
+        # still exists, latch the clear + its timestamp, and at the next FSDJump
+        # confirm completion by matching SystemAddress (int, never name) AND a
+        # tight journal-timestamp correlation window. _route_done guards against
+        # a re-fire; a fresh NavRoute (re-plot) re-arms everything.
+        self._final_waypoint: Optional[tuple[int, str]] = None
+        self._navroute_cleared: bool = False
+        self._navroute_cleared_utc: Optional[datetime] = None
+        self._route_done: bool = False
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
@@ -388,10 +409,100 @@ class FlowRunner:
                                        + (f": {system}" if system else ""))
                 except Exception:  # noqa: BLE001
                     pass
+            # Route-complete check (council-ratified): is this the LAST hop?
+            # Consume the NavRouteClear latch and run the terminal park instead
+            # of arrival — arrival's target_next_route would find no next hop
+            # and mis-report a clean success as a manual-intervention abort.
+            if self._is_route_complete(ev):
+                self._navroute_cleared = False   # consume the latch
+                self._route_done = True
+                self.dispatch_route_complete(ev)
+                return
             self._run("arrival")
         elif name == "SupercruiseExit" and getattr(ev, "body_type", None) == "Star":
             self._event_times["drop"] = self.clock()
             self._run("smack_recovery")
+
+    # ---- route completion -------------------------------------------------
+    def _is_route_complete(self, ev: Any) -> bool:
+        """True iff this FSDJump is the arrival at the route's FINAL waypoint.
+
+        All four conditions must hold:
+        - a NavRouteClear was latched (the clear that precedes the final hop),
+        - it falls within _CLEAR_JOIN_WINDOW_S of THIS jump (journal-timestamp
+          correlation — a manual re-plot minutes ago won't match),
+        - we cached a final waypoint while the route still existed, and
+        - this jump's SystemAddress == that waypoint's (int match, never name).
+
+        Fails closed (False) on any missing piece, so an unrecognised scene
+        falls through to the normal arrival flow."""
+        if not self._navroute_cleared or self._final_waypoint is None:
+            return False
+        jump_ts = self._parse_journal_ts(getattr(ev, "timestamp", "") or "")
+        if jump_ts is None or self._navroute_cleared_utc is None:
+            return False
+        gap = (jump_ts - self._navroute_cleared_utc).total_seconds()
+        if not (0.0 <= gap <= _CLEAR_JOIN_WINDOW_S):
+            return False
+        addr = getattr(ev, "system_address", None)
+        return addr is not None and addr == self._final_waypoint[0]
+
+    def dispatch_route_complete(self, ev: Any) -> None:
+        """Terminal ROUTE COMPLETE handler: park in orbit at the destination
+        and idle. SUCCESS, not an abort — positive wording, no auto-restart,
+        no retry. The live loop simply sees no further FSDJump after this.
+
+        Station docking is NOT built yet (gated on operator tests): a
+        station-locked destination records the gated marker and falls back to
+        the safe primary-star park, wired so `dock` can swap in later."""
+        from .steps import _destination_is_local_star
+
+        system = (getattr(ev, "star_system", None)
+                  or (self._final_waypoint[1] if self._final_waypoint else None)
+                  or "destination")
+        status = self._fresh_status()
+        dest = getattr(status, "destination", None) if status is not None else None
+        # Station iff a body is locked (Body != 0) in THIS arrival system AND
+        # that lock is NOT the local primary star. Anything else — system, star,
+        # nothing locked, unknown — takes the system park path.
+        local_star = _destination_is_local_star(status, self._current_system)
+        is_station = (
+            dest is not None
+            and getattr(dest, "body", 0) != 0
+            and getattr(dest, "system", None) == getattr(ev, "system_address", None)
+            and local_star is False
+        )
+
+        if is_station:
+            station_name = (getattr(dest, "name", "") or "").strip() or "station"
+            # Docking gated — record, tell the operator, park as the safe
+            # fallback. (Swap `route_complete_park` for `dock` here when the
+            # gated half lands.)
+            if self.record is not None:
+                self.record("RouteCompleteStationGated", {"station": station_name})
+            if self.overlay is not None:
+                try:
+                    self.overlay.status(
+                        f"Route complete. Station {station_name} targeted — "
+                        f"docking not yet enabled; parked.")
+                except Exception:  # noqa: BLE001
+                    pass
+            self._run("route_complete_park")
+            return
+
+        # SYSTEM / star / unknown: park in orbit and hold.
+        if self.overlay is not None:
+            try:
+                # EVENT slot = the transient announcement; STATUS slot = the
+                # persistent positive idle line (distinct from the [ABORTED]
+                # alarm that also lives in the STATUS slot).
+                self.overlay.event(f"[ROUTE COMPLETE] {system} — parking in orbit")
+                self.overlay.status(f"Route complete. Holding at {system}.")
+            except Exception:  # noqa: BLE001
+                pass
+        if self.record is not None:
+            self.record("RouteComplete", {"system": system, "type": "system"})
+        self._run("route_complete_park")
 
     # ---- live loop --------------------------------------------------------
     def _wait_for_event(self, handle: Optional[int], event_name: str,
@@ -480,6 +591,30 @@ class FlowRunner:
                 ts = getattr(ev, "timestamp", None)
                 if ts:
                     self._last_fsdjump_utc = self._parse_journal_ts(ts)
+        elif name == "NavRoute":
+            # A (re-)plotted route. Cache the LAST waypoint as the final
+            # destination WHILE the route still exists (it's gone after the
+            # NavRouteClear that precedes the final FSDJump). Re-arm: a fresh
+            # plot clears any prior route-done latch so a NEW route can complete.
+            nr = self._navroute_state()
+            route = getattr(nr, "route", None) if nr is not None else None
+            if route:
+                last = route[-1]
+                addr = getattr(last, "system_address", None)
+                sysname = getattr(last, "star_system", None)
+                if addr is not None:
+                    self._final_waypoint = (addr, sysname or "")
+            self._navroute_cleared = False
+            self._navroute_cleared_utc = None
+            self._route_done = False
+        elif name == "NavRouteClear":
+            # Route cleared. Latch it + its journal timestamp. This fires on the
+            # final hop (in witchspace) AND on a manual re-plot — the FSDJump
+            # branch in dispatch() correlates by SystemAddress + the join window
+            # to tell the two apart, so we never act on the clear alone.
+            self._navroute_cleared = True
+            ts = getattr(ev, "timestamp", None)
+            self._navroute_cleared_utc = self._parse_journal_ts(ts) if ts else None
         elif name == "Loadout":
             cap = getattr(getattr(ev, "fuel_capacity", None), "main", None)
             if cap:
@@ -560,6 +695,31 @@ class FlowRunner:
         if self.record is not None:
             self.record("HeatEject", {"t": self._last_eject_t})
 
+    def _is_parked_terminal(self, st: Any) -> bool:
+        """Is the ship sitting at a COMPLETED route's destination, parked?
+
+        The terminal end state dispatch_route_complete leaves behind: in
+        supercruise, the NavRoute empty (no next hop), and the locked
+        Destination is the local primary star — or nothing is locked at all.
+        Used by _maybe_startup to idle a restart into this scene instead of
+        re-running arrival. Fails closed (False) when the route still has
+        waypoints, so an interrupted mid-route restart still routes to arrival.
+
+        in_supercruise is the caller's precondition; this checks the rest."""
+        from .steps import _destination_is_local_star
+
+        # Require an AFFIRMATIVELY empty route. None (no reader / unknown) is
+        # NOT empty — fail closed to arrival, since a mid-route arrival-star
+        # restart looks identical to a parked one except for the live route.
+        nr = self._navroute_state()
+        if nr is None or getattr(nr, "route", None):
+            return False
+        dest = getattr(st, "destination", None)
+        if dest is None:
+            return True                        # nothing locked = parked/idle
+        # Local primary/secondary star lock == the parked orbit target.
+        return _destination_is_local_star(st, self._current_system) is True
+
     def _maybe_startup(self) -> None:
         if self._startup_done:
             return
@@ -570,6 +730,17 @@ class FlowRunner:
         if getattr(st, "docked", False):
             return  # docked on load -> nothing to escape
         if getattr(st, "in_supercruise", False):
+            # Restart into a COMPLETED scene (route-complete terminal-idle
+            # guard, council-ratified): a bot launched while parked at the
+            # destination must IDLE, not re-run arrival (which would try to
+            # target a next hop that no longer exists and false-abort). The
+            # parked end state is: in supercruise, NO plotted route, and the
+            # locked Destination is the local primary star (or nothing locked).
+            if self._is_parked_terminal(st):
+                if self.record is not None:
+                    self.record("RouteCompleteIdleOnRestart",
+                                {"system": self._current_system})
+                return
             # Restart mid-route (2026-06-06 13:26 star smack): a bot launched
             # while the ship is ALREADY in supercruise is sitting at its last
             # arrival star, nose-on — the ARRIVAL scene, not the fresh-load
