@@ -15,6 +15,15 @@ from .context import StepContext
 from .interpreter import run_procedure
 from .model import Procedure
 
+# Procedures whose whole premise is a live supercruise/fresh-load scene: a
+# star smack (SupercruiseExit Body=Star) yanks that scene away mid-run, so
+# they are PREEMPTED at the next abort poll instead of grinding retry cycles
+# against normal-space glare (the 2026-06-06 13:26 pattern: arrival kept
+# macro-pressing for 3 retries before the queued smack could dispatch).
+# smack_recovery is deliberately absent: a RE-smack is exactly the scene its
+# own retry path expects.
+_PREEMPT_ON_SMACK = frozenset({"arrival", "startup"})
+
 
 class _TailHub:
     """Single consumer of JournalTail; fans every event out to ALL subscribers.
@@ -122,6 +131,13 @@ class FlowRunner:
         self._last_eject_t: float = 0.0
         self._jumps = 0
         self.stop_requested = False
+        # Mid-procedure preemption (2026-06-06): _on_tail_event fires DURING
+        # procedures (in-step waiters pump the hub), so a scene-invalidating
+        # event can flag the CURRENT run to abort at its next poll. Strings,
+        # not Events: set/read across the main + track threads, worst case a
+        # beat late, never torn.
+        self._running_proc: Optional[str] = None
+        self._preempt: Optional[str] = None
         # Single tail consumer + fan-out (see _TailHub). None without a tail.
         self._hub: Optional[_TailHub] = (
             _TailHub(tail, on_event=self._on_tail_event) if tail is not None else None)
@@ -159,13 +175,22 @@ class FlowRunner:
         return self._latest_status
 
     def _should_abort(self) -> bool:
-        """Operator abort signal for in-step loops: panic hotkey or stop
-        request. With wall-clock gates banned, this is the only non-game exit
-        from an event-driven wait."""
+        """Operator abort signal: panic hotkey or stop request. OPERATOR-ONLY
+        by design — the preempt flag must not flow through here (the heat
+        watchdog exits PERMANENTLY on this signal; a transient preemption
+        would kill heat protection for the rest of the session). Per-run
+        contexts get the combined signal via _run_abort instead."""
         if self.stop_requested:
             return True
         return self.panic_switch is not None and getattr(
             self.panic_switch, "tripped", False)
+
+    def _run_abort(self) -> bool:
+        """Abort signal for the CURRENT procedure's contexts: operator abort
+        OR scene preemption. run_procedure polls this before every step and
+        every in-step loop consults it, so a preempt lands at the next poll
+        — cooperative, key-release-safe, no thread killing."""
+        return self._should_abort() or self._preempt is not None
 
     # ---- exclusive-input guard (heat watchdog pauses) ----------------------
     @contextmanager
@@ -213,7 +238,7 @@ class FlowRunner:
             status_supplier=self._fresh_status,
             event_time=self.event_time,
             event_waiter=waiter,
-            should_abort=self._should_abort,
+            should_abort=self._run_abort,
             exclusive_guard=self._exclusive_input,
             fsd_target_supplier=self._fsd_target_state,
             navroute_supplier=self._navroute_state,
@@ -228,6 +253,11 @@ class FlowRunner:
         proc = self.procedures.get(name)
         if proc is None:
             return
+        # Fresh run owns a fresh preempt slate; the previous run's flag must
+        # not abort this one (smack_recovery dispatches right after the
+        # arrival it preempted).
+        self._preempt = None
+        self._running_proc = name
         ctxs: list[StepContext] = []
         ctx = self._make_context()
         ctxs.append(ctx)
@@ -248,6 +278,10 @@ class FlowRunner:
             for th in threads:
                 th.join(timeout=15.0)
         finally:
+            self._running_proc = None
+            if self._preempt is not None and self.record is not None:
+                self.record("Preempted", {"procedure": name,
+                                          "reason": self._preempt})
             # Drop every subscription, even for a track that outlived its
             # join window — a leaked queue grows for the rest of the session.
             # A late track polling an unsubscribed handle just gets [] and
@@ -302,6 +336,18 @@ class FlowRunner:
         name = getattr(ev, "event", None)
         if name == "SupercruiseExit" and getattr(ev, "body_type", None) == "Star":
             self._event_times["drop"] = self.clock()
+            # Mid-procedure preemption: a star smack invalidates the scene
+            # arrival/startup are flying — flag the CURRENT run to abort at
+            # its next poll. The smack event itself is already queued for
+            # run_live, which dispatches smack_recovery right after the
+            # preempted procedure returns. (Backlog replay can't trip this:
+            # no procedure runs before catch-up, so _running_proc is None.)
+            if self._running_proc in _PREEMPT_ON_SMACK:
+                self._preempt = "star_smack"
+                if self.record is not None:
+                    self.record("PreemptRequested",
+                                {"procedure": self._running_proc,
+                                 "reason": "star_smack"})
         # Flight-scene tracker (2026-06-06 13:41): smacked = the journal's
         # LAST supercruise transition is a star drop. Fed by backlog AND live
         # events (the tail replays from the top on attach), so a bot

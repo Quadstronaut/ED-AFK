@@ -385,6 +385,87 @@ def test_waiter_no_longer_swallows_dispatchable_events():
     assert [e.event for e in hub.poll(main)] == ["FSDJump"]
 
 
+# ---------------------------------------------------------------------------
+# Mid-procedure dispatch preemption (2026-06-06 watch-list item)
+# ---------------------------------------------------------------------------
+
+_STATUS_FLYING = SimpleNamespace(
+    docked=False, in_supercruise=True, fsd_charging=False,
+    fsd_cooldown=False, fsd_mass_locked=False, overheating=False)
+
+
+def _preempt_harness(proc_name, *, second_step):
+    """A two-step procedure for `proc_name`; the runner's sleeper injects a
+    star smack DURING step 0's wait (exactly how a live smack lands: the hub's
+    on_event fires from a waiter pump while the procedure is mid-step)."""
+    sender = FakeSender()
+    records = []
+    box = {}
+
+    def sleeper(s):
+        r = box.get("r")
+        if r is not None and not box.get("smacked"):
+            box["smacked"] = True
+            r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
+
+    procs = {proc_name: Procedure(name=proc_name, steps=(
+        Step("wait", {"s": 0.1}),
+        second_step,
+    ))}
+    r = FlowRunner(
+        procedures=procs, sender=sender, clock=lambda: 0.0, sleeper=sleeper,
+        status_supplier=lambda: _STATUS_FLYING,
+        record=lambda name, payload: records.append((name, payload)),
+    )
+    box["r"] = r
+    return r, sender, records
+
+
+def test_smack_mid_arrival_preempts_remaining_steps():
+    """THE 13:26 scenario: ship smacks a star while arrival is mid-step.
+    The old behavior kept pressing keys against a normal-space scene through
+    retry cycles; the smack must abort the procedure at the next step
+    boundary instead -- the queued SupercruiseExit dispatches smack_recovery
+    right after (run_live wiring, already proven)."""
+    r, sender, records = _preempt_harness(
+        "arrival", second_step=Step("target_next_route"))
+    r._run("arrival")
+    assert "TargetNextRouteSystem" not in sender.actions(), \
+        "arrival kept running after the scene was smacked away"
+    assert any(n == "Preempted" for n, _ in records)
+
+
+def test_smack_mid_startup_preempts_remaining_steps():
+    r, sender, _ = _preempt_harness("startup", second_step=Step("target_ahead"))
+    r._run("startup")
+    assert "SelectTarget" not in sender.actions()
+
+
+def test_smack_mid_smack_recovery_does_not_preempt():
+    """A RE-smack during smack_recovery is exactly the scene its own retry
+    path owns -- it must keep running, never self-preempt."""
+    r, sender, _ = _preempt_harness(
+        "smack_recovery", second_step=Step("set_throttle", {"pct": 50}))
+    r._run("smack_recovery")
+    assert "SetSpeed50" in sender.actions(), \
+        "smack_recovery preempted itself on a re-smack"
+
+
+def test_preempt_does_not_poison_operator_abort_or_next_run():
+    """The preempt flag is per-run state: it must NOT read as an operator
+    abort (the heat watchdog exits permanently on _should_abort) and must
+    clear when the next procedure starts."""
+    r, sender, _ = _preempt_harness(
+        "arrival", second_step=Step("target_next_route"))
+    r._run("arrival")
+    assert r._should_abort() is False, "preempt leaked into operator abort"
+    # The queued smack would now dispatch smack_recovery -- it must run clean.
+    r.procedures["smack_recovery"] = Procedure(
+        name="smack_recovery", steps=(Step("set_throttle", {"pct": 50}),))
+    r._run("smack_recovery")
+    assert "SetSpeed50" in sender.actions(), "stale preempt aborted the next run"
+
+
 def test_parallel_track_runs_alongside_main():
     sender = FakeSender()
     procs = {
