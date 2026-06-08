@@ -1,0 +1,46 @@
+# PIT-STOP resume (station-dock feature). Runs ONLY when a NEW route is
+# plotted while the ship is DOCKED at a station (a NavRoute event with a
+# non-empty route arriving after Docked). That signals the station was a pit
+# stop, not the terminus: launch and resume the normal route flow.
+#
+# Absent a new-route trigger the bot stays docked (terminus) — this procedure
+# simply never runs.
+#
+# After auto-launch the ship is mass-locked by the station; ED forbids FSD
+# spool within ~10km. The docking computer flies the ship out; we wait on the
+# FsdMassLocked flag CLEARING (Status bit 16 — the same gate step_engage_jump
+# checks) before the normal target-next -> orient -> jump. NEVER gated on a
+# timer — launch-queue and fly-out are queue-variable.
+#
+# step kinds (tag at start of each step comment):
+#   tap     atomic keypress, no precondition, no wait
+#   gated   keypress with Status.json precondition (fails closed on bad flag)
+#   wait    passive block on journal event or Status flag — no input sent
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+parallel_tracks = ["honk"]   # the resumed system honks like any other
+
+[on_required_fail]
+# A required fail re-runs the target-next -> orient ladder (the same anchor
+# arrival uses for the jump leg). The launch itself is not in the retry lane:
+# once undocked + mass-lock-clear, a fail is a jump-leg fail, not a relaunch.
+retry_from = "target_next_route"
+max_retries = 3
+backoff_s = 2.0
+
+steps = [
+  # AUTO LAUNCH off the pad (S,S,Space). Gate on Undocked / status.docked
+  # going False. Required: the rest of the flow assumes the ship is in space.
+  { action = "auto_launch", required = true },                # macro  | 1 EXCLUSIVE — auto launch -> Undocked
+  # Wait out the station mass lock (FsdMassLocked flag clearing). The ADC
+  # flies the ship clear; this is flag-gated, no timer.
+  { action = "wait_masslock_clear", required = true },        # wait   | 2 station mass lock — flag-gated
+  # Normal route flow: lock the next system, clear, orient, jump.
+  { action = "target_next_route", required = true },          # gated  | 3 lock the NEXT SYSTEM in route
+  { action = "set_throttle", pct = 100 },                     # tap    | 4 burn
+  { action = "wait", s = 13.0 },                              # wait   | 5 clear the station — TRAJECTORY PACING, not a gate
+  { action = "orient_compass", required = true },             # vision | 6a coarse align to the hop
+  { action = "orient_widget_ring", required = true },         # vision | 6b fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },                # gated  | 7 FSD jump
+  { action = "hold_alignment", required = true },             # vision | 8 hold cone until StartJump — event/state-gated, no clock
+]

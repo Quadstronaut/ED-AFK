@@ -1,0 +1,58 @@
+# STATION DOCK terminus (station-dock feature). Runs from
+# dispatch_route_complete when the route's final waypoint is a STATION
+# (Status.Destination is a locked, named, non-star body in the arrival
+# system). The station is already the locked Destination; this flow approaches
+# it, requests docking inside the 7.5km no-fire zone, lets the Advanced
+# Docking Computer fly to the pad, then runs the auto-opened Starport Services
+# (refuel / repair / rearm). On a clean dock the bot STAYS DOCKED and idles —
+# the terminus end state. (A NEW route plotted while docked later triggers the
+# pit-stop resume, dock_resume.toml, from the live loop.)
+#
+# Autodock is ASSUMED ENABLED (operator: Advanced Docking Computer +
+# Supercruise Assist fitted; no no-autodock failsafe).
+#
+# Every event gate carries a Status/state fallback (house rule). No step uses
+# a wall-clock as a success/failure gate — the per-step max_*_s values are
+# FAIL backstops only (SC-assist transit and ADC pad approach are
+# queue-variable / minutes-long).
+#
+# step kinds (tag at start of each step comment):
+#   tap     atomic keypress, no precondition, no wait
+#   gated   keypress with Status.json precondition (fails closed on bad flag)
+#   wait    passive block on journal event or Status flag — no input sent
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+parallel_tracks = ["honk"]   # honk fires on the arrival jump like any other
+
+[on_required_fail]
+# A required fail re-establishes the APPROACH + REQUEST as one unit: a denied
+# request (Distance — we were outside 7.5km) or a missed drop must re-target
+# the station and re-fly the SC-assist approach, not just re-press request.
+# Bounded so a station that keeps denying never grinds forever; a non-Distance
+# denial fails the step which, on retry exhaustion, aborts to human.
+retry_from = "dock_target_station"
+max_retries = 3
+backoff_s = 2.0
+
+steps = [
+  # Target the station (operator T, then the Contacts nav-panel fallback if T
+  # didn't lock it) — verified against Status.Destination. Required: a wrong
+  # or missing lock must never reach the SC-assist approach.
+  { action = "dock_target_station", required = true },        # macro  | 1 EXCLUSIVE — verified station target
+  # SC-assist flies + decelerates and DROPS the ship at the station. Gate on
+  # SupercruiseExit (BodyType=Station) / in_supercruise->False.
+  { action = "dock_sc_assist", required = true },             # macro  | 2 EXCLUSIVE — approach + drop
+  # Request docking once inside the 7.5km no-fire zone (gated on the
+  # NoFireZone-entered ReceiveText / state). DockingGranted -> proceed;
+  # DockingDenied Distance -> required-fail -> retry the approach; any other
+  # denial -> required-fail -> abort-to-human on exhaustion.
+  { action = "dock_request", required = true },               # macro  | 3 EXCLUSIVE — request + grant gate
+  # Wait for the Advanced Docking Computer to land on the pad. Gate on the
+  # Docked event / status.docked.
+  { action = "dock_await_docked", required = true },          # wait   | 4 ADC -> pad -> Docked
+  # Starport Services auto-opens on Docked; the icon row is grayed ~2s
+  # (press-timing settle, NOT a gate). Refuel / repair / rearm, each verified
+  # by its own Cost event. BEST-EFFORT: a no-op service (full tank / pristine
+  # hull) is not a failure, so this is NOT required — a clean dock is the
+  # deliverable with or without a paid service.
+  { action = "station_services" },                            # macro  | 5 EXCLUSIVE — refuel/repair/rearm
+]

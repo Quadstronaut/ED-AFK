@@ -24,7 +24,11 @@ from .model import Procedure
 # macro-pressing for 3 retries before the queued smack could dispatch).
 # smack_recovery is deliberately absent: a RE-smack is exactly the scene its
 # own retry path expects.
-_PREEMPT_ON_SMACK = frozenset({"arrival", "startup"})
+# dock joins arrival/startup: its approach leg flies a live supercruise scene
+# toward the station, so a star smack (SupercruiseExit Body=Star) mid-approach
+# yanks that scene away and must hand off to smack_recovery instead of grinding
+# the dock retry loop against normal-space glare.
+_PREEMPT_ON_SMACK = frozenset({"arrival", "startup", "dock"})
 
 # Route-complete correlation join window. NavRouteClear fires in witchspace
 # ~10s before the destination FSDJump; this is the max gap (in JOURNAL
@@ -202,6 +206,15 @@ class FlowRunner:
         self._final_waypoint: Optional[tuple[int, str]] = None
         self._navroute_cleared: bool = False
         self._navroute_cleared_utc: Optional[datetime] = None
+        # Station docking (station-dock feature). Reason of the last
+        # DockingDenied (step_dock_request reads it via docking_denied_supplier
+        # to tell a retryable Distance denial from an abort-to-human one);
+        # whether the ship is currently docked at a station (the pit-stop
+        # resume trigger arms only while docked); and the station name for the
+        # terminus overlay/record.
+        self._docking_denied_reason: Optional[str] = None
+        self._docked: bool = False
+        self._docked_station: Optional[str] = None
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
@@ -319,6 +332,7 @@ class FlowRunner:
             # evaluated at call time (now_utc() advances) — a build-time
             # snapshot would freeze the age at context construction.
             jump_age_supplier=self._jump_age,
+            docking_denied_supplier=lambda: self._docking_denied_reason,
             record=self.record,
             frame_sink=self.frame_sink,
         )
@@ -431,6 +445,22 @@ class FlowRunner:
         elif name == "SupercruiseExit" and getattr(ev, "body_type", None) == "Star":
             self._event_times["drop"] = self.clock()
             self._run("smack_recovery")
+        elif name == "NavRoute" and self._docked:
+            # PIT-STOP resume (station-dock feature): a NEW route plotted WHILE
+            # docked means the station was a pit stop, not the terminus — the
+            # bot must launch and resume. Gate on a non-empty route (an empty
+            # NavRoute is a clear, not a new plot). The _apply_state NavRoute
+            # branch has already cached the new final waypoint; here we run the
+            # resume procedure (auto-launch -> wait FsdMassLocked clear ->
+            # target-next -> orient -> jump). Absent a new route, the bot stays
+            # docked (terminus) — this branch simply never fires.
+            nr = self._navroute_state()
+            route = getattr(nr, "route", None) if nr is not None else None
+            if route:
+                if self.record is not None:
+                    self.record("DockPitStopResume",
+                                {"station": self._docked_station})
+                self._run("dock_resume")
 
     # ---- route completion -------------------------------------------------
     def _resolve_final_waypoint(self) -> Optional[tuple[int, str]]:
@@ -489,13 +519,14 @@ class FlowRunner:
         return addr is not None and addr == final[0]
 
     def dispatch_route_complete(self, ev: Any) -> None:
-        """Terminal ROUTE COMPLETE handler: park in orbit at the destination
-        and idle. SUCCESS, not an abort — positive wording, no auto-restart,
-        no retry. The live loop simply sees no further FSDJump after this.
+        """Terminal ROUTE COMPLETE handler. SUCCESS, not an abort — positive
+        wording, no auto-restart, no retry. The live loop simply sees no
+        further FSDJump after this.
 
-        Station docking is NOT built yet (gated on operator tests): a
-        station-locked destination records the gated marker and falls back to
-        the safe primary-star park, wired so `dock` can swap in later."""
+        STATION destination -> run the full dock flow (approach, request, dock,
+        service) and STAY DOCKED, idle. SYSTEM/star destination -> park in
+        orbit and hold. (A NEW route plotted while docked later triggers the
+        pit-stop resume from dispatch(); absent that, the bot stays docked.)"""
         from .steps import _destination_is_local_star
 
         system = (getattr(ev, "star_system", None)
@@ -516,19 +547,33 @@ class FlowRunner:
 
         if is_station:
             station_name = (getattr(dest, "name", "") or "").strip() or "station"
-            # Docking gated — record, tell the operator, park as the safe
-            # fallback. (Swap `route_complete_park` for `dock` here when the
-            # gated half lands.)
-            if self.record is not None:
-                self.record("RouteCompleteStationGated", {"station": station_name})
+            # Run the real dock flow (procedures/dock.toml): approach under SC
+            # assist, request inside the no-fire zone, let the ADC land, service.
             if self.overlay is not None:
                 try:
-                    self.overlay.status(
-                        f"Route complete. Station {station_name} targeted — "
-                        f"docking not yet enabled; parked.")
+                    self.overlay.event(
+                        f"[ROUTE COMPLETE] {station_name} — docking")
                 except Exception:  # noqa: BLE001
                     pass
-            self._run("route_complete_park")
+            if self.record is not None:
+                self.record("RouteCompleteStation", {"station": station_name})
+            self._run("dock")
+            # TERMINUS: on a successful dock, stay docked and idle with a
+            # positive line. Confirm by the live docked flag (set from the
+            # Docked event in _apply_state) — fail-soft if the dock didn't
+            # complete (the procedure's own [ABORTED] line already stands).
+            if self._docked:
+                name = self._docked_station or station_name
+                if self.record is not None:
+                    self.record("RouteCompleteDocked", {"station": name})
+                if self.overlay is not None:
+                    try:
+                        self.overlay.event(
+                            f"[ROUTE COMPLETE] — docked at {name}")
+                        self.overlay.status(
+                            f"Route complete. Docked at {name}.")
+                    except Exception:  # noqa: BLE001
+                        pass
             return
 
         # SYSTEM / star / unknown: park in orbit and hold.
@@ -658,6 +703,20 @@ class FlowRunner:
             self._navroute_cleared = True
             ts = getattr(ev, "timestamp", None)
             self._navroute_cleared_utc = self._parse_journal_ts(ts) if ts else None
+        elif name == "DockingDenied":
+            # Stash the Reason so step_dock_request (which gates via a name-only
+            # event_waiter that can't read fields) can tell Distance (retry)
+            # from an abort-to-human denial.
+            self._docking_denied_reason = getattr(ev, "reason", None) or None
+        elif name == "DockingGranted":
+            # A fresh grant supersedes any stale denial reason.
+            self._docking_denied_reason = None
+        elif name == "Docked":
+            self._docked = True
+            self._docking_denied_reason = None
+            self._docked_station = (getattr(ev, "station_name", "") or "").strip() or None
+        elif name == "Undocked":
+            self._docked = False
         elif name == "Loadout":
             cap = getattr(getattr(ev, "fuel_capacity", None), "main", None)
             if cap:

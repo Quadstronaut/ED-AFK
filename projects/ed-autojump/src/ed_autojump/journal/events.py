@@ -161,6 +161,79 @@ class NavRouteClear(Event):
     event: Literal["NavRouteClear"]
 
 
+class SupercruiseDestinationDrop(Event):
+    """Written the instant Supercruise Assist drops the ship at its locked
+    destination — ~5s before the matching SupercruiseExit. For a station
+    destination, `type` is the station name. The pair (this + SupercruiseExit
+    BodyType=Station) is the dock flow's "arrived at the station" gate; there
+    is no distance field in Status, so these events are the only signal."""
+
+    event: Literal["SupercruiseDestinationDrop"]
+    type: str = Field(default="", alias="Type")
+    threat: Optional[int] = Field(default=None, alias="Threat")
+    market_id: Optional[int] = Field(default=None, alias="MarketID")
+
+
+class DockingRequested(Event):
+    """Echo of a docking request the player (or our macro) just sent. Carries
+    the pad inventory; we gate the actual dock on DockingGranted, not this."""
+
+    event: Literal["DockingRequested"]
+    station_name: str = Field(default="", alias="StationName")
+    station_type: Optional[str] = Field(default=None, alias="StationType")
+    market_id: Optional[int] = Field(default=None, alias="MarketID")
+
+
+class DockingGranted(Event):
+    """Docking permission granted; the assigned LandingPad follows. The
+    Advanced Docking Computer then flies the ship to that pad and emits
+    Docked. dock-await gates on Docked (with the Docked Status flag fallback),
+    not this — this just confirms the request macro landed."""
+
+    event: Literal["DockingGranted"]
+    landing_pad: Optional[int] = Field(default=None, alias="LandingPad")
+    station_name: str = Field(default="", alias="StationName")
+    station_type: Optional[str] = Field(default=None, alias="StationType")
+    market_id: Optional[int] = Field(default=None, alias="MarketID")
+
+
+class DockingDenied(Event):
+    """Docking request refused. `reason` drives recovery: "Distance" (we were
+    outside the 7.5km no-fire zone) re-approaches and retries; any other
+    reason (NoSpace/TooLarge/Hostile/Offences/ActiveFighter/NoReason) is a
+    fail-closed abort-to-human — the bot can't resolve those itself."""
+
+    event: Literal["DockingDenied"]
+    reason: str = Field(default="", alias="Reason")
+    station_name: str = Field(default="", alias="StationName")
+    station_type: Optional[str] = Field(default=None, alias="StationType")
+    market_id: Optional[int] = Field(default=None, alias="MarketID")
+
+
+class Docked(Event):
+    """Landed on a pad. The dock-complete gate (Docked Status flag, bit 0, is
+    the state fallback). On Docked the Starport Services panel auto-opens."""
+
+    event: Literal["Docked"]
+    station_name: str = Field(default="", alias="StationName")
+    station_type: Optional[str] = Field(default=None, alias="StationType")
+    star_system: Optional[str] = Field(default=None, alias="StarSystem")
+    system_address: Optional[int] = Field(default=None, alias="SystemAddress")
+    market_id: Optional[int] = Field(default=None, alias="MarketID")
+    station_faction: Optional[Any] = Field(default=None, alias="StationFaction")
+
+
+class Undocked(Event):
+    """Launched off the pad (auto-launch). Fires immediately on AUTO LAUNCH;
+    the docking computer then flies the ship clear of the station. The ship is
+    mass-locked by the station for ~10km after this — the FsdMassLocked flag
+    clearing is the 'clear to jump' gate, NOT this event."""
+
+    event: Literal["Undocked"]
+    station_name: str = Field(default="", alias="StationName")
+    market_id: Optional[int] = Field(default=None, alias="MarketID")
+
+
 class Music(Event):
     """Fires every time the game's music track changes.
 
@@ -211,6 +284,12 @@ AnyEvent = Union[
     HullDamage,
     SupercruiseEntry,
     SupercruiseExit,
+    SupercruiseDestinationDrop,
+    DockingRequested,
+    DockingGranted,
+    DockingDenied,
+    Docked,
+    Undocked,
     NavRouteClear,
     Music,
     LoadGame,
@@ -232,6 +311,12 @@ _EVENT_MODELS: dict[str, type[Event]] = {
     "HullDamage": HullDamage,
     "SupercruiseEntry": SupercruiseEntry,
     "SupercruiseExit": SupercruiseExit,
+    "SupercruiseDestinationDrop": SupercruiseDestinationDrop,
+    "DockingRequested": DockingRequested,
+    "DockingGranted": DockingGranted,
+    "DockingDenied": DockingDenied,
+    "Docked": Docked,
+    "Undocked": Undocked,
     "NavRouteClear": NavRouteClear,
     "Music": Music,
     "LoadGame": LoadGame,
