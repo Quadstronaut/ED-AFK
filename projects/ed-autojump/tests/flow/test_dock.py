@@ -230,6 +230,44 @@ def test_dock_request_denied_other_reason_aborts():
                for n, p in logs)
 
 
+def test_dock_request_clears_stale_distance_before_delayed_grant():
+    """B1/D1 regression: a STALE DockingDenied(Distance) reason — left by
+    step_dock_target_station's deliberate out-of-range probe — must NOT
+    false-fail an in-range request whose grant is latency-delayed.
+
+    Uses a real FlowRunner so docking_denied_supplier and clear_docking_denied
+    share the runner's `_docking_denied_reason` (the actual wiring). The reason
+    is PRE-SET to 'Distance' (the stale probe denial); the grant fires a couple
+    of polls later. step_dock_request must clear the stale reason on arm and
+    wait for the fresh grant -> True.
+
+    FAILS on pre-fix code: the grant loop reads the stale 'Distance' on its
+    first iteration (before the grant fires) and returns False.
+    """
+    sender = FakeSender()
+    r = _dock_runner(sender, status=_station_status(docked=False))
+    # The stale denial from the out-of-range Contacts-fallback probe.
+    r._docking_denied_reason = "Distance"
+
+    # Grant arrives only on the 3rd poll for DockingGranted (latency).
+    grant_polls = {"n": 0}
+
+    def waiter(name, _t):
+        if name == "ReceiveText":
+            return True                      # in range immediately
+        if name == "DockingGranted":
+            grant_polls["n"] += 1
+            return grant_polls["n"] >= 3     # delayed grant
+        return False
+
+    ctx = r._make_context()
+    # Swap in the scripted waiter (the runner's default waiter needs a hub).
+    ctx.event_waiter = waiter
+    assert STEP_REGISTRY["dock_request"](ctx) is True
+    # The stale reason was cleared on arm (not poisoning the grant loop).
+    assert r._docking_denied_reason is None
+
+
 def test_dock_request_no_event_wiring_runs_macro():
     sender = FakeSender()
     ctx = StepContext(sender=sender, sleeper=lambda s: None,

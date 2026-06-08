@@ -294,6 +294,12 @@ class FlowRunner:
             return self._exclusive_count > 0
 
     # ---- context construction --------------------------------------------
+    def _clear_docking_denied(self) -> None:
+        """Reset the stashed DockingDenied reason. step_dock_request calls this
+        when it arms so it acts only on a denial earned by its own request,
+        never a stale one left by an earlier out-of-range probe."""
+        self._docking_denied_reason = None
+
     def _make_context(self) -> StepContext:
         # Each context gets its OWN hub subscription so concurrent waiters
         # (honk track + main procedure) all see every event. _run owns the
@@ -333,6 +339,7 @@ class FlowRunner:
             # snapshot would freeze the age at context construction.
             jump_age_supplier=self._jump_age,
             docking_denied_supplier=lambda: self._docking_denied_reason,
+            clear_docking_denied=self._clear_docking_denied,
             record=self.record,
             frame_sink=self.frame_sink,
         )

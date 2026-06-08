@@ -1400,8 +1400,10 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.4,
       - DockingGranted -> True (the ADC takes over to the pad).
       - DockingDenied Reason=Distance -> False (re-approach/retry; the
         procedure's on_required_fail loops back to the SC-assist step).
-      - DockingDenied any other reason -> False, abort-to-human (the bot
-        can't resolve NoSpace/TooLarge/Hostile/Offences itself).
+      - DockingDenied any other reason -> False (the bot can't resolve
+        NoSpace/TooLarge/Hostile/Offences itself). There is no per-step
+        no-retry path in the interpreter, so this exhausts the procedure's
+        on_required_fail retries (3x) and then aborts to the human.
 
     `max_wait_s` is a FAIL backstop only. Without event wiring (unit tests)
     the request macro is the step. NoFireZone text is not a typed model — the
@@ -1434,12 +1436,22 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.4,
         ctx.log("DockRequestDone", {"reason": "no_range_signal"})
         return False
 
-    # 2. Send the request.
+    # 2. Send the request. Clear any stale denial reason FIRST so the grant
+    #    loop only ever acts on a denial earned by THIS request. The dispatcher
+    #    clears the stash on grant/dock but not when a new request begins, and
+    #    step_dock_target_station's Contacts fallback deliberately runs the
+    #    request macro out of range — earning a Distance denial that would
+    #    otherwise false-fail this in-range request before its (latency-delayed)
+    #    grant arrives (B1/D1). Mirrors the dispatcher's clear-on-grant pattern.
+    clear = getattr(ctx, "clear_docking_denied", None)
+    if clear is not None:
+        clear()
     if not _run_request_macro(ctx, settle_s):
         return False
 
     # 3. Gate on the outcome. DockingGranted -> success; DockingDenied
-    #    Distance -> retryable fail; other denial -> abort-to-human fail.
+    #    Distance -> retryable fail; other denial -> a failed step that the
+    #    procedure's on_required_fail loop retries (3x) before aborting.
     #    status.docked is the state fallback (the ADC may have already docked
     #    by the time we poll — event-gates-need-state-check).
     start = ctx.clock()

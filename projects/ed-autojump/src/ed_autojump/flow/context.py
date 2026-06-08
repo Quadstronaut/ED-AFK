@@ -90,6 +90,15 @@ class StepContext:
     # not wired / no denial.
     docking_denied_supplier: Callable[[], Optional[str]] = lambda: None
 
+    # Reset the runner's stashed DockingDenied reason to None. step_dock_request
+    # calls this when it ARMS so it only ever acts on a denial earned by ITS OWN
+    # request — the dispatcher clears on grant/dock but NOT when a new request
+    # begins, so a stale reason (e.g. the out-of-range Distance denial that
+    # step_dock_target_station's Contacts fallback deliberately earns) would
+    # otherwise poison the next in-range request's grant loop. No-op default
+    # (unit tests with no runner wiring).
+    clear_docking_denied: Callable[[], None] = lambda: None
+
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 
