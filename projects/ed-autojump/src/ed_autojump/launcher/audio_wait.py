@@ -29,23 +29,16 @@ ED_PROCESS_NAME = "EliteDangerous64.exe"
 DEFAULT_PEAK_THRESHOLD = 0.001
 
 
-def _default_pycaw_probe(process_name: str = ED_PROCESS_NAME) -> Optional[float]:
-    """Return the current peak (0.0–1.0) for the named process's audio
-    session, or None if the session doesn't exist yet.
+def _peak_from_sessions(sessions, process_name: str = ED_PROCESS_NAME) -> Optional[float]:
+    """Pure session→peak selection: scan audio sessions for the one owned by
+    `process_name` and return its meter peak (0.0–1.0), or None if absent.
 
-    Re-enumerates each call because the session may not exist on the
-    first poll (ED hasn't opened its audio device yet), and may be
-    re-created if ED restarts mid-poll.
+    Split out from enumeration so it's testable with plain fake sessions —
+    no pycaw, no real audio device. A session is any object exposing
+    `.Process` (with `.name()`) and `._ctl.QueryInterface(...)`.
     """
-    try:
-        from pycaw.api.endpointvolume import IAudioMeterInformation
-        from pycaw.pycaw import AudioUtilities
-    except ImportError:
-        return None
-    try:
-        sessions = AudioUtilities.GetAllSessions()
-    except Exception:
-        return None
+    from pycaw.api.endpointvolume import IAudioMeterInformation
+
     for s in sessions:
         proc = s.Process
         if proc is None:
@@ -61,6 +54,25 @@ def _default_pycaw_probe(process_name: str = ED_PROCESS_NAME) -> Optional[float]
         except Exception:
             continue
     return None
+
+
+def _default_pycaw_probe(process_name: str = ED_PROCESS_NAME) -> Optional[float]:
+    """Return the current peak (0.0–1.0) for the named process's audio
+    session, or None if the session doesn't exist yet.
+
+    Re-enumerates each call because the session may not exist on the
+    first poll (ED hasn't opened its audio device yet), and may be
+    re-created if ED restarts mid-poll.
+    """
+    try:
+        from pycaw.pycaw import AudioUtilities
+    except ImportError:
+        return None
+    try:
+        sessions = AudioUtilities.GetAllSessions()
+    except Exception:
+        return None
+    return _peak_from_sessions(sessions, process_name)
 
 
 def wait_for_ed_audio(

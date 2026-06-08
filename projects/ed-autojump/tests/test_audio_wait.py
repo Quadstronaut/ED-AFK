@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import builtins
+import sys
+import types
+
 import pytest
 
-from ed_autojump.launcher.audio_wait import wait_for_ed_audio
+from ed_autojump.launcher.audio_wait import (
+    wait_for_ed_audio,
+    _default_pycaw_probe,
+    _peak_from_sessions,
+    ED_PROCESS_NAME,
+)
 
 
 class _FakeClock:
@@ -15,6 +24,63 @@ class _FakeClock:
     def sleep(self, dt):
         self.t += dt
 
+
+# ---------------------------------------------------------------------------
+# Fake session objects — duck-typed, no pycaw dependency
+# ---------------------------------------------------------------------------
+
+class _FakeProc:
+    def __init__(self, name): self._name = name
+    def name(self): return self._name
+
+class _FakeMeter:
+    def __init__(self, peak): self._peak = peak
+    def GetPeakValue(self): return self._peak
+
+class _FakeCtl:
+    """Stands in for s._ctl; QueryInterface ignores the requested iface and
+    hands back our fake meter (the real call returns IAudioMeterInformation)."""
+    def __init__(self, meter): self._meter = meter
+    def QueryInterface(self, _iface): return self._meter
+
+class _FakeSession:
+    def __init__(self, proc_name, peak):
+        self.Process = _FakeProc(proc_name) if proc_name is not None else None
+        self._ctl = _FakeCtl(_FakeMeter(peak))
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def no_pycaw(monkeypatch):
+    """Make `import pycaw...` raise ImportError deterministically, regardless
+    of whether pycaw is actually installed on this machine."""
+    real_import = builtins.__import__
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("pycaw"):
+            raise ImportError("pycaw blocked for test")
+        return real_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+
+@pytest.fixture
+def stub_pycaw_meter_iface(monkeypatch):
+    """Provide a fake pycaw.api.endpointvolume.IAudioMeterInformation so the
+    lazy import in _peak_from_sessions resolves with no real pycaw installed."""
+    pkg = types.ModuleType("pycaw")
+    api = types.ModuleType("pycaw.api")
+    epv = types.ModuleType("pycaw.api.endpointvolume")
+    epv.IAudioMeterInformation = object()  # value never used by the fake ctl
+    monkeypatch.setitem(sys.modules, "pycaw", pkg)
+    monkeypatch.setitem(sys.modules, "pycaw.api", api)
+    monkeypatch.setitem(sys.modules, "pycaw.api.endpointvolume", epv)
+
+
+# ---------------------------------------------------------------------------
+# Existing hermetic tests (wait_for_ed_audio behaviour via injected probe)
+# ---------------------------------------------------------------------------
 
 def test_returns_true_when_probe_reports_non_silent_peak():
     """The moment the meter shows audio above threshold, the wait returns."""
@@ -145,16 +211,66 @@ def test_wait_for_ed_audio_default_sustain_is_single_sample():
     assert clock.t == 0.0  # fired on the very first sample
 
 
-def test_pycaw_probe_is_default_when_meter_probe_omitted():
-    """When pycaw isn't installed (or no ED session yet), the default probe
-    returns None — wait_for_ed_audio doesn't crash, just times out."""
+# ---------------------------------------------------------------------------
+# Branch 1 — wiring: omitting meter_probe selects _default_pycaw_probe
+# ---------------------------------------------------------------------------
+
+def test_meter_probe_defaults_to_pycaw_probe_when_omitted(monkeypatch):
+    """Wiring: omitting meter_probe selects _default_pycaw_probe. Patch that
+    symbol to a sentinel-returning stub and confirm wait_for_ed_audio called
+    it (so the default really is the pycaw probe, not something else)."""
+    calls = []
+    def fake_default(*a, **k):
+        calls.append(1)
+        return None  # no session → drives the timeout path
+    monkeypatch.setattr(
+        "ed_autojump.launcher.audio_wait._default_pycaw_probe", fake_default
+    )
     clock = _FakeClock()
-    # Don't pass meter_probe → uses _default_pycaw_probe. On a CI runner
-    # without ED running, that returns None for every poll → timeout.
     ok = wait_for_ed_audio(
         timeout_s=0.5, poll_interval_s=0.25,
         clock=clock.now, sleep=clock.sleep,
     )
-    # Either pycaw isn't installed (always None → False) or pycaw is
-    # installed but ED isn't running (always None → False). Both → False.
-    assert ok is False
+    assert ok is False        # None every poll → timeout (original intent kept)
+    assert calls               # the default probe was actually the one invoked
+
+
+# ---------------------------------------------------------------------------
+# Branch 2 — default probe returns None when pycaw isn't importable
+# ---------------------------------------------------------------------------
+
+def test_default_pycaw_probe_returns_none_without_pycaw(no_pycaw):
+    """pycaw not installed (non-Windows / missing dep) → probe returns None."""
+    assert _default_pycaw_probe() is None
+
+
+# ---------------------------------------------------------------------------
+# Branches 3 & 4 — pure selector _peak_from_sessions
+# ---------------------------------------------------------------------------
+
+def test_peak_from_sessions_none_on_empty_list():
+    """No sessions at all → None (ED hasn't opened its audio device yet)."""
+    assert _peak_from_sessions([], ED_PROCESS_NAME) is None
+
+
+def test_peak_from_sessions_none_when_no_matching_session():
+    """Sessions exist but none belong to ED → None (covers None-Process and
+    name-mismatch). Reaches no pycaw import: pure miss path."""
+    sessions = [
+        _FakeSession(None, 0.0),               # Process is None → skipped
+        _FakeSession("chrome.exe", 0.9),       # wrong name → skipped
+        _FakeSession("Spotify.exe", 0.5),      # wrong name → skipped
+    ]
+    assert _peak_from_sessions(sessions, ED_PROCESS_NAME) is None
+
+
+def test_peak_from_sessions_returns_peak_for_matching_session(stub_pycaw_meter_iface):
+    """A session owned by ED yields its meter peak as a float. Case-insensitive
+    match. The lazy IAudioMeterInformation import is stubbed → hermetic."""
+    sessions = [
+        _FakeSession("discord.exe", 0.1),
+        _FakeSession(ED_PROCESS_NAME.upper(), 0.42),  # case-insensitive match
+    ]
+    peak = _peak_from_sessions(sessions, ED_PROCESS_NAME)
+    assert peak == pytest.approx(0.42)
+    assert isinstance(peak, float)
