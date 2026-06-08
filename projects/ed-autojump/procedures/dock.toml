@@ -2,14 +2,24 @@
 # dispatch_route_complete when the route's final waypoint is a STATION
 # (Status.Destination is a locked, named, non-star body in the arrival
 # system). The station is already the locked Destination; this flow approaches
-# it, requests docking inside the 7.5km no-fire zone, lets the Advanced
-# Docking Computer fly to the pad, then runs the auto-opened Starport Services
-# (refuel / repair / rearm). On a clean dock the bot STAYS DOCKED and idles —
-# the terminus end state. (A NEW route plotted while docked later triggers the
-# pit-stop resume, dock_resume.toml, from the live loop.)
+# it, closes from the SC-assist variable dropout (~10km) to inside the 7.5km
+# no-fire zone, requests docking, lets the Advanced Docking Computer fly to
+# the pad, then runs the auto-opened Starport Services (refuel/repair/rearm).
+# On a clean dock the bot STAYS DOCKED and idles — the terminus end state.
+# (A NEW route plotted while docked later triggers the pit-stop resume,
+# dock_resume.toml, from the live loop.)
 #
 # Autodock is ASSUMED ENABLED (operator: Advanced Docking Computer +
 # Supercruise Assist fitted; no no-autodock failsafe).
+#
+# THE BUG THIS FIXES (2026-06-08): SC-assist drops the ship at a VARIABLE
+# distance (~10km operator-confirmed, "not always the same") — always OUTSIDE
+# the 7.5km docking request range. The old flow went dock_sc_assist ->
+# dock_request immediately, so the request fired out of range ->
+# DockingDenied(Distance) -> retry_from re-flew SC-assist -> denied again
+# forever. Fix: dock_approach step between drop and request closes the gap
+# under a signal gate (ReceiveText "$STATION_NoFireZone_entered;") — the
+# journal's live-verified in-range signal — never a fixed distance.
 #
 # Every event gate carries a Status/state fallback (house rule). No step uses
 # a wall-clock as a success/failure gate — the per-step max_*_s values are
@@ -24,12 +34,18 @@
 parallel_tracks = ["honk"]   # honk fires on the arrival jump like any other
 
 [on_required_fail]
-# A required fail re-establishes the APPROACH + REQUEST as one unit: a denied
-# request (Distance — we were outside 7.5km) or a missed drop must re-target
-# the station and re-fly the SC-assist approach, not just re-press request.
-# Bounded so a station that keeps denying never grinds forever; a non-Distance
-# denial fails the step which, on retry exhaustion, aborts to human.
-retry_from = "dock_target_station"
+# A required fail from dock_approach or dock_request re-runs the APPROACH +
+# REQUEST as one unit. retry_from = "dock_approach" means:
+#   - DockingDenied Distance (request fired just outside 7.5km, rare with
+#     the approach gate but possible): re-close from current position, not
+#     from the SC-assist dropout — the ship is already nearby.
+#   - dock_approach watchdog (failed to see the in-range signal in time):
+#     re-approach from current position.
+# dock_target_station and dock_sc_assist are NOT in the retry loop — they
+# only re-run when the first ATTEMPT fails (the interpreter starts at step 1
+# only on the first run; subsequent retries start at retry_from). A station
+# that keeps denying exhausts max_retries and aborts to human.
+retry_from = "dock_approach"
 max_retries = 3
 backoff_s = 2.0
 
@@ -38,21 +54,30 @@ steps = [
   # didn't lock it) — verified against Status.Destination. Required: a wrong
   # or missing lock must never reach the SC-assist approach.
   { action = "dock_target_station", required = true },        # macro  | 1 EXCLUSIVE — verified station target
-  # SC-assist flies + decelerates and DROPS the ship at the station. Gate on
-  # SupercruiseExit (BodyType=Station) / in_supercruise->False.
-  { action = "dock_sc_assist", required = true },             # macro  | 2 EXCLUSIVE — approach + drop
-  # Request docking once inside the 7.5km no-fire zone (gated on the
-  # NoFireZone-entered ReceiveText / state). DockingGranted -> proceed;
-  # DockingDenied Distance -> required-fail -> retry the approach; any other
-  # denial -> required-fail -> abort-to-human on exhaustion.
-  { action = "dock_request", required = true },               # macro  | 3 EXCLUSIVE — request + grant gate
+  # SC-assist flies + decelerates and DROPS the ship at the station.
+  # Gate on SupercruiseExit (BodyType=Station) / in_supercruise->False.
+  # DROP IS VARIABLE: operator-confirmed ~10km, "not always the same";
+  # always OUTSIDE the 7.5km request range.
+  { action = "dock_sc_assist", required = true },             # macro  | 2 EXCLUSIVE — SC approach + drop
+  # Close from the SC-assist dropout distance (VARIABLE, always >7.5km) to
+  # inside the 7.5km no-fire zone. Throttles at 25% toward the station
+  # (SC-assist drops the ship pointed at it), gated on the journal signal
+  # ReceiveText "$STATION_NoFireZone_entered;" — the live-verified in-range
+  # trigger. Zeroes throttle before returning. Edge case: already inside 7.5km
+  # on a bot restart -> no_fire_zone_supplier True on entry -> immediate pass.
+  { action = "dock_approach", required = true },              # macro  | 3 EXCLUSIVE — close to <7.5km
+  # Request docking now that we are inside the 7.5km no-fire zone.
+  # DockingGranted -> proceed; DockingDenied Distance -> required-fail ->
+  # retry dock_approach (re-close); any other denial -> required-fail ->
+  # abort-to-human on exhaustion.
+  { action = "dock_request", required = true },               # macro  | 4 EXCLUSIVE — request + grant gate
   # Wait for the Advanced Docking Computer to land on the pad. Gate on the
   # Docked event / status.docked.
-  { action = "dock_await_docked", required = true },          # wait   | 4 ADC -> pad -> Docked
+  { action = "dock_await_docked", required = true },          # wait   | 5 ADC -> pad -> Docked
   # Starport Services auto-opens on Docked; the icon row is grayed ~2s
   # (press-timing settle, NOT a gate). Refuel / repair / rearm, each verified
   # by its own Cost event. BEST-EFFORT: a no-op service (full tank / pristine
   # hull) is not a failure, so this is NOT required — a clean dock is the
   # deliverable with or without a paid service.
-  { action = "station_services" },                            # macro  | 5 EXCLUSIVE — refuel/repair/rearm
+  { action = "station_services" },                            # macro  | 6 EXCLUSIVE — refuel/repair/rearm
 ]

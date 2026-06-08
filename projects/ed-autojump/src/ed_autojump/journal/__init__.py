@@ -22,6 +22,7 @@ from .events import (
     Docked,
     Undocked,
     NavRouteClear,
+    ReceiveText,
     parse_event,
 )
 from .tail import JournalTail
@@ -48,6 +49,7 @@ __all__ = [
     "Docked",
     "Undocked",
     "NavRouteClear",
+    "ReceiveText",
     "parse_event",
     "JournalTail",
 ]

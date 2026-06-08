@@ -1463,73 +1463,144 @@ def step_dock_sc_assist(ctx: StepContext, *, settle_s: float = 0.4,
             return True
 
 
+def step_dock_approach(ctx: StepContext, *, approach_pct: int = 25,
+                       poll_s: float = 0.8, max_approach_s: float = 120.0) -> bool:
+    """Close from the SC-assist dropout distance (~10km VARIABLE) to inside
+    the 7.5km docking request range.
+
+    After dock_sc_assist drops the ship, we are in normal space at a VARIABLE
+    distance (operator-confirmed ~10km, "not always the same") — always OUTSIDE
+    the 7.5km no-fire zone. There is no distance field in Status.json, so we
+    CANNOT know when we hit exactly 7.5km from a counter. The ONLY signal is:
+      - PRIMARY: ReceiveText "$STATION_NoFireZone_entered;" — the station
+        broadcasts this the instant the ship crosses inside 7.5km (live-
+        verified 2026-06-07 by the operator from his own journal).
+        Dispatched into _no_fire_zone_entered by the FlowRunner and read here
+        via ctx.no_fire_zone_supplier.
+      - STATE FALLBACK (event-gates-need-state-check): if the ship was already
+        inside 7.5km at step entry (e.g. on a bot restart that landed closer
+        than usual), no_fire_zone_supplier() will be True on the first poll if
+        the flag was set before we cleared it. We clear it on arm, so the ONLY
+        way the flag can already be True is if the event arrived in the backlog
+        catch-up between _clear_no_fire_zone and the first poll. This is the
+        "already in range on restart" edge case — proceed immediately.
+
+    WHY normal-space throttle (not re-engaging SC-assist):
+    SC-assist at station distance would try to fly OUT of normal space and
+    re-enter SC, then re-drop — making the approach far longer and
+    re-introducing the same variable-dropout problem for another cycle. A
+    normal-space throttle in the direction of the station (SC-assist drops you
+    pointed at the station) is fast, simple, and terminates on the journal
+    signal without any distance arithmetic.
+
+    APPROACH THROTTLE: 25% (the lowest non-zero SetSpeed bind). The station is
+    a few km ahead; 25% closes the gap in seconds without ramming the mailslot.
+    Throttle is zeroed before this step returns (success OR fail) so the ship
+    coasts to a stop rather than flying into the station.
+
+    RAM GUARD: 25% is the minimum throttle; the approach terminates the instant
+    the in-range signal fires, so the window inside the zone is minimal before
+    the request goes out and the ADC takes over. No manual deceleration is
+    needed — the stop is passive.
+
+    `max_approach_s` is a FAIL backstop only (house rule: never a success gate).
+    Without event/status wiring (unit tests) the approach returns True (no-op).
+    """
+    # Arm: clear any stale no-fire-zone flag from a prior run so the gate
+    # only acts on an entry earned by THIS approach leg.
+    clear_nfz = getattr(ctx, "clear_no_fire_zone", None)
+    if clear_nfz is not None:
+        clear_nfz()
+
+    # State check FIRST: no_fire_zone_supplier may already be True (a backlog
+    # event arrived during the clear-to-first-poll window, or the bot restarted
+    # inside the zone). In that case the approach is a no-op.
+    nfz = getattr(ctx, "no_fire_zone_supplier", None)
+    if nfz is not None and nfz():
+        ctx.log("DockApproachDone", {"reason": "already_in_range"})
+        return True
+
+    if ctx.event_waiter is None:
+        # No journal wiring (unit tests): no-op.
+        return True
+
+    # Throttle forward toward the station.
+    if not step_set_throttle(ctx, pct=approach_pct):
+        ctx.log("DockApproachDone", {"reason": "throttle_bind_missing"})
+        return False
+
+    start = ctx.clock()
+    in_range = False
+    try:
+        while ctx.clock() - start <= max_approach_s:
+            if ctx.should_abort():
+                ctx.log("DockApproachDone", {"reason": "abort"})
+                return False
+
+            # PRIMARY signal: no-fire-zone entry text.
+            if nfz is not None and nfz():
+                ctx.log("DockApproachDone", {"reason": "nfz_entered"})
+                in_range = True
+                break
+
+            # Also catch the event directly so we don't wait a full poll
+            # cadence after the flag is set.
+            if ctx.event_waiter("ReceiveText", poll_s):
+                if nfz is not None and nfz():
+                    ctx.log("DockApproachDone", {"reason": "nfz_entered_event"})
+                    in_range = True
+                    break
+                # Some OTHER ReceiveText (NPC comms, mission update, etc.) —
+                # continue closing; poll the flag on the next loop iteration.
+
+        if not in_range:
+            ctx.log("DockApproachDone", {"reason": "watchdog"})
+    finally:
+        # Always zero the throttle before returning so the ship coasts to a
+        # stop rather than flying into the station.
+        step_set_throttle(ctx, pct=0)
+
+    return in_range
+
+
 def step_dock_request(ctx: StepContext, *, settle_s: float = 0.4,
                       poll_s: float = 0.8, max_wait_s: float = 120.0) -> bool:
-    """Request docking once inside the 7.5km no-fire zone, gate on the grant.
+    """Request docking now that the ship is inside the 7.5km no-fire zone.
 
-    ED gives NO distance field in Status; both range edges are journal events:
-      - within range: ReceiveText "$STATION_NoFireZone_entered;"
-      - request out of range: DockingDenied Reason=Distance
-
-    Flow: wait for the NoFireZone-entered text (the may-request signal), then
-    run the request_docking macro, then wait for the outcome:
+    step_dock_approach has already closed the gap; this step sends the docking
+    request macro and gates on the outcome:
       - DockingGranted -> True (the ADC takes over to the pad).
-      - DockingDenied Reason=Distance -> False (re-approach/retry; the
-        procedure's on_required_fail loops back to the SC-assist step).
-      - DockingDenied any other reason -> False (the bot can't resolve
-        NoSpace/TooLarge/Hostile/Offences itself). There is no per-step
-        no-retry path in the interpreter, so this exhausts the procedure's
-        on_required_fail retries (3x) and then aborts to the human.
+      - DockingDenied Reason=Distance -> False (step_dock_approach did not
+        close far enough — rare; re-approach via on_required_fail retry_from).
+      - DockingDenied any other reason -> False (bot cannot resolve
+        NoSpace/TooLarge/Hostile/Offences; retries exhaust on_required_fail
+        and then abort to human).
 
     `max_wait_s` is a FAIL backstop only. Without event wiring (unit tests)
-    the request macro is the step. NoFireZone text is not a typed model — the
-    event_waiter matches on the raw "ReceiveText" event name and we read the
-    state fallback (in normal space, station targeted) to proceed if the text
-    is missed (event-gates-need-state-check)."""
+    the request macro is the step."""
     if ctx.event_waiter is None:
         # No journal wiring (unit tests): run the macro, report success.
         return _run_request_macro(ctx, settle_s)
 
-    # 1. Wait until we MAY request: the no-fire-zone entry text, or the state
-    #    fallback (dropped to normal space with the station targeted — the
-    #    drop already put us at the station, well inside 7.5km).
-    start = ctx.clock()
-    can_request = False
-    while ctx.clock() - start <= max_wait_s:
-        if ctx.should_abort():
-            ctx.log("DockRequestDone", {"reason": "abort"})
-            return False
-        if ctx.event_waiter("ReceiveText", poll_s):
-            can_request = True
-            break
-        st = ctx.status_supplier()
-        if (st is not None and not getattr(st, "in_supercruise", True)
-                and _dest_is_named_station(st)):
-            ctx.log("DockRequestRangeViaState", {})
-            can_request = True
-            break
-    if not can_request:
-        ctx.log("DockRequestDone", {"reason": "no_range_signal"})
-        return False
-
-    # 2. Send the request. Clear any stale denial reason FIRST so the grant
-    #    loop only ever acts on a denial earned by THIS request. The dispatcher
-    #    clears the stash on grant/dock but not when a new request begins, and
-    #    step_dock_target_station's Contacts fallback deliberately runs the
-    #    request macro out of range — earning a Distance denial that would
-    #    otherwise false-fail this in-range request before its (latency-delayed)
-    #    grant arrives (B1/D1). Mirrors the dispatcher's clear-on-grant pattern.
+    # Clear any stale denial reason FIRST so the grant loop only ever acts on
+    # a denial earned by THIS request. The dispatcher clears the stash on
+    # grant/dock but not when a new request begins, and
+    # step_dock_target_station's Contacts fallback deliberately runs the
+    # request macro out of range — earning a Distance denial that would
+    # otherwise false-fail this in-range request before its (latency-delayed)
+    # grant arrives (B1/D1). Mirrors the dispatcher's clear-on-grant pattern.
     clear = getattr(ctx, "clear_docking_denied", None)
     if clear is not None:
         clear()
+
     if not _run_request_macro(ctx, settle_s):
         return False
 
-    # 3. Gate on the outcome. DockingGranted -> success; DockingDenied
-    #    Distance -> retryable fail; other denial -> a failed step that the
-    #    procedure's on_required_fail loop retries (3x) before aborting.
-    #    status.docked is the state fallback (the ADC may have already docked
-    #    by the time we poll — event-gates-need-state-check).
+    # Gate on the outcome. DockingGranted -> success; DockingDenied
+    # Distance -> retryable fail; other denial -> a failed step that the
+    # procedure's on_required_fail loop retries (3x) before aborting.
+    # status.docked is the state fallback (the ADC may have already docked
+    # by the time we poll — event-gates-need-state-check).
     start = ctx.clock()
     while ctx.clock() - start <= max_wait_s:
         if ctx.should_abort():
@@ -1768,8 +1839,8 @@ def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
 # wait) so it stays out.
 INPUT_EXCLUSIVE_ACTIONS = frozenset({
     "sc_assist_orbit", "nav_panel_target",
-    "dock_target_station", "dock_sc_assist", "dock_request", "station_services",
-    "auto_launch",
+    "dock_target_station", "dock_sc_assist", "dock_approach", "dock_request",
+    "station_services", "auto_launch",
 })
 
 STEP_REGISTRY.update({
@@ -1782,6 +1853,7 @@ STEP_REGISTRY.update({
     "scoop_refuel": step_scoop_refuel,
     "dock_target_station": step_dock_target_station,
     "dock_sc_assist": step_dock_sc_assist,
+    "dock_approach": step_dock_approach,
     "dock_request": step_dock_request,
     "dock_await_docked": step_dock_await_docked,
     "station_services": step_station_services,

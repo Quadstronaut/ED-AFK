@@ -17,6 +17,7 @@ from ed_autojump.journal import (
     DockingDenied,
     DockingGranted,
     DockingRequested,
+    ReceiveText,
     SupercruiseDestinationDrop,
     Undocked,
     parse_event,
@@ -414,18 +415,224 @@ def test_wait_masslock_clear_fails_closed_without_status():
     assert STEP_REGISTRY["wait_masslock_clear"](ctx) is False
 
 
+# ============================ ReceiveText event ============================
+
+def test_receive_text_parses_no_fire_zone():
+    """The no-fire-zone entry message must parse as a typed ReceiveText with the
+    $STATION_NoFireZone_entered; token in the Message field."""
+    ev = parse_event(
+        '{"timestamp":"2026-06-08T00:00:00Z","event":"ReceiveText",'
+        '"From":"","Message":"$STATION_NoFireZone_entered;","Channel":"npc"}')
+    assert isinstance(ev, ReceiveText)
+    assert "$STATION_NoFireZone_entered;" in ev.message
+
+
+def test_receive_text_nfz_sets_dispatcher_flag():
+    """FlowRunner._apply_state sets _no_fire_zone_entered=True when the
+    no-fire-zone ReceiveText arrives."""
+    sender = FakeSender()
+    r = _dock_runner(sender, status=_station_status())
+    assert r._no_fire_zone_entered is False
+    r._on_tail_event(_ev("ReceiveText", message="$STATION_NoFireZone_entered;"))
+    assert r._no_fire_zone_entered is True
+
+
+def test_receive_text_other_message_no_flag():
+    """A ReceiveText with a different message (NPC comms, mission update) must
+    NOT set _no_fire_zone_entered."""
+    sender = FakeSender()
+    r = _dock_runner(sender, status=_station_status())
+    r._on_tail_event(_ev("ReceiveText", message="$Comm_Friendly_Hello;"))
+    assert r._no_fire_zone_entered is False
+
+
+def test_nfz_supplier_wired_into_context():
+    """no_fire_zone_supplier and clear_no_fire_zone are properly wired into
+    the StepContext (same pattern as docking_denied_supplier)."""
+    sender = FakeSender()
+    r = _dock_runner(sender, status=_station_status())
+    r._no_fire_zone_entered = True
+    ctx = r._make_context()
+    assert ctx.no_fire_zone_supplier() is True
+    ctx.clear_no_fire_zone()
+    assert r._no_fire_zone_entered is False
+
+
+# ============================ step_dock_approach ============================
+
+def test_dock_approach_closes_on_nfz_signal():
+    """After SC-assist drop the ship is outside 7.5km. dock_approach throttles
+    at 25%, gates on NoFireZone_entered (via no_fire_zone_supplier), then zeros
+    throttle -> True."""
+    sender = FakeSender()
+    # no_fire_zone_supplier starts False; flips True after one poll
+    # (simulates the ReceiveText arriving mid-loop).
+    calls = {"n": 0}
+
+    def nfz():
+        calls["n"] += 1
+        return calls["n"] > 1  # False on clear-check and first poll; True after
+
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+        event_waiter=lambda name, t: False,  # no events fire directly
+        no_fire_zone_supplier=nfz,
+        clear_no_fire_zone=lambda: None)
+    assert STEP_REGISTRY["dock_approach"](ctx) is True
+    acts = sender.actions()
+    # SetSpeed25 first (throttle forward), then SetSpeedZero (zero on exit).
+    assert acts[0] == "SetSpeed25"
+    assert acts[-1] == "SetSpeedZero"
+
+
+def test_dock_approach_already_in_range_no_throttle():
+    """Edge case: ship is already inside 7.5km at step entry (e.g. bot restarted
+    close to station). no_fire_zone_supplier returns True on entry -> immediate
+    pass, no throttle presses."""
+    sender = FakeSender()
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+        event_waiter=lambda name, t: False,
+        no_fire_zone_supplier=lambda: True,
+        clear_no_fire_zone=lambda: None)
+    assert STEP_REGISTRY["dock_approach"](ctx) is True
+    assert sender.actions() == []   # no throttle — already in range
+
+
+def test_dock_approach_clears_stale_nfz_flag_on_arm():
+    """dock_approach must call clear_no_fire_zone on entry so a stale True from
+    a prior approach (e.g. a retry loop) cannot skip the closing leg.
+    The clear happens even when the subsequent supplier then returns True
+    (the 'already in range after clearing' path)."""
+    cleared = {"did": False}
+    nfz_values = {"v": True}  # starts True (stale); stays True after clear
+
+    def clear():
+        cleared["did"] = True
+        # Simulate the flag being re-set externally after clear (edge-case:
+        # a new ReceiveText arrives between clear and first check). We leave
+        # it True so the step still exits quickly, but the clear MUST have run.
+        nfz_values["v"] = True
+
+    sender = FakeSender()
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+        event_waiter=lambda name, t: False,
+        no_fire_zone_supplier=lambda: nfz_values["v"],
+        clear_no_fire_zone=clear)
+    STEP_REGISTRY["dock_approach"](ctx)
+    assert cleared["did"] is True   # clear was called on arm
+
+
+def test_dock_approach_zeros_throttle_on_watchdog_timeout():
+    """If the NoFireZone signal never arrives before max_approach_s, the step
+    fails (returns False) but MUST zero the throttle first (ram guard: the ship
+    must not keep flying into the station)."""
+    sender = FakeSender()
+    clock_t = {"t": 0.0}
+
+    def clock():
+        clock_t["t"] += 200.0  # each call advances past max_approach_s=120.0
+        return clock_t["t"]
+
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=clock,
+        event_waiter=lambda name, t: False,  # no signal ever
+        no_fire_zone_supplier=lambda: False,
+        clear_no_fire_zone=lambda: None)
+    result = STEP_REGISTRY["dock_approach"](ctx)
+    assert result is False
+    acts = sender.actions()
+    assert "SetSpeed25" in acts       # throttle was set
+    assert acts[-1] == "SetSpeedZero" # zeroed before return
+
+
+def test_dock_approach_no_event_wiring_is_noop():
+    """Without event wiring (unit tests with no journal) dock_approach returns
+    True immediately (no-op fallback, same pattern as other steps)."""
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, sleeper=lambda s: None)   # no wiring
+    assert STEP_REGISTRY["dock_approach"](ctx) is True
+    assert sender.actions() == []   # no keys at all
+
+
+def test_dock_approach_nfz_via_receive_text_event():
+    """ReceiveText event fires during the loop. After the event the supplier
+    reports True -> step exits cleanly."""
+    sender = FakeSender()
+    saw_nfz = {"v": False}
+
+    def waiter(name, t):
+        if name == "ReceiveText":
+            saw_nfz["v"] = True
+            return True
+        return False
+
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+        event_waiter=waiter,
+        no_fire_zone_supplier=lambda: saw_nfz["v"],
+        clear_no_fire_zone=lambda: None)
+    assert STEP_REGISTRY["dock_approach"](ctx) is True
+    acts = sender.actions()
+    assert acts[0] == "SetSpeed25"
+    assert acts[-1] == "SetSpeedZero"
+
+
+# ============================ step_dock_request (no range wait) ============================
+# The new step_dock_request no longer waits for the in-range signal itself —
+# that is step_dock_approach's job. These tests cover the new contract.
+
+def test_dock_request_fires_immediately_and_gates_on_grant():
+    """step_dock_request no longer waits for a range signal — it runs the
+    request macro immediately then gates on DockingGranted."""
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      status_supplier=lambda: _status(docked=False),
+                      event_waiter=_waiter_for("DockingGranted"))
+    assert STEP_REGISTRY["dock_request"](ctx) is True
+    assert "CycleNextPanel" in sender.actions()   # the request macro ran
+
+
+def test_dock_request_no_range_state_fallback():
+    """The broken state fallback (not in_supercruise + station targeted) was
+    REMOVED. dock_request must NOT fire immediately just because the ship is in
+    normal space with the station targeted — that was the root of the bug.
+    With no event wiring the step runs the macro (legacy no-wiring path),
+    but with wiring it must not bypass the grant wait on state alone."""
+    sender = FakeSender()
+    st = _status(in_supercruise=False, dest_name="Jameson Memorial", dest_body=4)
+    # event_waiter is wired but DockingGranted never fires and denial is None.
+    # Old code: would trigger can_request via state fallback and then spin on
+    # the grant wait -> watchdog. New code: runs macro immediately, then spins
+    # on grant wait -> watchdog.  Either way it must NOT pass just on state.
+    # CLOCK: must ADVANCE so clock() - start exceeds max_wait_s=120.0 and the
+    # watchdog trips. A constant lambda: 200.0 gives clock()-start=0 forever
+    # -> infinite loop (the broken-test bug, 895d833).
+    clock_t = {"t": 0.0}
+
+    def adv_clock():
+        clock_t["t"] += 200.0
+        return clock_t["t"]
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=adv_clock,
+        status_supplier=lambda: st,
+        event_waiter=lambda name, t: False)   # no events
+    assert STEP_REGISTRY["dock_request"](ctx) is False   # watchdog
+
+
 # ============================ registry / exclusivity contract ============================
 
 def test_dock_steps_registered():
-    for name in ("dock_target_station", "dock_sc_assist", "dock_request",
-                 "dock_await_docked", "station_services", "auto_launch",
-                 "wait_masslock_clear"):
+    for name in ("dock_target_station", "dock_sc_assist", "dock_approach",
+                 "dock_request", "dock_await_docked", "station_services",
+                 "auto_launch", "wait_masslock_clear"):
         assert name in STEP_REGISTRY
 
 
 def test_dock_ui_macros_are_input_exclusive():
-    for name in ("dock_target_station", "dock_sc_assist", "dock_request",
-                 "station_services", "auto_launch"):
+    for name in ("dock_target_station", "dock_sc_assist", "dock_approach",
+                 "dock_request", "station_services", "auto_launch"):
         assert name in INPUT_EXCLUSIVE_ACTIONS
     # dock_await_docked sends no keys -> NOT exclusive.
     assert "dock_await_docked" not in INPUT_EXCLUSIVE_ACTIONS
@@ -618,10 +825,21 @@ def test_dock_procedure_gates_are_required():
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
     required = {s.action for s in dock.steps if s.required}
-    assert {"dock_target_station", "dock_sc_assist", "dock_request",
-            "dock_await_docked"} <= required
+    assert {"dock_target_station", "dock_sc_assist", "dock_approach",
+            "dock_request", "dock_await_docked"} <= required
     # station_services is best-effort (a no-op service is not a failure).
     assert "station_services" not in required
+
+
+def test_dock_procedure_retry_from_is_dock_approach():
+    """on_required_fail.retry_from must be 'dock_approach', not
+    'dock_target_station': a Distance denial should re-close from the current
+    position, NOT re-fly SC-assist from the system star."""
+    from pathlib import Path
+    from ed_autojump.flow.loader import load_procedures
+    proc_dir = Path(__file__).resolve().parents[2] / "procedures"
+    dock = load_procedures(proc_dir)["dock"]
+    assert dock.on_required_fail.retry_from == "dock_approach"
 
 
 # ============================ capture-at-plot ============================

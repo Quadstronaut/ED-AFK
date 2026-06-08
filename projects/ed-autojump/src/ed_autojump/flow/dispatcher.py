@@ -223,6 +223,12 @@ class FlowRunner:
         self._docking_denied_reason: Optional[str] = None
         self._docked: bool = False
         self._docked_station: Optional[str] = None
+        # True once the station has broadcast "$STATION_NoFireZone_entered;"
+        # via ReceiveText — the live-verified (2026-06-07 operator journal)
+        # signal that the ship is inside the 7.5km docking request range.
+        # Cleared by _clear_no_fire_zone at the start of each dock_approach
+        # run so the flag only holds for THE CURRENT approach leg.
+        self._no_fire_zone_entered: bool = False
         # CAPTURE-AT-PLOT (station-dock): when the operator plots a route to a
         # STATION (galaxy map -> station), the game may set Status.Destination
         # to the station body (Body != 0) at the NavRoute event — BEFORE the
@@ -333,6 +339,12 @@ class FlowRunner:
         never a stale one left by an earlier out-of-range probe."""
         self._docking_denied_reason = None
 
+    def _clear_no_fire_zone(self) -> None:
+        """Reset the no-fire-zone entry flag. step_dock_approach calls this on
+        entry so a stale True from a prior approach (the ship was already in
+        range when the step ran on a restart) cannot skip the closing leg."""
+        self._no_fire_zone_entered = False
+
     def _make_context(self) -> StepContext:
         # Each context gets its OWN hub subscription so concurrent waiters
         # (honk track + main procedure) all see every event. _run owns the
@@ -373,6 +385,8 @@ class FlowRunner:
             jump_age_supplier=self._jump_age,
             docking_denied_supplier=lambda: self._docking_denied_reason,
             clear_docking_denied=self._clear_docking_denied,
+            no_fire_zone_supplier=lambda: self._no_fire_zone_entered,
+            clear_no_fire_zone=self._clear_no_fire_zone,
             in_witchspace=lambda: self._in_witchspace,
             record=self.record,
             frame_sink=self.frame_sink,
@@ -792,6 +806,14 @@ class FlowRunner:
             self._navroute_cleared = True
             ts = getattr(ev, "timestamp", None)
             self._navroute_cleared_utc = self._parse_journal_ts(ts) if ts else None
+        elif name == "ReceiveText":
+            # "$STATION_NoFireZone_entered;" = the ship just crossed inside the
+            # 7.5km docking request range (live-verified 2026-06-07). Set the
+            # flag; cleared by _clear_no_fire_zone at the start of each
+            # dock_approach run so the gate only reflects THIS approach leg.
+            msg = getattr(ev, "message", "") or ""
+            if "$STATION_NoFireZone_entered;" in msg:
+                self._no_fire_zone_entered = True
         elif name == "DockingDenied":
             # Stash the Reason so step_dock_request (which gates via a name-only
             # event_waiter that can't read fields) can tell Distance (retry)

@@ -107,6 +107,20 @@ class StepContext:
     # (unit tests with no runner wiring).
     clear_docking_denied: Callable[[], None] = lambda: None
 
+    # True once the no-fire-zone entry text has been seen since the last
+    # approach was armed. Set by the dispatcher on
+    # ReceiveText Message="$STATION_NoFireZone_entered;" (live-verified
+    # 2026-06-07: this fires the instant the ship crosses inside 7.5km).
+    # Cleared by clear_no_fire_zone at the start of each dock_approach so the
+    # gate only acts on an entry earned by THIS approach run. None supplier
+    # (unit tests): falls back to False -> no-fire-zone not yet seen.
+    no_fire_zone_supplier: Callable[[], bool] = lambda: False
+
+    # Reset the runner's no-fire-zone flag. step_dock_approach calls this on
+    # entry so a stale flag from a prior approach cannot skip the closing leg.
+    # No-op default (unit tests with no runner wiring).
+    clear_no_fire_zone: Callable[[], None] = lambda: None
+
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 
