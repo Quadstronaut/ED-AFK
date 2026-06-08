@@ -81,6 +81,9 @@ def _all_bound() -> dict[str, str]:
         "FocusLeftPanel": "Key_1",
         "UI_Select": "Key_Enter",
         "UI_Right": "Key_D",   # same key as YawRightButton — different context, OK
+        "UI_Up": "Key_W",      # same key as PitchDownButton — different context, OK
+        "UI_Down": "Key_S",    # same key as PitchUpButton — different context, OK
+        "CycleNextPanel": "Key_E",   # request_docking tab cycle (Navigation->Contacts)
         "DeployHeatSink": "Key_Minus",
     }
 

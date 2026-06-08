@@ -1280,13 +1280,435 @@ def step_scoop_refuel(
         ctx.sleeper(poll_s)
 
 
+# ============================ STATION DOCKING ============================
+# Terminal/pit-stop dock flow (procedures/dock.toml). Approach the station
+# (already Status.Destination from route-complete) under SC assist, request
+# docking inside the 7.5km no-fire zone, let the Advanced Docking Computer
+# fly the ship to the pad, then run the auto-opened Starport Services
+# (refuel/repair/rearm). Autodock is ASSUMED ENABLED (no no-autodock
+# failsafe). Every event gate carries a Status/state fallback (house rule);
+# no step uses a wall-clock as a success/failure gate.
+
+
+def _dest_is_named_station(st: Any) -> bool:
+    """True iff Status.Destination is a locked BODY with a non-symbolic name —
+    the station the route-complete decision already identified. Used to confirm
+    a target press actually landed on the station (the T-then-fallback path)."""
+    dest = getattr(st, "destination", None) if st is not None else None
+    if dest is None:
+        return False
+    if getattr(dest, "body", 0) == 0:
+        return False                       # an FSD route hop / star, not a body
+    name = (getattr(dest, "name", "") or "").strip()
+    return bool(name) and not name.startswith("$")
+
+
+def step_dock_target_station(
+    ctx: StepContext, *, settle_s: float = 0.4, verify_reads: int = 4,
+) -> bool:
+    """Ensure the STATION is the active target before SC-assist.
+
+    Operator manual flow on the SC-assist drop is **T** (SelectTarget, locks
+    whatever is roughly ahead). We press it, then CONFIRM via Status.Destination
+    that the lock is the station (a named, non-star body). If T didn't land on
+    the station (it wasn't aligned ahead), fall back to the Contacts nav-panel
+    macro: selecting the station contact self-targets it. We reuse
+    request_docking for that selection walk — it ALSO targets the station, and
+    requesting out of range only earns a harmless DockingDenied(Distance) that
+    step_dock_request handles, so running it here is safe.
+
+    Without status wiring (unit tests) the T press alone is the step (legacy
+    fallback, like the other macros)."""
+    if not _press(ctx, "SelectTarget"):
+        return False
+    if ctx.status_supplier() is None:
+        return True                        # no status wiring -> press is the step
+    # Confirm the lock is the station; Status.json write latency ~1s.
+    for _ in range(verify_reads):
+        st = ctx.status_supplier()
+        if _dest_is_named_station(st):
+            ctx.log("DockTargetStation", {"via": "select_target"})
+            return True
+        ctx.sleeper(settle_s)
+    # T missed (the station wasn't aligned ahead) -> nav-panel Contacts
+    # fallback. Selecting the station contact targets it; this is the same
+    # macro that requests docking, but we run only far enough to lock — the
+    # full request macro is harmless here (out of range it just denies, and
+    # step_dock_request gates on the no-fire zone before requesting anyway),
+    # so we use the dedicated Contacts target path.
+    from ..executor.navpanel import request_docking
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    try:
+        request_docking(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s)
+    except KeyError:
+        ctx.log("BindMissing", {"step": "dock_target_station"})
+        return False
+    for _ in range(verify_reads):
+        st = ctx.status_supplier()
+        if _dest_is_named_station(st):
+            ctx.log("DockTargetStation", {"via": "navpanel_contacts"})
+            return True
+        ctx.sleeper(settle_s)
+    ctx.log("DockTargetStationFailed", {})
+    return False
+
+
+def step_dock_sc_assist(ctx: StepContext, *, settle_s: float = 0.4,
+                        poll_s: float = 0.8, max_approach_s: float = 600.0) -> bool:
+    """Engage Supercruise Assist toward the (targeted) station and wait for the
+    drop. SC-assist flies + decelerates and drops the ship AT the station,
+    emitting SupercruiseDestinationDrop then ~5s later SupercruiseExit
+    BodyType=Station.
+
+    Gate "arrived at station" on SupercruiseExit (with status.in_supercruise
+    going False as the state fallback — the drop puts the ship in normal
+    space). `max_approach_s` is a FAIL backstop only (SC-assist transit can be
+    minutes); the decision input is the event/flag, never the clock.
+
+    Refuses (fail closed) if not in supercruise. Without event/status wiring
+    (unit tests) the engage is the step."""
+    st = ctx.status_supplier()
+    if st is not None and not getattr(st, "in_supercruise", False):
+        ctx.log("DockScAssistRefused", {"reason": "not_in_supercruise"})
+        return False
+    from ..executor.navpanel import engage_supercruise_assist
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    try:
+        engage_supercruise_assist(ctx.sender, sleeper=ctx.sleeper,
+                                  settle_s=settle_s)
+    except KeyError:
+        ctx.log("BindMissing", {"step": "dock_sc_assist"})
+        return False
+    if ctx.event_waiter is None or ctx.status_supplier() is None:
+        return True                        # no journal/status wiring -> engage is the step
+    start = ctx.clock()
+    while True:
+        if ctx.should_abort():
+            ctx.log("DockScAssistDone", {"reason": "abort"})
+            return False
+        if ctx.clock() - start > max_approach_s:
+            ctx.log("DockScAssistDone", {"reason": "watchdog"})
+            return False
+        # SupercruiseExit at the station is the drop completion.
+        if ctx.event_waiter("SupercruiseExit", poll_s):
+            ctx.log("DockScAssistDone", {"reason": "exit_event"})
+            return True
+        st = ctx.status_supplier()
+        if st is not None and not getattr(st, "in_supercruise", True):
+            ctx.log("DockScAssistDone", {"reason": "dropped_to_normal"})
+            return True
+
+
+def step_dock_request(ctx: StepContext, *, settle_s: float = 0.4,
+                      poll_s: float = 0.8, max_wait_s: float = 120.0) -> bool:
+    """Request docking once inside the 7.5km no-fire zone, gate on the grant.
+
+    ED gives NO distance field in Status; both range edges are journal events:
+      - within range: ReceiveText "$STATION_NoFireZone_entered;"
+      - request out of range: DockingDenied Reason=Distance
+
+    Flow: wait for the NoFireZone-entered text (the may-request signal), then
+    run the request_docking macro, then wait for the outcome:
+      - DockingGranted -> True (the ADC takes over to the pad).
+      - DockingDenied Reason=Distance -> False (re-approach/retry; the
+        procedure's on_required_fail loops back to the SC-assist step).
+      - DockingDenied any other reason -> False (the bot can't resolve
+        NoSpace/TooLarge/Hostile/Offences itself). There is no per-step
+        no-retry path in the interpreter, so this exhausts the procedure's
+        on_required_fail retries (3x) and then aborts to the human.
+
+    `max_wait_s` is a FAIL backstop only. Without event wiring (unit tests)
+    the request macro is the step. NoFireZone text is not a typed model — the
+    event_waiter matches on the raw "ReceiveText" event name and we read the
+    state fallback (in normal space, station targeted) to proceed if the text
+    is missed (event-gates-need-state-check)."""
+    if ctx.event_waiter is None:
+        # No journal wiring (unit tests): run the macro, report success.
+        return _run_request_macro(ctx, settle_s)
+
+    # 1. Wait until we MAY request: the no-fire-zone entry text, or the state
+    #    fallback (dropped to normal space with the station targeted — the
+    #    drop already put us at the station, well inside 7.5km).
+    start = ctx.clock()
+    can_request = False
+    while ctx.clock() - start <= max_wait_s:
+        if ctx.should_abort():
+            ctx.log("DockRequestDone", {"reason": "abort"})
+            return False
+        if ctx.event_waiter("ReceiveText", poll_s):
+            can_request = True
+            break
+        st = ctx.status_supplier()
+        if (st is not None and not getattr(st, "in_supercruise", True)
+                and _dest_is_named_station(st)):
+            ctx.log("DockRequestRangeViaState", {})
+            can_request = True
+            break
+    if not can_request:
+        ctx.log("DockRequestDone", {"reason": "no_range_signal"})
+        return False
+
+    # 2. Send the request. Clear any stale denial reason FIRST so the grant
+    #    loop only ever acts on a denial earned by THIS request. The dispatcher
+    #    clears the stash on grant/dock but not when a new request begins, and
+    #    step_dock_target_station's Contacts fallback deliberately runs the
+    #    request macro out of range — earning a Distance denial that would
+    #    otherwise false-fail this in-range request before its (latency-delayed)
+    #    grant arrives (B1/D1). Mirrors the dispatcher's clear-on-grant pattern.
+    clear = getattr(ctx, "clear_docking_denied", None)
+    if clear is not None:
+        clear()
+    if not _run_request_macro(ctx, settle_s):
+        return False
+
+    # 3. Gate on the outcome. DockingGranted -> success; DockingDenied
+    #    Distance -> retryable fail; other denial -> a failed step that the
+    #    procedure's on_required_fail loop retries (3x) before aborting.
+    #    status.docked is the state fallback (the ADC may have already docked
+    #    by the time we poll — event-gates-need-state-check).
+    start = ctx.clock()
+    while ctx.clock() - start <= max_wait_s:
+        if ctx.should_abort():
+            ctx.log("DockRequestDone", {"reason": "abort"})
+            return False
+        if ctx.event_waiter("DockingGranted", poll_s):
+            ctx.log("DockRequestDone", {"reason": "granted"})
+            return True
+        st = ctx.status_supplier()
+        if st is not None and getattr(st, "docked", False):
+            ctx.log("DockRequestDone", {"reason": "already_docked"})
+            return True
+        # A denial arrives as DockingDenied; we can't read its Reason through
+        # the name-only event_waiter, so consult the last-seen denial reason
+        # the dispatcher stashes (None when none). Distance -> retry; other ->
+        # abort. The dispatcher records the reason; here we read it off ctx.
+        reason = _last_docking_denied_reason(ctx)
+        if reason is not None:
+            if reason == "Distance":
+                ctx.log("DockRequestDone", {"reason": "denied_distance"})
+            else:
+                ctx.log("DockRequestAbort", {"reason": f"denied_{reason}"})
+            return False
+    ctx.log("DockRequestDone", {"reason": "watchdog"})
+    return False
+
+
+def _last_docking_denied_reason(ctx: StepContext) -> "str | None":
+    """The Reason of the most recent DockingDenied the FlowRunner has seen
+    since this step armed, or None. Wired via ctx.docking_denied_supplier
+    (FlowRunner tracks it from the typed DockingDenied event); unset in unit
+    tests -> None (no denial)."""
+    sup = getattr(ctx, "docking_denied_supplier", None)
+    return sup() if sup is not None else None
+
+
+def _run_request_macro(ctx: StepContext, settle_s: float) -> bool:
+    from ..executor.navpanel import request_docking
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    try:
+        request_docking(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s)
+    except KeyError:
+        ctx.log("BindMissing", {"step": "dock_request"})
+        return False
+    return True
+
+
+def step_dock_await_docked(ctx: StepContext, *, poll_s: float = 0.8,
+                           max_wait_s: float = 300.0) -> bool:
+    """Wait for the Advanced Docking Computer to land the ship on the pad.
+
+    Gate on the Docked journal event, with status.docked (Status Flags bit 0)
+    as the state fallback — the ADC may have docked before this step's first
+    poll (event-gates-need-state-check: the flag may already be true with no
+    fresh event). `max_wait_s` is a FAIL backstop only (the ADC's pad transit
+    is queue-variable). Without event/status wiring the step passes."""
+    # State-check first: already docked on entry -> instant success, no waiting
+    # on an event that already fired.
+    st = ctx.status_supplier()
+    if st is not None and getattr(st, "docked", False):
+        ctx.log("DockAwaitDone", {"reason": "already_docked"})
+        return True
+    if ctx.event_waiter is None:
+        return True                        # no journal wiring -> pass
+    start = ctx.clock()
+    while ctx.clock() - start <= max_wait_s:
+        if ctx.should_abort():
+            ctx.log("DockAwaitDone", {"reason": "abort"})
+            return False
+        if ctx.event_waiter("Docked", poll_s):
+            ctx.log("DockAwaitDone", {"reason": "docked_event"})
+            return True
+        st = ctx.status_supplier()
+        if st is not None and getattr(st, "docked", False):
+            ctx.log("DockAwaitDone", {"reason": "docked_flag"})
+            return True
+    ctx.log("DockAwaitDone", {"reason": "watchdog"})
+    return False
+
+
+# Starport Services icon row, post-Docked. The panel auto-opens on STARPORT
+# SERVICES with the top icon row (Refuel|Repair|Restock|Lower-ship) GRAYED for
+# ~2s after landing — a press-TIMING settle (NOT a success gate; documented as
+# such per house rule). Each service then fires ONE journal event carrying a
+# Cost, which we verify. Operator-walked nav from the panel default:
+#   W (UI_Up)  -> Refuel icon  -> Space (UI_Select) -> RefuelAll
+#   D (UI_Right)-> Repair icon  -> Space            -> RepairAll
+#   D (UI_Right)-> Restock icon -> Space            -> BuyAmmo (rearm)
+_SERVICE_SEQUENCE = (
+    ("UI_Up", "RefuelAll"),
+    ("UI_Right", "RepairAll"),
+    ("UI_Right", "BuyAmmo"),
+)
+
+
+def step_station_services(ctx: StepContext, *, settle_s: float = 0.4,
+                          services_settle_s: float = 2.0, poll_s: float = 0.8,
+                          verify_s: float = 8.0) -> bool:
+    """Run the auto-opened Starport Services: refuel, repair, rearm.
+
+    The icon row is grayed ~2s after Docked — `services_settle_s` is a PRESS-
+    TIMING settle (it waits for the UI to become interactive), explicitly NOT
+    a success/failure gate (house rule). Each service is verified by its OWN
+    journal event (RefuelAll/RepairAll/BuyAmmo, each carrying a Cost): we
+    press, then wait `verify_s` for that event. A service that does not fire
+    its event is logged and the sequence CONTINUES (a full tank emits no
+    RefuelAll, a pristine hull no RepairAll — these are no-ops, not failures);
+    the step succeeds as long as the macro ran. BEST-EFFORT by design: a
+    terminus dock is complete with or without a paid service.
+
+    Without event wiring (unit tests) the presses are the step."""
+    if not _ensure_cockpit_focus_allow_panel(ctx):
+        return False
+    # Press-timing settle: let the grayed icon row become interactive. This is
+    # NOT a gate — there is no per-icon enabled flag in Status; the settle is
+    # the documented exception (a press-timing wait, then press-and-verify).
+    ctx.sleeper(services_settle_s)
+    ran_any = False
+    for nav_action, expect_event in _SERVICE_SEQUENCE:
+        if ctx.should_abort():
+            ctx.log("StationServicesDone", {"reason": "abort"})
+            return False
+        if not _press(ctx, nav_action):
+            return False
+        ctx.sleeper(settle_s)
+        if not _press(ctx, "UI_Select"):
+            return False
+        ran_any = True
+        # Verify by event when wired; a missed event is a no-op service
+        # (already full / pristine), logged, not a failure.
+        if ctx.event_waiter is not None:
+            if ctx.event_waiter(expect_event, verify_s):
+                ctx.log("StationServiceOk", {"service": expect_event})
+            else:
+                ctx.log("StationServiceNoEvent", {"service": expect_event})
+        ctx.sleeper(settle_s)
+    ctx.log("StationServicesDone", {"reason": "complete", "ran": ran_any})
+    return True
+
+
+def step_auto_launch(ctx: StepContext, *, settle_s: float = 0.4,
+                     poll_s: float = 0.8, max_wait_s: float = 300.0) -> bool:
+    """PIT-STOP leave: AUTO LAUNCH off the pad, gate on Undocked.
+
+    Operator-walked from the auto-opened Services panel: **S, S** (UI_Down x2,
+    to AUTO LAUNCH) -> **Space** (UI_Select). Undocked fires immediately; the
+    docking computer then flies the ship out. Completion (clear of the station)
+    is QUEUE-VARIABLE — NEVER gated on a timer; the FsdMassLocked-clear gate in
+    the next step owns 'clear to jump'.
+
+    Gate on the Undocked journal event, with status.docked going False as the
+    state fallback (event-gates-need-state-check: already undocked on entry, or
+    a missed event). `max_wait_s` is a FAIL backstop only. Without event/status
+    wiring the presses are the step."""
+    # State-check first: already undocked on entry -> nothing to launch.
+    st = ctx.status_supplier()
+    if st is not None and not getattr(st, "docked", False):
+        ctx.log("AutoLaunchDone", {"reason": "already_undocked"})
+        return True
+    # S, S -> AUTO LAUNCH; Space -> activate.
+    if not _press(ctx, "UI_Down"):
+        return False
+    ctx.sleeper(settle_s)
+    if not _press(ctx, "UI_Down"):
+        return False
+    ctx.sleeper(settle_s)
+    if not _press(ctx, "UI_Select"):
+        return False
+    if ctx.event_waiter is None:
+        return True                        # no journal wiring -> presses are the step
+    start = ctx.clock()
+    while ctx.clock() - start <= max_wait_s:
+        if ctx.should_abort():
+            ctx.log("AutoLaunchDone", {"reason": "abort"})
+            return False
+        if ctx.event_waiter("Undocked", poll_s):
+            ctx.log("AutoLaunchDone", {"reason": "undocked_event"})
+            return True
+        st = ctx.status_supplier()
+        if st is not None and not getattr(st, "docked", False):
+            ctx.log("AutoLaunchDone", {"reason": "undocked_flag"})
+            return True
+    ctx.log("AutoLaunchDone", {"reason": "watchdog"})
+    return False
+
+
+def step_wait_masslock_clear(ctx: StepContext, *, poll_s: float = 0.5,
+                             max_wait_s: float = 300.0) -> bool:
+    """Block until the FsdMassLocked status flag clears (Status bit 16).
+
+    After auto-launch the ship is mass-locked by the station and ED forbids
+    FSD spool within ~10km; the docking computer flies it out and the lock
+    clears once clear. STATE-DRIVEN, mirrors step_wait_cooldown_clear: flag
+    already clear -> instant pass. `max_wait_s` is a FAIL backstop only (the
+    fly-out is queue-variable); the decision input is the flag. Fails closed
+    without status; exits False on operator abort."""
+    if ctx.status_supplier() is None:
+        ctx.log("WaitMassLockNoStatus", {})
+        return False
+    start = ctx.clock()
+    while True:
+        if ctx.should_abort():
+            ctx.log("WaitMassLockDone", {"reason": "abort"})
+            return False
+        if ctx.clock() - start > max_wait_s:
+            ctx.log("WaitMassLockDone", {"reason": "watchdog"})
+            return False
+        st = ctx.status_supplier()
+        if st is not None and not getattr(st, "fsd_mass_locked", False):
+            ctx.log("WaitMassLockDone", {"reason": "clear"})
+            return True
+        ctx.sleeper(poll_s)
+
+
+def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
+    """Like _ensure_cockpit_focus, but the Starport Services panel is the
+    EXPECTED scene on Docked (GuiFocus = StationServices), so a non-zero focus
+    is NOT a desync to back out of here. Status unwired -> True (legacy)."""
+    # Nothing to verify without status, and the panel auto-opens on Docked, so
+    # we deliberately do NOT press UI_Back (that would close Services). Always
+    # proceed — the services macro starts from the auto-opened panel.
+    return True
+
+
 # Steps that OWN input: multi-key UI macros where a stray concurrent keypress
 # (e.g. the heat watchdog's DeployHeatSink) could desync the panel UI state.
 # The interpreter wraps these in ctx.exclusive_guard; the heat watchdog skips
 # its tick while any is running (spec 2026-06-06-heat-watchdog-design).
 # scoop_refuel is deliberately NOT here: its taps are SetSpeed keys, no UI
 # panel state, and the watchdog must stay live through the whole scoop.
-INPUT_EXCLUSIVE_ACTIONS = frozenset({"sc_assist_orbit", "nav_panel_target"})
+# dock_target_station / dock_request / station_services drive blind multi-key
+# UI macros (nav panel Contacts, request-docking, Starport Services) — they
+# OWN input the same way sc_assist_orbit / nav_panel_target do. dock_sc_assist
+# also runs the SC-assist UI macro. dock_await_docked sends no keys (pure
+# wait) so it stays out.
+INPUT_EXCLUSIVE_ACTIONS = frozenset({
+    "sc_assist_orbit", "nav_panel_target",
+    "dock_target_station", "dock_sc_assist", "dock_request", "station_services",
+    "auto_launch",
+})
 
 STEP_REGISTRY.update({
     "sc_assist_orbit": step_sc_assist_orbit,
@@ -1296,4 +1718,11 @@ STEP_REGISTRY.update({
     "hold_alignment": step_hold_alignment,
     "orient_widget_ring": step_orient_widget_ring,
     "scoop_refuel": step_scoop_refuel,
+    "dock_target_station": step_dock_target_station,
+    "dock_sc_assist": step_dock_sc_assist,
+    "dock_request": step_dock_request,
+    "dock_await_docked": step_dock_await_docked,
+    "station_services": step_station_services,
+    "auto_launch": step_auto_launch,
+    "wait_masslock_clear": step_wait_masslock_clear,
 })

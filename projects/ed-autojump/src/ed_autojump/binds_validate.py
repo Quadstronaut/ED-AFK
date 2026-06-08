@@ -61,8 +61,12 @@ REQUIRED_ACTIONS: frozenset[str] = frozenset({
     "PrimaryFire",
     # flow/steps.py: step_ensure_analysis_mode (honk needs ANALYSIS HUD mode)
     "PlayerHUDModeToggle",
-    # executor/navpanel.py (sc_assist_orbit + nav_panel_target)
+    # executor/navpanel.py (sc_assist_orbit + nav_panel_target + request_docking)
     "FocusLeftPanel", "UI_Select", "UI_Right",
+    # executor/navpanel.py: request_docking — UI_Down (pin tap) + CycleNextPanel
+    # (E, Navigation->Contacts tab) + UI_Up (pin hold). UI_Up/UI_Down are also
+    # pressed by target_via_navpanel's pin (it predates this contract entry).
+    "UI_Up", "UI_Down", "CycleNextPanel",
     # flow/dispatcher.py: heat_guard
     "DeployHeatSink",
 })
@@ -75,6 +79,7 @@ REQUIRED_ACTIONS: frozenset[str] = frozenset({
 # SAME group below is a real collision the validator must reject.
 _UI_ACTIONS: frozenset[str] = frozenset({
     "FocusLeftPanel", "UI_Select", "UI_Right",
+    "UI_Up", "UI_Down", "CycleNextPanel",
 })
 # Everything else the bot presses is a flight control.
 _FLIGHT_ACTIONS: frozenset[str] = REQUIRED_ACTIONS - _UI_ACTIONS

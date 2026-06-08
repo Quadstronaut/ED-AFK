@@ -66,6 +66,8 @@ def _runner(sender, *, status=None, record=None, navroute=None, overlay=None):
         "route_complete_park": Procedure(
             name="route_complete_park",
             steps=(Step("set_throttle", {"pct": 0}),)),
+        # dock (station terminus) -> SetSpeed50, distinguishable from park.
+        "dock": Procedure(name="dock", steps=(Step("set_throttle", {"pct": 50}),)),
     }
     return FlowRunner(
         procedures=procs, sender=sender, clock=lambda: 0.0,
@@ -284,10 +286,11 @@ def test_second_jump_same_system_no_replot_runs_arrival():
 
 # ---- system-vs-station decision ----------------------------------------------
 
-def test_station_destination_records_gated_and_still_parks():
-    """Destination Body != 0, in the arrival system, name is a non-star
-    station -> the station-gated path: record RouteCompleteStationGated AND
-    still park (docking not built). Never abort-to-human."""
+def test_station_destination_runs_dock_not_park():
+    """Destination Body != 0, in the arrival system, name is a non-star station
+    -> the STATION branch runs the real dock flow (SetSpeed50 stand-in), NOT
+    the system park (SetSpeedZero), and records RouteCompleteStation. (Replaces
+    the old gated-marker-and-park behavior, which the dock feature superseded.)"""
     sender = FakeSender()
     records = []
     st = _status(dest_name="Jameson Memorial", dest_body=4, dest_system=12345)
@@ -297,9 +300,10 @@ def test_station_destination_records_gated_and_still_parks():
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
     r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
-    assert any(n == "RouteCompleteStationGated" and p["station"] == "Jameson Memorial"
+    assert any(n == "RouteCompleteStation" and p["station"] == "Jameson Memorial"
                for n, p in records)
-    assert "SetSpeedZero" in sender.actions()                    # still parked
+    assert "SetSpeed50" in sender.actions()                  # dock ran
+    assert "SetSpeedZero" not in sender.actions()            # NOT the park path
 
 
 def test_star_destination_body_zero_runs_system_park():

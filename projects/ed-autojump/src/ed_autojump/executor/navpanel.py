@@ -163,6 +163,23 @@ def target_via_navpanel(
     """
     sender.press(panel_focus_action)
     sleeper(settle_s)
+    _target_pin_and_walk(sender, sleeper, settle_s, rows_down,
+                         pin_to_top, pin_hold_s)
+    sender.press("UI_Select")
+    sleeper(settle_s)
+    sender.press("UI_Select")
+    sleeper(settle_s)
+    sender.press(panel_focus_action)
+    sleeper(settle_s)
+
+
+def _target_pin_and_walk(sender, sleeper, settle_s, rows_down,
+                         pin_to_top, pin_hold_s):
+    """Shared cursor-positioning prelude for the nav-panel macros: optionally
+    pin the cursor to the top row, then walk `rows_down` rows down. Factored
+    out of target_via_navpanel so request_docking reuses the SAME pin
+    mechanics (the cursor-persists-across-jumps fact applies on the Contacts
+    tab too)."""
     if pin_to_top:
         sender.press("UI_Down")          # one tap down, off the top edge
         sleeper(settle_s)
@@ -171,9 +188,69 @@ def target_via_navpanel(
     for _ in range(max(0, rows_down)):
         sender.press("UI_Down")
         sleeper(settle_s)
+
+
+def request_docking(
+    sender: Sender,
+    *,
+    sleeper: Callable[[float], None] = time.sleep,
+    settle_s: float = DEFAULT_SETTLE_S,
+    panel_focus_action: str = "FocusLeftPanel",
+    tab_cycle_action: str = "CycleNextPanel",
+    pin_to_top: bool = True,
+    pin_hold_s: float = 4.0,
+) -> None:
+    """Blind nav-panel macro that REQUESTS DOCKING at the station.
+
+    Operator-walked sequence (current binds — these are the LEFT PANEL keys):
+
+        panel_focus_action  -> open the left ("navigation") panel
+        tab_cycle_action x2 -> Navigation -> (Transactions) -> CONTACTS tab
+                               (E x2: the station sits at position 0 on the
+                               CONTACTS tab — on the NAVIGATION tab position 0
+                               is the orbited BODY, not the station, which is
+                               why we MUST be on Contacts)
+        [pin to top]        -> the panel cursor persists across opens/jumps;
+                               pin it to row 0 (tap down once off any top-edge
+                               state, then HOLD up — saturates at the top,
+                               WRAPS on taps) so the station is selected
+        UI_Select           -> select the station -> opens its detail pane
+                               (this ALSO targets the station)
+        UI_Right            -> move to "Request Docking" (operator's physical
+                               D key = UI_Right in the live binds — the detail
+                               pane lays the docking control one step off the
+                               selected row)
+        UI_Select           -> send the docking request
+        panel_focus_action  -> close the panel
+
+    Mirrors engage_supercruise_assist / target_via_navpanel: a `settle_s`
+    sleep after every press for the UI animation; `sender`/`sleeper` injected
+    so tests neither key nor sleep. Selecting the contact OR the Request
+    Docking control TARGETS the station, so Status.Destination reads the
+    station after this runs.
+
+    Raises KeyError (via the sender) if any action is unbound; the validator
+    requires CycleNextPanel (E) — it was added to REQUIRED_ACTIONS for this.
+    """
+    sender.press(panel_focus_action)
+    sleeper(settle_s)
+    # Navigation -> Contacts (two tabs over). The station is position 0 on
+    # the Contacts tab.
+    sender.press(tab_cycle_action)
+    sleeper(settle_s)
+    sender.press(tab_cycle_action)
+    sleeper(settle_s)
+    # Pin the (persistent) cursor to the top row = the station at position 0.
+    _target_pin_and_walk(sender, sleeper, settle_s, 0, pin_to_top, pin_hold_s)
+    # Select the station -> open its detail pane (also targets it).
     sender.press("UI_Select")
     sleeper(settle_s)
+    # Move onto the "Request Docking" control (operator's physical D = UI_Right).
+    sender.press("UI_Right")
+    sleeper(settle_s)
+    # Send the request.
     sender.press("UI_Select")
     sleeper(settle_s)
+    # Close the panel.
     sender.press(panel_focus_action)
     sleeper(settle_s)

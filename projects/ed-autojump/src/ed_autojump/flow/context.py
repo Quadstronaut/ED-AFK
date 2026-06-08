@@ -82,6 +82,23 @@ class StepContext:
     # relies on; an N-minute loiter (the 25-min restart incident) is not.
     jump_age_supplier: Callable[[], Optional[float]] = lambda: None
 
+    # Reason string of the most recent DockingDenied event seen by the
+    # FlowRunner (or None). step_dock_request reads it to tell a retryable
+    # "Distance" denial (re-approach) from an abort-to-human denial
+    # (NoSpace/TooLarge/Hostile/...). The name-only event_waiter can't carry
+    # the Reason field, so the runner stashes it and exposes it here. None =
+    # not wired / no denial.
+    docking_denied_supplier: Callable[[], Optional[str]] = lambda: None
+
+    # Reset the runner's stashed DockingDenied reason to None. step_dock_request
+    # calls this when it ARMS so it only ever acts on a denial earned by ITS OWN
+    # request — the dispatcher clears on grant/dock but NOT when a new request
+    # begins, so a stale reason (e.g. the out-of-range Distance denial that
+    # step_dock_target_station's Contacts fallback deliberately earns) would
+    # otherwise poison the next in-range request's grant loop. No-op default
+    # (unit tests with no runner wiring).
+    clear_docking_denied: Callable[[], None] = lambda: None
+
     # outcome logging (recorder.record_outcome), optional
     record: Optional[Callable[[str, Any], None]] = None
 
