@@ -75,7 +75,10 @@ def step_reset_power_distribution(ctx: StepContext, *, presses: int = 3) -> bool
     (no-arbitrary-timed-waits applies to gates, not spacers)."""
     # Pre-press settle: avoids zero-gap back-to-back with the prior keypress
     # (arrival step 7->7b: set_throttle pct=100 fires immediately before this).
-    _SETTLE_S = 0.08
+    # 0.8s is the PROVEN-good spacing from pip_probe.py (operator live test
+    # 2026-06-08) — not a smaller guess; the ~2.4s cost is trivial in a 26s+
+    # arrival leg, and a dropped pip-reset is worth avoiding outright.
+    _SETTLE_S = 0.8
     ctx.sleeper(_SETTLE_S)
     ok = False
     for i in range(presses):
@@ -102,8 +105,9 @@ def step_pips_engines(ctx: StepContext, *, presses: int = 4) -> bool:
     PAUSE=0 silently drop presses (pip_probe.py live test confirmed). Each
     press gets a small spacer so the ResetPowerDistribution and the four
     IncreaseEnginesPower taps are individually registered by the game.
-    Spacer is via ctx.sleeper (injected) so tests stay deterministic."""
-    _SETTLE_S = 0.08
+    Spacer is via ctx.sleeper (injected) so tests stay deterministic. 0.8s
+    is the proven-good probe spacing (pip_probe.py, 2026-06-08)."""
+    _SETTLE_S = 0.8
     if not _press(ctx, "ResetPowerDistribution"):
         return False
     for _ in range(presses):
