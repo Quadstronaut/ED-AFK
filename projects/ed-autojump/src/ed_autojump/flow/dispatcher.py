@@ -884,6 +884,34 @@ class FlowRunner:
             # startup, whose recovery lane runs the same star-astern escape.
             self._run("smack_recovery")
             return
+        # EMPTY-ROUTE GUARD (2026-06-08 council, Wolf 359 fresh-login defect):
+        # a normal-space fresh login with NO plotted route fell through to
+        # startup, which flailed against a non-existent route — target_next_route
+        # spun the full 60s watchdog (no FSDTarget ever fires with no next hop)
+        # and the recovery lane orbited a star it had nowhere to jump from.
+        # _is_parked_terminal (above) only covers the in-supercruise case; the
+        # normal-space empty-route login is the gap. Reuse the same affirmative
+        # route read (L829-831) but the OPPOSITE safe default: empty/absent/
+        # unknown route -> do NOT fly. Clean abort (council-decided over idle-
+        # with-rearm: re-arm would dispatch startup mid-session into a drifted
+        # scene — untested, against "don't regress the jump loop"). The operator
+        # plots a route and relaunches; the gap is signalled on the overlay.
+        # This is NOT stop_requested — returning keeps the heat watchdog alive;
+        # _startup_done is already True (above) so _maybe_startup never re-fires.
+        # `not route` collapses both route=None and route=[] into "block" —
+        # the safe direction (fail closed). A len>=2 route falls through to _run.
+        nr = self._navroute_state()
+        route = getattr(nr, "route", None) if nr is not None else None
+        if not route:                          # None / absent / [] -> no onward hop
+            if self.record is not None:
+                self.record("NoRouteOnStartup", {"system": self._current_system})
+            if self.overlay is not None:
+                try:
+                    self.overlay.event("[NO ROUTE] Plot a route and relaunch")
+                    self.overlay.status("No route plotted. Idle.")
+                except Exception:              # noqa: BLE001 — overlay is fail-soft
+                    pass
+            return
         self._run("startup")
 
     def request_stop(self) -> None:
