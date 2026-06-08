@@ -146,7 +146,7 @@ def _fake_registry_running(real_lock, fired, status_fn):
             return True
         return fn
 
-    actions = {"set_throttle", "reset_power_distribution", "scoop_refuel",
+    actions = {"set_throttle", "scoop_refuel",
                "sc_assist_orbit", "wait",
                "target_next_route", "orient_compass", "orient_widget_ring",
                "engage_jump", "hold_alignment", "honk"}

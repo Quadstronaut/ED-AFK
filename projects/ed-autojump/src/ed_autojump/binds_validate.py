@@ -51,9 +51,6 @@ REQUIRED_ACTIONS: frozenset[str] = frozenset({
     "TargetNextRouteSystem",
     # flow/steps.py: _THROTTLE_ACTION (set_throttle action)
     "SetSpeedZero", "SetSpeed25", "SetSpeed50", "SetSpeed75", "SetSpeed100",
-    # flow/steps.py: step_reset_power_distribution (post-SC throttle-100 pip
-    # reset, Down arrow) AND step_pips_engines (resets before the ENG climb).
-    "ResetPowerDistribution",
     # flow/steps.py: step_pitch_compass, executor/align.py
     "PitchUpButton", "PitchDownButton",
     # executor/align.py

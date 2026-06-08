@@ -12,39 +12,16 @@ sufficient (proven live by arrival). See test_startup_recovery_has_no_pitch_aste
 
 from pathlib import Path
 
-from ed_autojump.flow.context import StepContext
 from ed_autojump.flow.loader import load_procedures
-from ed_autojump.flow.steps import STEP_REGISTRY
-from tests.flow import FakeSender
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
 
-
-# ---- pips_engines step ------------------------------------------------------
-
-def test_pips_engines_resets_then_maxes_engines():
-    sleeps = []
-    s = FakeSender()
-    ctx = StepContext(sender=s, sleeper=lambda t: sleeps.append(t))
-    ok = STEP_REGISTRY["pips_engines"](ctx)
-    assert ok is True
-    # Reset to 2/2/2 first, then 4x ENG: 4 = the pip cap, extra presses are
-    # in-game no-ops so over-pressing can never misallocate.
-    assert s.actions() == (["ResetPowerDistribution"]
-                           + ["IncreaseEnginesPower"] * 4)
-    # Inter-press sleeps: one settle before each of the 4 IncreaseEnginesPower
-    # presses (WHY: PAUSE=0 back-to-back SendInput drops presses, live-confirmed
-    # by pip_probe.py 2026-06-08).
-    assert len(sleeps) == 4
-    assert all(t > 0 for t in sleeps)
-
-
-def test_pips_engines_fails_clean_on_missing_bind():
-    sleeps = []
-    s = FakeSender(unbound={"IncreaseEnginesPower"})
-    ctx = StepContext(sender=s, sleeper=lambda t: sleeps.append(t))
-    ok = STEP_REGISTRY["pips_engines"](ctx)
-    assert ok is False
+# NOTE 2026-06-08: pip management (pips_engines / reset_power_distribution) was
+# RIPPED from the bot (operator: "we're scrapping it"). The recovery-lane order
+# and retry-anchor assertions below diverge from the operator's hand-edited
+# startup.toml (two anchors, retry_from = sc_assist_orbit, reordered SC entry)
+# and are left RED on purpose — reconciling startup.toml with these wiring tests
+# is part of the #31 smacked-startup recovery council redesign, not the pip rip.
 
 
 # ---- startup.toml wiring ----------------------------------------------------
@@ -53,10 +30,10 @@ def _startup():
     return load_procedures(PROC_DIR)["startup"]
 
 
-def test_first_lane_is_pips_then_direct_jump():
+def test_first_lane_is_direct_jump():
     actions = [s.action for s in _startup().steps]
-    assert actions[:7] == [
-        "pips_engines", "set_throttle", "target_next_route",
+    assert actions[:6] == [
+        "set_throttle", "target_next_route",
         "orient_compass", "orient_widget_ring", "engage_jump",
         "hold_alignment",
     ]

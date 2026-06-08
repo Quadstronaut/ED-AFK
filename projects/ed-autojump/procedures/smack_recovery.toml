@@ -46,7 +46,6 @@ retry_from_if_supercruise = "target_next_route"
 steps = [
   # ── Real-space recovery during the smack cooldown ────────────────────────
   { action = "set_throttle", pct = 0 },                                                       # tap    | 0 kill thrust
-  { action = "pips_engines" },                                                                # tap    | 0.6 all pips ENG
   { action = "nav_panel_target", required = true },                                           # macro  | 1 EXCLUSIVE — star = row 0; compass-verified lock
   { action = "set_throttle", pct = 75 },                                                     # tap    | 2 full burn through the flip (operator order)
   # timeout_s/max_iters are FAILSAFE ceilings (the gate is the compass read,
@@ -69,7 +68,6 @@ steps = [
   # ── In supercruise: lock the hop, clear the star, jump ───────────────────
   { action = "target_next_route", required = true, retry_anchor = true },                     # gated  | 6 hop lock — SC failures return HERE
   { action = "set_throttle", pct = 100 },                                                     # tap    | 7 SC entry reset the throttle
-  { action = "reset_power_distribution" },                                                    # tap    | 7b normalize pips after the post-SC throttle-100 (operator 2026-06-07)
   { action = "wait", s = 13.0 },                                                              # wait   | 7.5 fly clear of the star — TRAJECTORY PACING, not a gate
   { action = "orient_compass", required = true },                                             # vision | 8 EXCLUSIVE coarse
   { action = "orient_widget_ring", required = true },                                         # vision | 9 fine (no-op unless [vision].widget_ring_alignment)
