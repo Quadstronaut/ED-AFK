@@ -62,3 +62,9 @@ fixtures/journals/*.log
 *.exe
 *.msi
 .claude/scheduled_tasks.lock
+
+# Agent / calibration scratch in the nested project (the rules above are
+# root-anchored and miss projects/ed-autojump/, so anchor them here too).
+projects/ed-autojump/.claude/
+projects/ed-autojump/calibration/*.png
+projects/ed-autojump/calibration/*.json
