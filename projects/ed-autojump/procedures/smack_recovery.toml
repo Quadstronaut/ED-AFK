@@ -67,6 +67,7 @@ steps = [
   # ── In supercruise: lock the hop, clear the star, jump ───────────────────
   { action = "target_next_route", required = true, retry_anchor = true },                     # gated  | 6 hop lock — SC failures return HERE
   { action = "set_throttle", pct = 100 },                                                     # tap    | 7 SC entry reset the throttle
+  { action = "reset_power_distribution" },                                                    # tap    | 7b normalize pips after the post-SC throttle-100 (operator 2026-06-07)
   { action = "wait", s = 13.0 },                                                              # wait   | 7.5 fly clear of the star — TRAJECTORY PACING, not a gate
   { action = "orient_compass", required = true },                                             # vision | 8 EXCLUSIVE coarse
   { action = "orient_widget_ring", required = true },                                         # vision | 9 fine (no-op unless [vision].widget_ring_alignment)

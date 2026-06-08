@@ -68,6 +68,13 @@ steps = [
   { action = "wait", s = 13.0 },                    # wait   | 5 let orbit acquire
   { action = "target_next_route", required = true },                # gated  | 6 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },           # tap    | 7 burn
+  # AMBIGUOUS SITE (flagged for operator review 2026-06-07): arrival has no
+  # engage_supercruise step — the ship ARRIVES in supercruise via FSDJump, so
+  # this throttle-100 is the first throttle-100 of the supercruise leg. Treated
+  # as a "post-SC-entry throttle-100" per operator intent. Confirm this is
+  # wanted; if "entering SC" should mean only an explicit engage_supercruise,
+  # drop this one.
+  { action = "reset_power_distribution" },          # tap    | 7b normalize pips after the post-SC throttle-100 (operator 2026-06-07)
   { action = "wait", s = 13.0 },                    # wait   | 8 clear the star — TRAJECTORY PACING, not a gate
   { action = "orient_compass", required = true },        # vision | 9a coarse align to the hop
   { action = "orient_widget_ring", required = true },    # vision | 9b fine (no-op unless [vision].widget_ring_alignment)

@@ -66,6 +66,7 @@ steps = [
   { action = "sc_assist_orbit" },                          # macro  | 13 EXCLUSIVE — guarded SC-assist; a refusal degrades to the direct jump below
   { action = "target_next_route", required = true },                        # gated  | 14 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },                  # tap    | 15
+  { action = "reset_power_distribution" },                 # tap    | 15b normalize pips after the post-SC throttle-100 (operator 2026-06-07)
   { action = "wait", s = 13.0, retry_anchor = true },      # wait   | 16 clearance burn — failures at/after here RETURN HERE
   { action = "orient_compass", required = true },          # vision | 17 coarse
   { action = "orient_widget_ring", required = true },      # vision | 18 fine

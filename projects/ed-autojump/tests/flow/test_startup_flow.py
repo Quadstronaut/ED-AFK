@@ -53,7 +53,9 @@ def test_recovery_lane_clears_the_star_before_the_hop():
         "pips_engines", "engage_supercruise",
         "orient_compass",      # 12b nose back on the star before the assist
         "sc_assist_orbit",
-        "target_next_route", "set_throttle", "wait",
+        "target_next_route", "set_throttle",
+        "reset_power_distribution",   # 15b pip-normalise after the post-SC throttle-100
+        "wait",
         "orient_compass", "orient_widget_ring", "engage_jump",
         "hold_alignment",
     ]

@@ -36,6 +36,7 @@ def test_v7_step_order():
         "hold_alignment",      # 5.6 hold until SupercruiseEntry
         "target_next_route",   # 6  hop lock — SC-segment retry anchor
         "set_throttle",        # 7  100 again (SC entry resets throttle)
+        "reset_power_distribution",  # 7b pip-normalise after the post-SC throttle-100
         "wait",                # 7.5 13s clear of the star
         "orient_compass",      # 8
         "orient_widget_ring",  # 9

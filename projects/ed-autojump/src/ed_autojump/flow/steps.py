@@ -53,6 +53,19 @@ def step_pitch(ctx: StepContext, *, dir: str, hold_s: float) -> bool:
     return _press(ctx, action, hold_s)
 
 
+def step_reset_power_distribution(ctx: StepContext) -> bool:
+    """Tap ResetPowerDistribution (Down arrow in the live preset) to balance
+    the pips back to the 2/2/2 split (operator request 2026-06-07): runs right
+    after the post-SC-entry throttle-100 so every supercruise leg starts from a
+    normalised power distribution.
+
+    Best-effort, like set_throttle / pips_engines: a single fire-and-forget tap,
+    NOT required, no gates. A missed press is harmless (the pips just stay as
+    they were). Plain arrow-key tap with no UI panel state -> deliberately NOT
+    input-exclusive (the heat watchdog stays live), matching pips_engines."""
+    return _press(ctx, "ResetPowerDistribution")
+
+
 def step_target_ahead(ctx: StepContext) -> bool:
     # SelectTarget locks the body ahead; with NOTHING ahead it clears the target.
     return _press(ctx, "SelectTarget")
@@ -257,6 +270,7 @@ STEP_REGISTRY: dict[str, Callable[..., bool]] = {
     "set_throttle": step_set_throttle,
     "pitch": step_pitch,
     "pips_engines": step_pips_engines,
+    "reset_power_distribution": step_reset_power_distribution,
 }
 
 def step_ensure_analysis_mode(
