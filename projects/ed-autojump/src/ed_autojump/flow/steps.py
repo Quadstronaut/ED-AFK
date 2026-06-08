@@ -707,9 +707,35 @@ def step_pitch_compass(
     timeout_s: float = 30.0,
     behind_gain_s: float = 0.4,      # behind-centering: press seconds per mag
     behind_min_hold: float = 0.08,   # actuation floor for a tap
+    behind_confirm_reads: int = 1,   # CONSECUTIVE behind-gate beats to certify
+    behind_fill_max: "float | None" = None,  # decisive-hollow ceiling (smack)
 ) -> bool:
     """Compass-gated pitch. PitchUp until the TARGETED star's dot reaches the
-    gate, then stop. NEVER throttles. Fails closed without vision."""
+    gate, then stop. NEVER throttles. Fails closed without vision.
+
+    until="behind" false-pass refix (2026-06-08, smack-scoped). At a smack the
+    star is ALWAYS in front and BRIGHT; glare degrades the front/behind
+    classifier, so a SINGLE hollow+centered read is NOT trustworthy evidence
+    that the ship pitched 180 (the 2026-06-08 false pass: a glare-bright FRONT
+    star read hollow at mag 0.3487 <= center_frac 0.35 on beat 0, latched
+    "astern" before any rotation, then the flow throttled INTO the star;
+    stars do not mass-lock so engage_jump's status gate gave zero protection).
+
+    POSITIVE EVIDENCE OF ROTATION, two opt-in gates (defaults = exact legacy
+    single-read behavior, so no caller/test changes):
+      * behind_confirm_reads (>1): the behind gate must hold for that many
+        CONSECUTIVE beats before certifying. One coin-flip beat can no longer
+        latch; the run resets on any non-qualifying beat (front / miss /
+        non-hollow). This keys on the BEHIND read the ship emits once it
+        actually rotates — NOT on a confident FRONT read glare may never give,
+        so it cannot deadlock (the prior front-precondition fix did).
+      * behind_fill_max (set): a beat only QUALIFIES when DECISIVELY hollow
+        (front_fill <= behind_fill_max). A glare-bright front star's fill sits
+        in/above the 0.35-0.65 uncertainty band and can never qualify.
+        front_fill is None (non-fill backend) does NOT block — falls back to
+        the consecutive-reads requirement alone (never a deadlock).
+    The existing max_iters/timeout_s backstop still fails CLOSED (False, no
+    throttle) if rotation never completes — never fail-OPEN."""
     if ctx.compass_reader is None or ctx.frame_grabber is None:
         ctx.log("PitchCompassNoVision", {"until": until})
         return False
@@ -721,7 +747,16 @@ def step_pitch_compass(
         if not read.found:
             return False
         if until == "behind":
-            return (not read.in_front) and read.magnitude <= center_frac
+            if read.in_front or read.magnitude > center_frac:
+                return False
+            # Decisive-hollow filter (smack): a glare-bright FRONT star can
+            # read hollow by classifier noise, but its fill sits in/above the
+            # uncertainty band — reject it. front_fill None = no fill backend
+            # -> skip the filter (the consecutive-reads gate still applies).
+            if (behind_fill_max is not None and read.front_fill is not None
+                    and read.front_fill > behind_fill_max):
+                return False
+            return True
         # "edge": dot near the rim (≈90° off the nose)
         return read.magnitude >= edge_frac
 
@@ -766,6 +801,8 @@ def step_pitch_compass(
     start = ctx.clock()
     misses = 0   # consecutive not_found beats
     fronts = 0   # consecutive in_front beats (until="behind" only)
+    confirms = 0  # consecutive behind-gate beats (behind_confirm_reads gate)
+    confirm_target = max(1, behind_confirm_reads)
     prev_front = None  # last FOUND verdict -> _measure hysteresis
     for i in range(max_iters):
         if ctx.clock() - start > timeout_s:
@@ -790,6 +827,14 @@ def step_pitch_compass(
         fronts = fronts + 1 if (read.found and read.in_front) else 0
         front_flicker = (until == "behind" and read.found
                          and read.in_front and fronts < 2)
+        # CONSECUTIVE-confirm gate: a single hollow+centered beat is not
+        # trustworthy under glare (the 2026-06-08 false pass). Require
+        # confirm_target beats in a row that all clear _at_gate; any
+        # non-qualifying beat resets the run. confirm_target=1 (default) =
+        # legacy single-read certify. Hold position (no press) while
+        # accumulating confirms — pressing would move the dot off the gate.
+        confirms = confirms + 1 if at_gate else 0
+        confirmed = at_gate and confirms >= confirm_target
         action = (None if (at_gate or transient_miss or front_flicker)
                   else _press_for(read))
         hold = None if action is None else _hold_for(read)
@@ -802,11 +847,13 @@ def step_pitch_compass(
             "ox": round(read.offset_x, 4),
             "oy": round(read.offset_y, 4), "mag": round(read.magnitude, 4),
             "action": action, "hold": hold,
+            "confirms": confirms,
         })
-        if at_gate:
+        if confirmed:
             ctx.log("PitchCompassDone", {"until": until, "iters": i,
                                          "offset_y": read.offset_y,
-                                         "in_front": read.in_front})
+                                         "in_front": read.in_front,
+                                         "confirms": confirms})
             return True
         if action is not None:           # transient miss -> hold position
             ctx.sender.press(action, hold=hold)

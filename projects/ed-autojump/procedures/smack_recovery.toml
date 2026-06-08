@@ -51,7 +51,12 @@ steps = [
   # timeout_s/max_iters are FAILSAFE ceilings (the gate is the compass read,
   # never the clock); center_frac 0.35 = "hollow dot and center" with ~0.07
   # read noise headroom (2026-06-06 run 5).
-  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 3 pitch 180 — star astern
+  # behind_confirm_reads/behind_fill_max (2026-06-08 false-pass refix): the
+  # star is ALWAYS in front + BRIGHT at a smack, so a single hollow+centered
+  # read is glare noise, not proof of a 180. Require 3 CONSECUTIVE decisively-
+  # hollow (front_fill <= 0.30, below the 0.35 band floor) behind-gate beats
+  # before certifying astern — positive rotation evidence, never a fail-open.
+  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40, behind_confirm_reads = 3, behind_fill_max = 0.30 },  # vision | 3 pitch 180 — star astern
   { action = "wait_cooldown_clear", required = true },                                        # wait   | 4 smack cooldown — FsdCooldown flag-gated, no timer
   { action = "target_ahead" },                                                                # tap    | 4.5 T — star astern, nothing ahead -> deselect
   # until_charging: success = a LIVE CHARGE, not entry — the charge is what
