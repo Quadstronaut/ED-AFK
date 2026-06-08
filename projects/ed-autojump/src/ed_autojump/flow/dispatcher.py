@@ -759,6 +759,13 @@ class FlowRunner:
                     getattr(d, "body", 0),
                     (getattr(d, "name", "") or "").strip(),
                 )
+            else:
+                # A new plot that is NOT to a station CLEARS any prior capture
+                # (skeptic seat): FlowRunner is long-lived, so a stale station
+                # latch would otherwise survive into a later same-system
+                # system-route and wrongly trigger the dock flow. Every NavRoute
+                # resets the latch to the CURRENT plot's intent.
+                self._dock_target = None
         elif name == "NavRouteClear":
             # Route cleared. Latch it + its journal timestamp. This fires on the
             # final hop (in witchspace) AND on a manual re-plot — the FSDJump

@@ -680,6 +680,33 @@ def test_capture_at_plot_ignores_system_star_dest():
     assert r._dock_target is None
 
 
+def test_capture_at_plot_clears_stale_station_on_system_replot():
+    """A station capture must NOT persist into a later system-only plot
+    (skeptic seat): FlowRunner is long-lived, so a second NavRoute to a SYSTEM
+    (Body 0) clears the prior station latch -> park, never a wrong dock."""
+    sender = FakeSender()
+    st_station = SimpleNamespace(
+        destination=SimpleNamespace(name="Robigo Mines", body=4, system=55555),
+        in_supercruise=True, docked=False, fsd_charging=False,
+        fsd_cooldown=False, fsd_mass_locked=False, overheating=False)
+    cur = {"st": st_station}
+
+    class _NR:
+        route = [SimpleNamespace(system_address=55555, star_system="Robigo")]
+
+    r = FlowRunner(
+        procedures=_full_procs(), sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None, status_supplier=lambda: cur["st"],
+        navroute_reader=type("R", (), {"poll": lambda self: _NR(),
+                                       "current": _NR()})())
+    r._on_tail_event(_ev("NavRoute"))
+    assert r._dock_target == (55555, 4, "Robigo Mines")   # station captured
+    # A NEW plot to a pure system (Body 0) must CLEAR the stale capture.
+    cur["st"] = _system_status()
+    r._on_tail_event(_ev("NavRoute"))
+    assert r._dock_target is None
+
+
 def test_route_complete_with_captured_station_runs_dock():
     """Route arrives at the captured station's system -> dock runs (SetSpeed50)
     instead of park (SetSpeedZero), even though live Status.Destination has been
