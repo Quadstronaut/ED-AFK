@@ -37,8 +37,9 @@ def _step_from_table(table: dict) -> Step:
     action = table.pop("action")
     required = bool(table.pop("required", False))
     retry_anchor = bool(table.pop("retry_anchor", False))
+    skip_to = table.pop("skip_to", None)
     return Step(action=action, params=table, required=required,
-                retry_anchor=retry_anchor)
+                retry_anchor=retry_anchor, skip_to=skip_to)
 
 
 def load_procedure(path: str | Path) -> Procedure:
@@ -86,6 +87,13 @@ def validate_procedure(proc: Procedure, known_actions: Iterable[str]) -> list[st
         if step.action not in known:
             errors.append(
                 f"{proc.name}: step {i} uses unknown action {step.action!r}"
+            )
+        # A skip_to that matches no step would silently fall through to a
+        # one-step advance at runtime (interpreter), defeating the skip — catch
+        # the typo loudly, same as retry_from below.
+        if step.skip_to is not None and proc.index_of_action(step.skip_to) is None:
+            errors.append(
+                f"{proc.name}: step {i} skip_to {step.skip_to!r} matches no step"
             )
     rf = proc.on_required_fail.retry_from
     if rf is not None and proc.index_of_action(rf) is None:

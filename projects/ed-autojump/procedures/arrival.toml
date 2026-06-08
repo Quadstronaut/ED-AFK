@@ -36,12 +36,26 @@ steps = [
   # be pushed toward 1.0 once proven. budget_s is a FAIL backstop only.
   # BEST-EFFORT: skip/fail never blocks the orbit below.
   { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.70, full_epsilon = 0.2 },  # gated  | 2 pit stop
-  # Star lock is now IDENTITY-VERIFIED (2026-06-07 council, 10:30Z incident:
-  # row 0 was the NAV BEACON in populated Acihaut and the "verified" lock
-  # passed on the beacon's compass dot). The step scrolls past non-star rows
-  # and fails closed — required, because a wrong lock must never reach the
-  # orbit. A required fail retries from here (lock + pose are one unit).
-  { action = "nav_panel_target", required = true },  # macro  | 3 EXCLUSIVE — verified star lock
+  # Star lock is IDENTITY-VERIFIED (2026-06-07 council, 10:30Z incident: row 0
+  # was the NAV BEACON in populated Acihaut and the "verified" lock passed on
+  # the beacon's compass dot). The step scrolls past non-star rows and fails
+  # closed — a wrong body is NEVER returned as a lock.
+  #
+  # LOCK-SPEED get-around gate (council-ratified conditional-orbit fix,
+  # 2026-06-07 redesign): star obstruction of a jump is DISTANCE-based, and the
+  # nav panel sorts by CURRENT distance. So "can I lock the star in the top few
+  # rows?" IS the distance signal. max_rows = 3 bounds the scan tight (row 0 =
+  # beacon/star, + slack for a beacon/station ahead of a close star):
+  #   FOUND fast (CLOSE)     -> True  -> run sc_assist_orbit (the safety
+  #                                       get-around, as before).
+  #   NOT found (FAR, buried)-> False -> NOT required + skip_to vaults the whole
+  #                                       get-around block (sc_assist_orbit + its
+  #                                       wait) straight to target_next_route;
+  #                                       far = obstruction negligible = safe to
+  #                                       jump direct. No grind, no abort.
+  # NOT required (was required): a not-found must SKIP, not retry — retry_from
+  # below still anchors the LATER required steps (orient/engage_jump) here.
+  { action = "nav_panel_target", required = false, skip_to = "target_next_route", max_rows = 3 },  # macro  | 3 EXCLUSIVE — verified star lock, bounded (lock-speed gate)
   # (3b orient-to-star DROPPED 2026-06-07 phase-1: operator call — the
   # post-refuel pose engages the assist fine without it; "I think it's
   # moot." First live refuel + orbit ran clean.)

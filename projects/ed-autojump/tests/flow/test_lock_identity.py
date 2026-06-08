@@ -194,8 +194,20 @@ def test_arrival_lock_then_orbit_order_and_gates():
     # 3b orient DROPPED (operator, 2026-06-07 phase-1: post-refuel pose
     # engages the assist fine — "I think it's moot")
     assert actions[i:i + 2] == ["nav_panel_target", "sc_assist_orbit"]
-    assert proc.steps[i].required is True         # wrong lock never flows on
-    # a required fail re-establishes the lock before re-orbiting
+    # LOCK-SPEED redesign (2026-06-07): nav_panel_target is NOW non-required
+    # with a forward skip — a star NOT found in the bounded scan (far) vaults
+    # the get-around block to target_next_route instead of retrying/aborting. A
+    # wrong lock still never flows on (the identity check INSIDE the step never
+    # returns a beacon as True — see test_nav_panel_target_fails_closed_*).
+    assert proc.steps[i].required is False
+    assert proc.steps[i].skip_to == "target_next_route"
+    # the scan is BOUNDED tight so a far star returns False fast (no grind)
+    assert proc.steps[i].params.get("max_rows") == 3
+    # target_next_route is the FIRST step past the get-around block (so the skip
+    # vaults exactly sc_assist_orbit + its wait, nothing more)
+    assert actions[i + 1] == "sc_assist_orbit"
+    assert "target_next_route" in actions[i + 1:]
+    # retry_from still anchors the LATER required steps (orient/engage_jump) here
     assert proc.on_required_fail.retry_from == "nav_panel_target"
 
 

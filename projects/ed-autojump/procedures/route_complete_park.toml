@@ -32,6 +32,11 @@ steps = [
   { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.70, full_epsilon = 0.2 },  # gated  | 2 pit stop
   # Identity-verified star lock (required) — a wrong lock must never reach the
   # orbit; a required fail retries from here (lock + pose are one unit).
+  # NOT bounded/skipped like arrival's: a route-end park is a FRESH arrival, so
+  # the star is close in (top rows) and the default wide max_rows finds it. Here
+  # a not-found is a genuine problem to RETRY (we ARE close, the get-around
+  # matters), not a "far, skip it" signal — so this stays required with no
+  # skip_to and no tight bound (the lock-speed gate is arrival-only).
   { action = "nav_panel_target", required = true },  # macro  | 3 EXCLUSIVE — verified star lock
   # Guarded SC-assist orbit (best-effort, fails closed on a bad scene). This is
   # the parked end state.

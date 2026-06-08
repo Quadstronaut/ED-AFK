@@ -488,6 +488,20 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
        wired) -> accept on dot alone, logged loudly as identity_checked
        false. Never verified -> False (fail closed).
 
+    max_rows IS the LOCK-SPEED / distance signal (council-ratified
+    conditional-orbit fix, 2026-06-07): the nav panel sorts by CURRENT
+    distance, so a CLOSE star sits in the top few rows (found inside a small
+    bound) and a FAR star is buried (not found in a tight scan). arrival
+    passes a TIGHT max_rows (=3) so a far star returns False FAST (no minute-
+    long grind) — the caller treats that not-found as "far -> obstruction
+    negligible -> skip the get-around". A CLOSE star (row 0, with slack for a
+    beacon/station ahead of it) is still found, so the orbit still runs. The
+    identity check (layer 2) holds at ANY bound: a beacon is never returned as
+    True, so a tight bound never produces a wrong lock — it only changes how
+    soon a genuinely-buried star gives up. route_complete_park keeps the
+    default (wide) bound: a fresh route-end arrival is close in, the star is
+    found, and a required fail there should retry, not skip.
+
     Without vision wired, fall back to the original blind single run."""
     from ..executor.navpanel import target_via_navpanel
 

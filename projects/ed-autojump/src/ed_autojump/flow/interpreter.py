@@ -68,6 +68,27 @@ def run_procedure(
         result.steps.append(StepResult(step.action, ok))
         ctx.log("Step", {"procedure": proc.name, "action": step.action, "ok": ok})
 
+        # Forward-skip for a NON-required step that opted in via skip_to
+        # (council-ratified conditional-orbit fix, 2026-06-07 lock-speed
+        # redesign): a False here jumps the lane FORWARD to the named action
+        # instead of advancing one step — arrival's nav_panel_target uses it to
+        # vault the get-around block when the star is NOT found in the bounded
+        # scan (far -> safe to jump direct). Strictly a forward hop; it never
+        # touches the required-fail / retry_from / retry_anchor / abort
+        # machinery below.
+        if not ok and not step.required and step.skip_to is not None:
+            target = proc.index_of_action(step.skip_to)
+            if target is not None:
+                ctx.log("StepSkipped",
+                        {"procedure": proc.name, "from": step.action,
+                         "to": step.skip_to, "from_index": i,
+                         "to_index": target})
+                i = target
+                continue
+            # Unresolvable skip target: fall through to normal advance — a
+            # non-required miss is best-effort, never a lane abort. (The
+            # loader's validate_procedure should have caught a bad name.)
+
         if not ok and step.required:
             policy = proc.on_required_fail
             # Retry-target precedence (council-settled 2026-06-07, load-bearing):

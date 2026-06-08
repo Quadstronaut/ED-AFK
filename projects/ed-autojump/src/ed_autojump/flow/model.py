@@ -17,6 +17,14 @@ class Step:
     # on_required_fail.retry_from (operator rule, 2026-06-07 startup redesign:
     # "if it makes it to 13, failures after that should return to 13").
     retry_anchor: bool = False
+    # Forward-skip target for a NON-required step (council-ratified
+    # conditional-orbit fix, 2026-06-07, lock-speed redesign): when this step
+    # returns False, jump the lane FORWARD to the named action instead of
+    # advancing one step. arrival's nav_panel_target uses it so a star NOT
+    # found in the bounded scan (far -> obstruction negligible) vaults the
+    # whole get-around block (sc_assist_orbit + its wait) and lands on
+    # target_next_route. Ignored for required steps and when None.
+    skip_to: Optional[str] = None
 
 
 @dataclass(frozen=True)
