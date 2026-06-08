@@ -1352,6 +1352,17 @@ def step_dock_target_station(
 
     Without status wiring (unit tests) the T press alone is the step (legacy
     fallback, like the other macros)."""
+    # ALREADY-LOCKED guard (2026-06-08 Robigo live test: "station WAS targeted,
+    # first thing it did was untarget"). At a route terminus the station is
+    # ALREADY the locked Destination — dispatch_route_complete only runs the
+    # dock flow when it is. SelectTarget locks whatever is ahead of the reticle,
+    # and the ship arrives nose-on to the arrival STAR, not the station, so a
+    # blind T toggles the existing lock OFF. Check state FIRST and skip the press
+    # when the station is already targeted; only press T when it is NOT.
+    st0 = ctx.status_supplier()
+    if st0 is not None and _dest_is_named_station(st0):
+        ctx.log("DockTargetStation", {"via": "already_locked"})
+        return True
     if not _press(ctx, "SelectTarget"):
         return False
     if ctx.status_supplier() is None:

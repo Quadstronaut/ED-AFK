@@ -107,13 +107,34 @@ def _waiter_for(*events):
 
 # ============================ step_dock_target_station ============================
 
-def test_dock_target_station_t_press_confirmed():
-    """T locks the station (Destination is a named non-star body) -> success,
-    no nav-panel fallback."""
+def test_dock_target_station_already_locked_no_press():
+    """Route terminus: the station is ALREADY the locked Destination. The step
+    must NOT press SelectTarget — T locks whatever is ahead of the reticle, and
+    the ship faces the arrival STAR not the station, so a blind T would CLEAR
+    the existing lock (2026-06-08 Robigo live test: 'first thing it did was
+    untarget'). State-check FIRST, skip the press."""
     sender = FakeSender()
-    st = _status(in_supercruise=False, dest_name="Jameson Memorial", dest_body=4)
+    st = _status(in_supercruise=False, dest_name="Robigo Mines", dest_body=4)
     ctx = StepContext(sender=sender, sleeper=lambda s: None,
                       status_supplier=lambda: st)
+    assert STEP_REGISTRY["dock_target_station"](ctx) is True
+    assert sender.actions() == []   # NO press — station was already targeted
+
+
+def test_dock_target_station_t_press_confirmed():
+    """NOT already locked (Destination body=0); T lands the station and the
+    verify read confirms it -> success, no nav-panel fallback."""
+    sender = FakeSender()
+    # st0 guard read + None-guard read see body=0 (not yet locked); the first
+    # verify read after T sees the station locked.
+    states = [_status(dest_body=0)] * 2 + [
+        _status(dest_name="Jameson Memorial", dest_body=4)] * 4
+
+    def supplier():
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    ctx = StepContext(sender=sender, sleeper=lambda s: None,
+                      status_supplier=supplier)
     assert STEP_REGISTRY["dock_target_station"](ctx) is True
     assert sender.actions() == ["SelectTarget"]   # T only, no fallback macro
 
