@@ -606,8 +606,16 @@ def test_dock_request_no_range_state_fallback():
     # Old code: would trigger can_request via state fallback and then spin on
     # the grant wait -> watchdog. New code: runs macro immediately, then spins
     # on grant wait -> watchdog.  Either way it must NOT pass just on state.
+    # CLOCK: must ADVANCE so clock() - start exceeds max_wait_s=120.0 and the
+    # watchdog trips. A constant lambda: 200.0 gives clock()-start=0 forever
+    # -> infinite loop (the broken-test bug, 895d833).
+    clock_t = {"t": 0.0}
+
+    def adv_clock():
+        clock_t["t"] += 200.0
+        return clock_t["t"]
     ctx = StepContext(
-        sender=sender, sleeper=lambda s: None, clock=lambda: 200.0,
+        sender=sender, sleeper=lambda s: None, clock=adv_clock,
         status_supplier=lambda: st,
         event_waiter=lambda name, t: False)   # no events
     assert STEP_REGISTRY["dock_request"](ctx) is False   # watchdog
