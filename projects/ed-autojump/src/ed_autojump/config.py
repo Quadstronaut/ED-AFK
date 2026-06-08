@@ -285,6 +285,10 @@ class OverlayConfig:
     """
 
     enabled: bool = True
+    # Mirror the same execution info to the launch terminal (stdout). ON by
+    # default so the stream's console is informative; the in-game overlay and
+    # the console are independent sinks (either/both can be on).
+    console: bool = True
     host: str = "127.0.0.1"
     port: int = 5010
     exe_path: str = ""                  # "" = auto-detect

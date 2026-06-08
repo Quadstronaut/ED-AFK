@@ -103,6 +103,15 @@ def _parser() -> argparse.ArgumentParser:
         help="disable Status.json polling",
     )
     sub_run.add_argument(
+        "--console-status", dest="console_status", action="store_true",
+        default=True,
+        help="mirror live execution info to this terminal's stdout (default: on)",
+    )
+    sub_run.add_argument(
+        "--no-console-status", dest="console_status", action="store_false",
+        help="suppress the stdout status mirror",
+    )
+    sub_run.add_argument(
         "--eddn", dest="eddn", action="store_true", default=None,
         help="publish to EDDN on FSS scans (default: from config.eddn.publish)",
     )
@@ -432,14 +441,23 @@ def cmd_run(args) -> int:
         timeout_s=cfg.vision.timeout_s,
     )
 
-    # EDMCOverlay status overlay (cosmetic, fail-soft). build_overlay returns
-    # None when [overlay].enabled = false; start() spins a daemon thread that
-    # connects (or launches EDMCOverlay.exe) without ever blocking the flight.
+    # Cosmetic sinks share the single overlay slot via a fail-soft Tee:
+    #   - EDMCOverlay in-game writer (None when [overlay].enabled=false)
+    #   - console mirror → launch terminal (the stream's console). ON by default;
+    #     [overlay].console=false or --no-console-status suppresses it.
     from .overlay import build_overlay
-    overlay = build_overlay(cfg)
-    if overlay is not None:
-        overlay.start()
+    from .console_status import ConsoleStatusWriter, OverlayTee
+
+    edmc = build_overlay(cfg)
+    console = (ConsoleStatusWriter()
+               if cfg.overlay.console and args.console_status else None)
+    # overlay is always an OverlayTee; an empty Tee is a harmless no-op sink.
+    overlay = OverlayTee(edmc, console)
+    overlay.start()                     # fans start() to whichever sinks exist
+    if edmc is not None:
         print("overlay: EDMCOverlay status ON (connecting in background)")
+    if console is not None:
+        print("console: live status mirror ON (stdout)")
 
     runner = FlowRunner(
         procedures=procedures,
