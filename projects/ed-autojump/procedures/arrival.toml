@@ -20,7 +20,7 @@ parallel_tracks = ["honk"]   # honk fires every system, no matter what
 # nav_panel_target (was sc_assist_orbit, 2026-06-07 council): a retry must
 # re-establish the LOCK and the POSE — re-orbiting alone can't fix a wrong
 # lock or an off-star nose, which are the two ways the lane actually fails.
-retry_from = "nav_panel_target"
+retry_from = "scoop_refuel"
 max_retries = 3
 backoff_s = 2.0
 

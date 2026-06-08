@@ -31,8 +31,8 @@ backoff_s = 2.0
 
 steps = [
   { action = "target_next_route", required = true },       # gated  | 1 lock next hop (also cancels any SC-assist)
-  { action = "set_throttle", pct = 100 },                  # tap    | 2 full burn
   { action = "reset_power_distribution" },                 # tap    | 3 normalise pips after throttle-100
+  { action = "set_throttle", pct = 100 },                  # tap    | 2 full burn
   { action = "orient_compass", required = true },          # vision | 4a coarse align to the hop
   { action = "orient_widget_ring", required = true },      # vision | 4b fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },             # gated  | 5 FSD jump (distance-based obstruction fail-closed gate)

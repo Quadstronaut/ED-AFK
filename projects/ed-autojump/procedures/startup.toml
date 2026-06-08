@@ -46,7 +46,7 @@
 parallel_tracks = ["honk"]
 
 [on_required_fail]
-retry_from = "target_ahead"   # lane restart for failures BEFORE the anchor wait
+retry_from = "sc_assist_orbit"   # lane restart for failures BEFORE the anchor wait
 max_retries = 3               # total across the procedure (operator-confirmed 2026-06-07)
 backoff_s = 2.0
 
@@ -59,23 +59,22 @@ steps = [
   { action = "orient_widget_ring", required = true },      # vision | 4 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump", required = true },             # gated  | 5 press FSD combo
   { action = "hold_alignment", required = true },          # vision | 6 hold cone until StartJump — event/state-gated, no clock
-
   # ── Recovery: retry_from lands here when a pre-anchor required step fails ─
   { action = "target_ahead" },                             # tap    | 7 deselect (no target ahead → clears)
-  { action = "set_throttle", pct = 100 },                  # tap    | 8 just in case
-  { action = "nav_panel_target" },                         # macro  | 9 EXCLUSIVE — star = nav panel row 0 (closest body)
   { action = "pips_engines" },                             # tap    | 10 pips again before the climb
+  { action = "set_throttle", pct = 100 },                  # tap    | 8 just in case
   { action = "engage_supercruise", required = true },      # gated  | 11 event/state-gated on SupercruiseEntry
   # SC entry leaves the nose on the ESCAPE bearing, not the star — orient
   # back onto the star lock before the assist macro (2026-06-07 council:
   # assist refuses an unaligned engage). Best-effort like arrival's 3b.
-  { action = "orient_compass" },                           # vision | 11b nose back on the star
+  { action = "nav_panel_target" },                         # macro  | 9 EXCLUSIVE — star = nav panel row 0 (closest body)
   { action = "sc_assist_orbit" },                          # macro  | 12 EXCLUSIVE — guarded SC-assist; a refusal degrades to the direct jump below
+  { action = "wait", s = 13.0, retry_anchor = true },
   { action = "target_next_route", required = true },                        # gated  | 13 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },                  # tap    | 14
-  { action = "reset_power_distribution" },                 # tap    | 14b normalize pips after the post-SC throttle-100 (operator 2026-06-07)
   { action = "wait", s = 13.0, retry_anchor = true },      # wait   | 15 clearance burn — failures at/after here RETURN HERE
-  { action = "orient_compass", required = true },          # vision | 16 coarse
+  { action = "orient_compass" },                           # vision | 11b nose back on the star
+  #{ action = "reset_power_distribution" },                 # tap    | 14b normalize pips after the post-SC throttle-100 (operator 2026-06-07)
   { action = "orient_widget_ring", required = true },      # vision | 17 fine
   { action = "engage_jump", required = true },             # gated  | 18 press FSD combo
   { action = "hold_alignment", required = true },          # vision | 19 hold cone until StartJump
