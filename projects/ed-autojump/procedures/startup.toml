@@ -1,33 +1,60 @@
 # Fresh load: ship sits at a star in NORMAL SPACE. That scene only — a bot
 # restarted while the ship is already IN SUPERCRUISE is routed to arrival.toml
-# instead (dispatcher._maybe_startup, 2026-06-06): an in-supercruise restart
-# sits nose-on at its last arrival star, and throttle-100-then-orient dove
-# straight into the scoop zone (FuelScoop 13:26:17 -> SupercruiseExit
+# (or sc_resume.toml) instead (dispatcher._maybe_startup): an in-supercruise
+# restart sits nose-on at its last arrival star, and throttle-100-then-orient
+# dove straight into the scoop zone (FuelScoop 13:26:17 -> SupercruiseExit
 # Body=Star 13:26:21 — the star smack). arrival.toml orbits the star and
 # clears it BEFORE throttling up.
 #
-# REDESIGN 2026-06-07 (operator, line-by-line review):
-# - All pips to ENGINES first, in both lanes.
-# - The recovery lane now clears the star the way arrival does: deselect,
-#   throttle 100 just in case, lock the star (nav panel row 0), pips again,
-#   SC entry, SC-assist orbit the star (still locked from the row-0 step),
-#   THEN lock the hop, 13s clearance burn, orient, jump.
-# - The 13s wait carries retry_anchor = true: once the lane is past it, a
-#   required failure (orient/jump/hold) returns to the WAIT — fly 13 more
-#   seconds and re-orient — instead of restarting the lane ("if it makes it
-#   to 13, failures after that should return to 13"). Failures before the
-#   wait still restart from target_ahead.
+# CLEAR-OF-STAR GATE 2026-06-08 (council, normal-space star-ram fix): the first
+# lane used to set_throttle(100) -> target_next_route -> orient -> engage_jump
+# with NO clear-of-star protection. OPERATOR-CONFIRMED MECHANIC: stars DO NOT
+# mass-lock (only ships, maybe stations, set FsdMassLocked), so step_engage_jump's
+# fsd_mass_locked gate gives ZERO protection against a star in normal space, and
+# ED exposes NO Status flag for star proximity — proximity is a DISTANCE / nav-
+# panel signal (ed-fsd-obstruction-distance memory). A fresh load nose-on a
+# nearby star therefore drove set_throttle(100) straight into it.
+#
+# The fix mirrors sc_resume.toml / arrival.toml EXACTLY: a nav_panel_target
+# distance discriminator runs FIRST, BEFORE any throttle. The nav panel sorts by
+# CURRENT distance, so "can I lock the star in the top 3 rows?" IS the distance
+# signal. CLOSE (found) -> run the SC-entry + SC-assist orbit get-around BEFORE
+# throttling (in NORMAL space you cannot sc_assist_orbit — it guards on
+# in_supercruise — so the get-around for a close star is: enter supercruise
+# FIRST, THEN orbit). FAR/clear (not found) -> skip_to vaults the get-around
+# straight to the direct jump (obstruction negligible). Sequenced so a CLOSE
+# star NEVER gets set_throttle(100) pointed at it: SC entry takes no throttle,
+# and the burn only happens after the orbit has the ship moving off the star.
+#
+# REDESIGN 2026-06-07 (operator, line-by-line review) — the recovery lane:
+# - The recovery lane clears the star the way arrival does: deselect, throttle
+#   100 just in case, SC entry, lock the star (nav panel), SC-assist orbit the
+#   star, THEN lock the hop, 13s clearance burn, orient, jump.
+# - The 13s CLEARANCE BURN wait carries retry_anchor = true: once the lane is
+#   past it, a required failure (orient/jump/hold) returns to the WAIT — fly 13
+#   more seconds and re-orient — instead of restarting the lane ("if it makes it
+#   to 13, failures after that should return to 13"). Failures before the wait
+#   still restart from target_ahead (the recovery lane's TRUE entry — see the
+#   retry_from note below).
+#
+# RETRY_FROM FIX 2026-06-08 (council, normal-space recovery defect): retry_from
+# was "sc_assist_orbit", and on_required_fail resolves a retry target by the
+# FIRST step with that action name. That landed the recovery PAST engage_supercruise,
+# so the recovery lane tried sc_assist_orbit while STILL in NORMAL space —
+# sc_assist_orbit guards on in_supercruise and refuses, so the get-around never
+# happened. retry_from is now "target_ahead", the recovery lane's true entry, so
+# a pre-anchor required fail re-runs the WHOLE get-around: deselect -> throttle
+# -> engage_supercruise -> nav_panel_target -> sc_assist_orbit, in order.
 #
 # PATCH 2026-06-08 (council, Wolf 359 no-route fresh-login defect):
-# pitch_compass(until=behind) REMOVED from the recovery lane (was step 10).
-# The step caused the "pitched 180° away for no reason" incident on the
-# Wolf 359 fresh login (no route plotted; the recovery lane pitched the star
-# astern with nowhere to jump to). The same step was already removed from
-# arrival.toml in the 2026-06-07 redesign — "the SC-assist orbit alone is
-# the get-around, and 13s at 100% after the hop lock is the clearance burn"
-# (arrival header, line-by-line review). SC-assist + 13s clearance is
-# proven live by arrival; the pitch-astern adds nothing and actively harms
-# a fresh no-route startup by spending 75s pitching before abort.
+# pitch_compass(until=behind) is NOT in either lane. The step caused the
+# "pitched 180° away for no reason" incident on the Wolf 359 fresh login (no
+# route plotted; the recovery lane pitched the star astern with nowhere to jump
+# to). It was already removed from arrival.toml in the 2026-06-07 redesign —
+# "the SC-assist orbit alone is the get-around, and 13s at 100% after the hop
+# lock is the clearance burn". SC-assist + 13s clearance is proven live by
+# arrival; the pitch-astern adds nothing and actively harms a fresh no-route
+# startup.
 #
 # hold_alignment is a PURE EVENT-DRIVEN gate: StartJump / FsdJump flag =
 # success; FsdCharging true->false without either = the game aborted the
@@ -46,33 +73,49 @@
 parallel_tracks = ["honk"]
 
 [on_required_fail]
-retry_from = "sc_assist_orbit"   # lane restart for failures BEFORE the anchor wait
+retry_from = "target_ahead"   # recovery lane's TRUE entry (runs engage_supercruise BEFORE sc_assist_orbit)
 max_retries = 3               # total across the procedure (operator-confirmed 2026-06-07)
 backoff_s = 2.0
 
 steps = [
-  # ── First-try direct jump ────────────────────────────────────────────────
-  { action = "set_throttle", pct = 100 },                  # tap    | 1
-  { action = "target_next_route", required = true },                        # gated  | 2
-  { action = "orient_compass", required = true },          # vision | 3 coarse
-  { action = "orient_widget_ring", required = true },      # vision | 4 fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },             # gated  | 5 press FSD combo
-  { action = "hold_alignment", required = true },          # vision | 6 hold cone until StartJump — event/state-gated, no clock
-  # ── Recovery: retry_from lands here when a pre-anchor required step fails ─
-  { action = "target_ahead" },                             # tap    | 7 deselect (no target ahead → clears)
-  { action = "set_throttle", pct = 100 },                  # tap    | 8 just in case
-  { action = "engage_supercruise", required = true },      # gated  | 11 event/state-gated on SupercruiseEntry
-  # SC entry leaves the nose on the ESCAPE bearing, not the star — orient
-  # back onto the star lock before the assist macro (2026-06-07 council:
-  # assist refuses an unaligned engage). Best-effort like arrival's 3b.
-  { action = "nav_panel_target" },                         # macro  | 9 EXCLUSIVE — star = nav panel row 0 (closest body)
-  { action = "sc_assist_orbit" },                          # macro  | 12 EXCLUSIVE — guarded SC-assist; a refusal degrades to the direct jump below
-  { action = "wait", s = 13.0, retry_anchor = true },
-  { action = "target_next_route", required = true },                        # gated  | 13 lock the NEXT SYSTEM in route
-  { action = "set_throttle", pct = 100 },                  # tap    | 14
-  { action = "wait", s = 13.0, retry_anchor = true },      # wait   | 15 clearance burn — failures at/after here RETURN HERE
-  { action = "orient_compass" },                           # vision | 11b nose back on the star
-  { action = "orient_widget_ring", required = true },      # vision | 17 fine
-  { action = "engage_jump", required = true },             # gated  | 18 press FSD combo
-  { action = "hold_alignment", required = true },          # vision | 19 hold cone until StartJump
+  # ── First lane: clear-of-star gate, THEN jump ────────────────────────────
+  # CLEAR-OF-STAR distance gate (mirrors sc_resume.toml / arrival.toml exactly).
+  # FOUND in top 3 rows (CLOSE) -> True -> fall through to the SC-entry + orbit
+  #                                         get-around BELOW (no throttle yet).
+  # NOT found (FAR/clear)       -> False -> skip_to vaults the get-around to the
+  #                                         direct jump (target_next_route).
+  { action = "nav_panel_target", required = false, skip_to = "target_next_route", max_rows = 3 },  # macro  | 0 EXCLUSIVE — verified star lock, bounded (clear-of-star distance gate)
+  # CLOSE path: enter supercruise FIRST (takes NO throttle — a close star never
+  # gets set_throttle(100) pointed at it), re-lock the star (SC entry leaves the
+  # nose off it), SC-assist orbit the star, let the orbit acquire. THEN the
+  # shared continuation throttles up — by which point the orbit has the ship
+  # moving off the star, not into it.
+  { action = "engage_supercruise", required = true },      # gated  | 1 event/state-gated on SupercruiseEntry
+  { action = "nav_panel_target" },                         # macro  | 2 EXCLUSIVE — re-lock the star for the assist (best-effort)
+  { action = "sc_assist_orbit" },                          # macro  | 3 EXCLUSIVE — guarded SC-assist orbit (a refusal degrades to the direct jump below)
+  { action = "wait", s = 13.0 },                           # wait   | 4 let orbit acquire — TRAJECTORY PACING, not a gate
+  # ── Shared continuation: FAR star skips straight here ────────────────────
+  { action = "target_next_route", required = true },       # gated  | 5 lock the NEXT SYSTEM in route (also cancels SC-assist)
+  { action = "set_throttle", pct = 100 },                  # tap    | 6 burn
+  { action = "orient_compass", required = true },          # vision | 7 coarse
+  { action = "orient_widget_ring", required = true },      # vision | 8 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },             # gated  | 9 press FSD combo
+  { action = "hold_alignment", required = true },          # vision | 10 hold cone until StartJump — event/state-gated, no clock
+  # ── Recovery: retry_from lands at target_ahead when a pre-anchor required step fails ─
+  { action = "target_ahead" },                             # tap    | 11 deselect (no target ahead → clears)
+  { action = "set_throttle", pct = 100 },                  # tap    | 12 just in case
+  { action = "engage_supercruise", required = true },      # gated  | 13 event/state-gated on SupercruiseEntry
+  # SC entry leaves the nose on the ESCAPE bearing, not the star — re-lock the
+  # star via the nav panel before the assist macro (2026-06-07 council: assist
+  # refuses an unaligned engage). Best-effort like arrival's re-lock.
+  { action = "nav_panel_target" },                         # macro  | 14 EXCLUSIVE — star = nav panel row 0 (closest body)
+  { action = "sc_assist_orbit" },                          # macro  | 15 EXCLUSIVE — guarded SC-assist; a refusal degrades to the direct jump below
+  { action = "wait", s = 13.0 },                           # wait   | 16 let orbit acquire — TRAJECTORY PACING, not a gate
+  { action = "target_next_route", required = true },       # gated  | 17 lock the NEXT SYSTEM in route
+  { action = "set_throttle", pct = 100 },                  # tap    | 18 burn
+  { action = "wait", s = 13.0, retry_anchor = true },      # wait   | 19 clearance burn — failures at/after here RETURN HERE
+  { action = "orient_compass" },                           # vision | 20 nose back on the star
+  { action = "orient_widget_ring", required = true },      # vision | 21 fine
+  { action = "engage_jump", required = true },             # gated  | 22 press FSD combo
+  { action = "hold_alignment", required = true },          # vision | 23 hold cone until StartJump
 ]
