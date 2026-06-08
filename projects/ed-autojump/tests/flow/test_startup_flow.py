@@ -23,18 +23,27 @@ PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
 # ---- pips_engines step ------------------------------------------------------
 
 def test_pips_engines_resets_then_maxes_engines():
+    sleeps = []
     s = FakeSender()
-    ok = STEP_REGISTRY["pips_engines"](StepContext(sender=s))
+    ctx = StepContext(sender=s, sleeper=lambda t: sleeps.append(t))
+    ok = STEP_REGISTRY["pips_engines"](ctx)
     assert ok is True
     # Reset to 2/2/2 first, then 4x ENG: 4 = the pip cap, extra presses are
     # in-game no-ops so over-pressing can never misallocate.
     assert s.actions() == (["ResetPowerDistribution"]
                            + ["IncreaseEnginesPower"] * 4)
+    # Inter-press sleeps: one settle before each of the 4 IncreaseEnginesPower
+    # presses (WHY: PAUSE=0 back-to-back SendInput drops presses, live-confirmed
+    # by pip_probe.py 2026-06-08).
+    assert len(sleeps) == 4
+    assert all(t > 0 for t in sleeps)
 
 
 def test_pips_engines_fails_clean_on_missing_bind():
+    sleeps = []
     s = FakeSender(unbound={"IncreaseEnginesPower"})
-    ok = STEP_REGISTRY["pips_engines"](StepContext(sender=s))
+    ctx = StepContext(sender=s, sleeper=lambda t: sleeps.append(t))
+    ok = STEP_REGISTRY["pips_engines"](ctx)
     assert ok is False
 
 

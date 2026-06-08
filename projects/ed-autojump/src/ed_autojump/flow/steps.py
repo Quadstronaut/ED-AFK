@@ -53,17 +53,37 @@ def step_pitch(ctx: StepContext, *, dir: str, hold_s: float) -> bool:
     return _press(ctx, action, hold_s)
 
 
-def step_reset_power_distribution(ctx: StepContext) -> bool:
+def step_reset_power_distribution(ctx: StepContext, *, presses: int = 3) -> bool:
     """Tap ResetPowerDistribution (Down arrow in the live preset) to balance
     the pips back to the 2/2/2 split (operator request 2026-06-07): runs right
     after the post-SC-entry throttle-100 so every supercruise leg starts from a
     normalised power distribution.
 
-    Best-effort, like set_throttle / pips_engines: a single fire-and-forget tap,
-    NOT required, no gates. A missed press is harmless (the pips just stay as
-    they were). Plain arrow-key tap with no UI panel state -> deliberately NOT
-    input-exclusive (the heat watchdog stays live), matching pips_engines."""
-    return _press(ctx, "ResetPowerDistribution")
+    Best-effort, like set_throttle / pips_engines: NOT required, no gates. A
+    missed press is harmless; over-pressing is in-game idempotent (already-
+    balanced pips are a no-op for ResetPowerDistribution).
+
+    WHY presses=3 with sleeps: pip_probe.py (operator live test 2026-06-08)
+    confirmed a single press fired IMMEDIATELY after a prior keypress was
+    silently dropped by ED/Windows SendInput — pips stayed full-engines.
+    DirectInputSender sets PAUSE=0 (throughput), so the press sequence
+    set_throttle->reset emits back-to-back SendInput calls with zero gap.
+    The probe succeeded with 3 presses at 0.8s apart. A pre-press settle
+    ensures the first tap is not zero-gap with whatever ran before this step.
+    ctx.sleeper is the injected sleeper so unit tests stay deterministic.
+    _SETTLE_S is a keypress SPACER only, NOT a success/failure gate
+    (no-arbitrary-timed-waits applies to gates, not spacers)."""
+    # Pre-press settle: avoids zero-gap back-to-back with the prior keypress
+    # (arrival step 7->7b: set_throttle pct=100 fires immediately before this).
+    _SETTLE_S = 0.08
+    ctx.sleeper(_SETTLE_S)
+    ok = False
+    for i in range(presses):
+        if i > 0:
+            ctx.sleeper(_SETTLE_S)
+        if _press(ctx, "ResetPowerDistribution"):
+            ok = True
+    return ok
 
 
 def step_target_ahead(ctx: StepContext) -> bool:
@@ -76,10 +96,18 @@ def step_pips_engines(ctx: StepContext, *, presses: int = 4) -> bool:
     first so the allocation is deterministic, then IncreaseEnginesPower x4 —
     4 = the ENG pip cap, and presses past the cap are in-game no-ops, so
     over-pressing can never misallocate. Plain arrow-key taps, no UI panel
-    state: deliberately NOT input-exclusive (the heat watchdog stays live)."""
+    state: deliberately NOT input-exclusive (the heat watchdog stays live).
+
+    WHY inter-press sleeps (2026-06-08): back-to-back SendInput calls with
+    PAUSE=0 silently drop presses (pip_probe.py live test confirmed). Each
+    press gets a small spacer so the ResetPowerDistribution and the four
+    IncreaseEnginesPower taps are individually registered by the game.
+    Spacer is via ctx.sleeper (injected) so tests stay deterministic."""
+    _SETTLE_S = 0.08
     if not _press(ctx, "ResetPowerDistribution"):
         return False
     for _ in range(presses):
+        ctx.sleeper(_SETTLE_S)
         if not _press(ctx, "IncreaseEnginesPower"):
             return False
     return True

@@ -4,7 +4,10 @@ so every supercruise leg starts from a balanced 2/2/2 power distribution.
 
 Two halves:
   1. the step itself presses ResetPowerDistribution (Down arrow in the live
-     preset), best-effort like set_throttle (fails clean on a missing bind).
+     preset) 3 times with inter-press sleeps, best-effort like set_throttle.
+     WHY: a single press fired at PAUSE=0 immediately after the prior keypress
+     was silently dropped by ED (pip_probe.py live test 2026-06-08). 3 presses
+     with spacers are idempotent (already-balanced pips are a no-op) but robust.
   2. placement — each procedure that enters supercruise and then throttles 100
      has the reset tap immediately after that throttle-100 (real TOMLs loaded).
 """
@@ -22,19 +25,40 @@ BINDS = (Path(__file__).resolve().parents[2]
          / "src" / "ed_autojump" / "binds" / "ED-AFK.4.2.binds")
 
 
+def _ctx_with_sleeper():
+    """Return (ctx, sender, sleeps) with a fake sleeper that records calls."""
+    sleeps = []
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda t: sleeps.append(t))
+    return ctx, s, sleeps
+
+
 # ---- the step ---------------------------------------------------------------
 
 def test_reset_power_distribution_presses_the_action():
-    s = FakeSender()
-    ok = STEP_REGISTRY["reset_power_distribution"](StepContext(sender=s))
+    """Default presses=3: fires ResetPowerDistribution 3 times."""
+    ctx, s, sleeps = _ctx_with_sleeper()
+    ok = STEP_REGISTRY["reset_power_distribution"](ctx)
     assert ok is True
-    assert s.actions() == ["ResetPowerDistribution"]
+    assert s.actions() == ["ResetPowerDistribution"] * 3
+
+
+def test_reset_power_distribution_sleeper_called_before_and_between():
+    """A pre-press settle + an inter-press settle between each subsequent press.
+    presses=3 -> 1 pre-settle + 2 inter-press sleeps = 3 sleeper calls total."""
+    ctx, s, sleeps = _ctx_with_sleeper()
+    STEP_REGISTRY["reset_power_distribution"](ctx)
+    # 1 pre-settle (before first press) + 2 inter-press sleeps (between press 1-2, 2-3)
+    assert len(sleeps) == 3
+    assert all(t > 0 for t in sleeps)
 
 
 def test_reset_power_distribution_fails_clean_on_missing_bind():
-    # Best-effort: an unbound action is a clean False, never a raised KeyError.
+    """Best-effort: an unbound action returns False without raising."""
+    sleeps = []
     s = FakeSender(unbound={"ResetPowerDistribution"})
-    ok = STEP_REGISTRY["reset_power_distribution"](StepContext(sender=s))
+    ctx = StepContext(sender=s, sleeper=lambda t: sleeps.append(t))
+    ok = STEP_REGISTRY["reset_power_distribution"](ctx)
     assert ok is False
 
 
