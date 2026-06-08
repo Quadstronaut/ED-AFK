@@ -72,7 +72,6 @@ def _all_bound() -> dict[str, str]:
         "SetSpeed50": "Key_LeftBracket",
         "SetSpeed75": "Key_C",
         "SetSpeed100": "Key_V",
-        "ResetPowerDistribution": "Key_DownArrow",   # pip reset (Down arrow)
         "PitchUpButton": "Key_S",
         "PitchDownButton": "Key_W",
         "YawLeftButton": "Key_A",

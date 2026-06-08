@@ -6,6 +6,12 @@ entry -> hop lock (retry anchor) -> throttle -> 13s -> orient -> jump.
 Real-space failures restart at step 0; in-supercruise failures return to
 the hop lock."""
 
+# NOTE 2026-06-08: pip management (pips_engines / reset_power_distribution) was
+# RIPPED from the bot (operator: "we're scrapping it"). test_v7_step_order below
+# still lists those steps plus an escape-vector ordering that diverges from the
+# operator's hand-edited smack_recovery.toml, so it is RED on purpose —
+# reconciling smack_recovery.toml with this wiring test is part of the #31
+# smacked-startup recovery council redesign, not the pip rip.
 from pathlib import Path
 from types import SimpleNamespace
 
