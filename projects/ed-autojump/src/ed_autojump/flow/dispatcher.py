@@ -141,6 +141,14 @@ class FlowRunner:
         # True while the journal's last SC transition is SupercruiseExit at a
         # Star (see _record_event_time) — restart-while-smacked routing.
         self._smacked = False
+        # Witchspace latch (hyperspace loading screen). SET on a Hyperspace
+        # StartJump (JumpType=="Hyperspace"), CLEARED on FSDJump (~18s window,
+        # journal-confirmed). While set the interpreter PAUSES every step —
+        # the nav panel / orient scene is invalid and input is harmful.
+        # Belt-and-suspenders: also cleared on SupercruiseEntry / Docked so a
+        # missed FSDJump line can never permanently wedge the bot. Event-gated
+        # only — NO clock/timer (no-arbitrary-timed-waits rule).
+        self._in_witchspace = False
         self._latest_status: Optional[Any] = status_supplier()
         self._caught_up = False
         self._startup_done = False
@@ -365,6 +373,7 @@ class FlowRunner:
             jump_age_supplier=self._jump_age,
             docking_denied_supplier=lambda: self._docking_denied_reason,
             clear_docking_denied=self._clear_docking_denied,
+            in_witchspace=lambda: self._in_witchspace,
             record=self.record,
             frame_sink=self.frame_sink,
         )
@@ -691,6 +700,15 @@ class FlowRunner:
             self._smacked = getattr(ev, "body_type", None) == "Star"
         elif name in ("SupercruiseEntry", "FSDJump"):
             self._smacked = False
+
+        # Witchspace latch — SET on a Hyperspace StartJump, CLEARED on FSDJump.
+        # Supercruise StartJumps (JumpType=="Supercruise") must NOT set it.
+        # Belt-and-suspenders releases on SupercruiseEntry / Docked ensure a
+        # missed FSDJump can never permanently wedge the interpreter pause.
+        if name == "StartJump" and getattr(ev, "jump_type", None) == "Hyperspace":
+            self._in_witchspace = True
+        elif name in ("FSDJump", "SupercruiseEntry", "Docked"):
+            self._in_witchspace = False
 
     def _apply_state(self, ev: Any) -> None:
         """Track per-event state for steps. Called exactly once per event via

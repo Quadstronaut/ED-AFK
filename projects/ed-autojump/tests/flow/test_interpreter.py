@@ -223,3 +223,62 @@ def test_non_required_failure_continues():
                            registry=_registry(calls, {"b"}))
     assert calls == ["a", "b", "c"]
     assert result.completed is True
+
+
+# ---------------------------------------------------------------------------
+# Witchspace pause (tests W5 and W6).
+# The interpreter must PAUSE at the top of every step loop iteration while
+# ctx.in_witchspace() is True, and resume correctly when it clears.
+# Operator abort still outranks the witchspace pause.
+# ---------------------------------------------------------------------------
+
+def test_interpreter_pauses_step_during_witchspace():
+    """W5: a step must NOT execute while in_witchspace() is True; it must
+    execute normally once the latch clears.  WitchspacePause and
+    WitchspaceResume log records confirm the gate fired."""
+    calls: list[str] = []
+    logs: list[tuple[str, dict]] = []
+
+    # in_witchspace flips to False after 2 polls (simulating FSDJump arriving)
+    poll_count = {"n": 0}
+    def in_witchspace():
+        if poll_count["n"] < 2:
+            poll_count["n"] += 1
+            return True
+        return False
+
+    proc = Procedure(name="p", steps=(Step("a"),))
+    ctx = StepContext(
+        sender=FakeSender(),
+        sleeper=lambda s: None,
+        in_witchspace=in_witchspace,
+        record=lambda name, payload: logs.append((name, payload)),
+    )
+    result = run_procedure(proc, ctx, registry=_registry(calls, set()))
+
+    assert calls == ["a"], "step must run after latch clears"
+    assert result.completed is True
+    assert any(n == "WitchspacePause" for n, _ in logs), "WitchspacePause must be logged"
+    assert any(n == "WitchspaceResume" for n, _ in logs), "WitchspaceResume must be logged"
+    # Pause logged only ONCE (log-once guard — not once per 0.5s poll)
+    assert sum(1 for n, _ in logs if n == "WitchspacePause") == 1
+
+
+def test_interpreter_operator_abort_outranks_witchspace_pause():
+    """W6: if the operator aborts while witchspace is latched, the procedure
+    must abort immediately — not hang waiting for the latch to clear."""
+    calls: list[str] = []
+
+    # in_witchspace is always True; should_abort is always True
+    ctx = StepContext(
+        sender=FakeSender(),
+        sleeper=lambda s: None,
+        in_witchspace=lambda: True,
+        should_abort=lambda: True,
+    )
+    proc = Procedure(name="p", steps=(Step("a"),))
+    result = run_procedure(proc, ctx, registry=_registry(calls, set()))
+
+    assert calls == [], "no step must run when operator aborted mid-witchspace"
+    assert result.aborted is True
+    assert result.completed is False

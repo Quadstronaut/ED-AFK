@@ -42,6 +42,14 @@ class StepContext:
     # signal, and the operator's backstop now that wall-clock gates are banned.
     should_abort: Callable[[], bool] = lambda: False
 
+    # True while the ship is in the hyperspace tunnel (witchspace loading screen).
+    # SET on a Hyperspace StartJump, CLEARED on FSDJump (~18s window,
+    # journal-confirmed). The interpreter PAUSES every step while this holds —
+    # the nav panel / orient scene is invalid during the tunnel and any input is
+    # wasted or harmful (operator: "we should NOT move during that screen").
+    # Default False = "not wired / never in witchspace" — unit tests proceed.
+    in_witchspace: Callable[[], bool] = lambda: False
+
     # factory returning a context manager that marks "a UI macro owns input"
     # for its duration (heat watchdog pauses). None when no watchdog is wired.
     exclusive_guard: Optional[Callable[[], Any]] = None
