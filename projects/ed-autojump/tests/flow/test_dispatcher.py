@@ -703,3 +703,76 @@ def test_parallel_track_runs_alongside_main():
     acts = sender.actions()
     assert "ExplorationFSSDiscoveryScan" in acts   # honk fired
     assert "TargetNextRouteSystem" in acts          # arrival fired
+
+
+# ---------------------------------------------------------------------------
+# Witchspace latch (operator rule: "we should NOT move during that screen").
+# Journal-confirmed: Hyperspace StartJump → FSDJump is ~18s; that is the
+# input-blackout window. Supercruise StartJumps are NOT witchspace.
+# ---------------------------------------------------------------------------
+
+def _wc_runner():
+    """Minimal FlowRunner with no procedures — latch tests need no procedures."""
+    return FlowRunner(
+        procedures={},
+        sender=FakeSender(),
+        clock=lambda: 0.0,
+        sleeper=lambda s: None,
+        status_supplier=lambda: None,
+    )
+
+
+def test_hyperspace_startjump_sets_witchspace_latch():
+    """W1: a Hyperspace StartJump (JumpType=="Hyperspace") sets _in_witchspace."""
+    r = _wc_runner()
+    assert r._in_witchspace is False                # precondition
+    r._on_tail_event(_ev("StartJump", jump_type="Hyperspace", star_system="Wolf 359",
+                         star_class="G"))
+    assert r._in_witchspace is True
+
+
+def test_supercruise_startjump_does_not_set_witchspace():
+    """W2: a Supercruise StartJump (JumpType=="Supercruise") must NOT set the latch.
+    Journal-confirmed: supercruise StartJumps carry no StarClass and are not
+    witchspace. Clobbering would wedge the bot on every SC engage."""
+    r = _wc_runner()
+    r._on_tail_event(_ev("StartJump", jump_type="Supercruise", star_class=None))
+    assert r._in_witchspace is False
+
+
+def test_fsdjump_clears_witchspace_latch():
+    """W3: FSDJump is the canonical witchspace exit; it must clear the latch."""
+    r = _wc_runner()
+    r._in_witchspace = True
+    r._on_tail_event(_ev("FSDJump", star_system="Wolf 359"))
+    assert r._in_witchspace is False
+
+
+def test_supercruise_entry_clears_witchspace_failsafe():
+    """W4: SupercruiseEntry arriving while the latch is set proves witchspace is
+    over (safety release belt-and-suspenders — the FSDJump is the primary,
+    this prevents a wedge if an FSDJump line is ever missed)."""
+    r = _wc_runner()
+    r._in_witchspace = True
+    r._on_tail_event(_ev("SupercruiseEntry"))
+    assert r._in_witchspace is False
+
+
+def test_docked_clears_witchspace_failsafe():
+    """W4b: Docked is a post-arrival real-space scene; if reached it proves
+    witchspace ended, so the latch must clear (second safety release)."""
+    r = _wc_runner()
+    r._in_witchspace = True
+    r._on_tail_event(_ev("Docked", station_name="Jameson Memorial"))
+    assert r._in_witchspace is False
+
+
+def test_make_context_wires_in_witchspace():
+    """W7: the context built by FlowRunner must expose in_witchspace() as a live
+    supplier reflecting the runner's _in_witchspace latch — not a frozen
+    snapshot (the default lambda: False would not reflect a later latch set)."""
+    r = _wc_runner()
+    ctx = r._make_context()
+    assert ctx.in_witchspace() is False              # starts clear
+    r._in_witchspace = True
+    assert ctx.in_witchspace() is True               # live — latch propagates

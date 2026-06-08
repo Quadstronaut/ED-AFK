@@ -47,6 +47,34 @@ def run_procedure(
                     {"procedure": proc.name, "at": "operator_abort",
                      "retries": result.retries})
             return result
+
+        # WITCHSPACE PAUSE (operator: "we should NOT move during that screen").
+        # While a Hyperspace FSD jump is in flight (StartJump→FSDJump, ~18s,
+        # journal-confirmed) the nav panel / orient scene is invalid — every
+        # input is wasted or harmful. HOLD the next step at this guard until
+        # the FSDJump arrival clears the latch. NOT a clock gate — FSDJump is
+        # the only exit (no-arbitrary-timed-waits rule). should_abort is
+        # rechecked inside so the operator can still stop mid-witchspace.
+        # Log-once: WitchspacePause on entry, WitchspaceResume on exit.
+        if ctx.in_witchspace():
+            _paused_logged = False
+            while ctx.in_witchspace():
+                if ctx.should_abort():
+                    result.aborted = True
+                    ctx.log("ProcedureAborted",
+                            {"procedure": proc.name,
+                             "at": "operator_abort_witchspace",
+                             "retries": result.retries})
+                    return result
+                if not _paused_logged:
+                    ctx.log("WitchspacePause",
+                            {"procedure": proc.name,
+                             "at": proc.steps[i].action})
+                    _paused_logged = True
+                ctx.sleeper(0.5)
+            ctx.log("WitchspaceResume",
+                    {"procedure": proc.name, "at": proc.steps[i].action})
+
         step = proc.steps[i]
         if ctx.overlay is not None:
             # cosmetic; the writer is fail-soft but guard anyway so a broken
