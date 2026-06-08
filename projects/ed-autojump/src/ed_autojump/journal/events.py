@@ -234,6 +234,25 @@ class Undocked(Event):
     market_id: Optional[int] = Field(default=None, alias="MarketID")
 
 
+class ReceiveText(Event):
+    """In-game comms / station-traffic text received. For docking, the
+    critical message is "$STATION_NoFireZone_entered;" — the station broadcasts
+    this the instant the ship crosses inside the 7.5km no-fire zone (live-
+    verified 2026-06-07 by the operator from his own journal at Robigo Mines
+    Orbis). This is the ONLY distance signal available in normal space; there
+    is no distance field in Status.json. The dispatcher stashes a flag when
+    this specific message is seen so step_dock_approach can gate on range-entry
+    without re-reading the raw message string in a tight loop.
+
+    `from_` and `channel` are optional — they vary by station/NPC comms.
+    `message` is the raw $-token string or localised text."""
+
+    event: Literal["ReceiveText"]
+    message: str = Field(default="", alias="Message")
+    from_: str = Field(default="", alias="From")
+    channel: str = Field(default="", alias="Channel")
+
+
 class Music(Event):
     """Fires every time the game's music track changes.
 
@@ -291,6 +310,7 @@ AnyEvent = Union[
     Docked,
     Undocked,
     NavRouteClear,
+    ReceiveText,
     Music,
     LoadGame,
     Event,
@@ -318,6 +338,7 @@ _EVENT_MODELS: dict[str, type[Event]] = {
     "Docked": Docked,
     "Undocked": Undocked,
     "NavRouteClear": NavRouteClear,
+    "ReceiveText": ReceiveText,
     "Music": Music,
     "LoadGame": LoadGame,
 }
