@@ -215,6 +215,31 @@ class FlowRunner:
         self._docking_denied_reason: Optional[str] = None
         self._docked: bool = False
         self._docked_station: Optional[str] = None
+        # CAPTURE-AT-PLOT (station-dock): when the operator plots a route to a
+        # STATION (galaxy map -> station), the game may set Status.Destination
+        # to the station body (Body != 0) at the NavRoute event — BEFORE the
+        # bot's first TargetNextRouteSystem overwrites it to the route's first
+        # hop system star (Body 0). We snapshot it here and use it as the dock
+        # trigger at route-complete instead of the (by-then-overwritten) live
+        # Destination. Stored as (system_address, body, name).
+        #
+        # LIVE-TEST-GATED: the game mechanic "plot-to-station sets
+        # Status.Destination.Body != 0 at NavRoute" is UNCONFIRMED from
+        # journals (Status.json is a live snapshot with no history; the journals
+        # for this session show a system-level plot, not a station-level one).
+        # If the mechanic does NOT hold, _dest_is_named_station() returns False
+        # at the NavRoute event -> _dock_target stays None -> is_station stays
+        # False -> today's park path. Fail-safe: absent or wrong capture ==
+        # current behavior, never worse.
+        #
+        # Operator confirmation test (do before relying on this in production):
+        # 1. Undock, route cleared.
+        # 2. Galaxy map -> plot to a STATION (e.g. "Robigo Mines"), confirm.
+        #    Do NOT press Target-Next or move.
+        # 3. Read Status.json Destination. If Body != 0 and Name == station ->
+        #    this capture works. If Body == 0 -> capture-at-plot is dead;
+        #    a different signal is needed before this helps.
+        self._dock_target: Optional[tuple[int, int, str]] = None
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
@@ -541,19 +566,35 @@ class FlowRunner:
                   or "destination")
         status = self._fresh_status()
         dest = getattr(status, "destination", None) if status is not None else None
-        # Station iff a body is locked (Body != 0) in THIS arrival system AND
-        # that lock is NOT the local primary star. Anything else — system, star,
-        # nothing locked, unknown — takes the system park path.
-        local_star = _destination_is_local_star(status, self._current_system)
-        is_station = (
-            dest is not None
-            and getattr(dest, "body", 0) != 0
-            and getattr(dest, "system", None) == getattr(ev, "system_address", None)
-            and local_star is False
-        )
+        arrival_addr = getattr(ev, "system_address", None)
+
+        # CAPTURE-AT-PLOT path: prefer the station captured at plot time (the
+        # live Destination has been overwritten to the arrival system's star by
+        # every TargetNextRouteSystem press along the route). Only use it when
+        # it was captured in THIS arrival system (scope guard blocks a stale
+        # capture from a previous route to a different station).
+        captured = self._dock_target
+        is_station = False
+        station_name = "station"
+        if (captured is not None
+                and captured[0] == arrival_addr
+                and captured[1] != 0
+                and captured[2] and not captured[2].startswith("$")):
+            is_station = True
+            station_name = captured[2]
+        else:
+            # Legacy live-status path (unchanged): covers the edge case where
+            # Status still holds a station at arrival (e.g. no target_next_route
+            # ran on a single-hop route). Do NOT weaken any existing guard.
+            local_star = _destination_is_local_star(status, self._current_system)
+            if (dest is not None
+                    and getattr(dest, "body", 0) != 0
+                    and getattr(dest, "system", None) == arrival_addr
+                    and local_star is False):
+                is_station = True
+                station_name = (getattr(dest, "name", "") or "").strip() or "station"
 
         if is_station:
-            station_name = (getattr(dest, "name", "") or "").strip() or "station"
             # Run the real dock flow (procedures/dock.toml): approach under SC
             # assist, request inside the no-fire zone, let the ADC land, service.
             if self.overlay is not None:
@@ -702,6 +743,22 @@ class FlowRunner:
                     self._final_waypoint = (addr, sysname or "")
             self._navroute_cleared = False
             self._navroute_cleared_utc = None
+            # CAPTURE-AT-PLOT: if Status.Destination is a named non-star body
+            # right now, the operator plotted to a STATION and the game locked
+            # it before we could overwrite it with TargetNextRouteSystem.
+            # Reuse _dest_is_named_station (same predicate the dock decision
+            # uses) to guard the capture.  A non-station (Body 0) or absent
+            # status leaves _dock_target None -> park path at terminus.
+            # LIVE-TEST-GATED: see __init__ comment above.
+            from .steps import _dest_is_named_station as _dns
+            st_cap = self._fresh_status()
+            if st_cap is not None and _dns(st_cap):
+                d = getattr(st_cap, "destination", None)
+                self._dock_target = (
+                    getattr(d, "system", None),
+                    getattr(d, "body", 0),
+                    (getattr(d, "name", "") or "").strip(),
+                )
         elif name == "NavRouteClear":
             # Route cleared. Latch it + its journal timestamp. This fires on the
             # final hop (in witchspace) AND on a manual re-plot — the FSDJump

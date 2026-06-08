@@ -622,3 +622,118 @@ def test_dock_procedure_gates_are_required():
             "dock_await_docked"} <= required
     # station_services is best-effort (a no-op service is not a failure).
     assert "station_services" not in required
+
+
+# ============================ capture-at-plot ============================
+# Four TDD tests for _dock_target capture and consumption.
+# These exercise the LIVE-TEST-GATED mechanic: the game may or may not set
+# Status.Destination.Body != 0 at NavRoute time (see __init__ comment in
+# dispatcher.py).  The tests drive the code path directly by setting up a
+# status supplier that returns a station destination at NavRoute time.
+
+def _system_status():
+    """Status with a SYSTEM star destination (Body 0) — the common hop case."""
+    dest = SimpleNamespace(name="Robigo", body=0, system=99999)
+    return SimpleNamespace(destination=dest, in_supercruise=True, docked=False,
+                           fsd_charging=False, fsd_cooldown=False,
+                           fsd_mass_locked=False, overheating=False)
+
+
+def test_capture_at_plot_stores_station_dest():
+    """NavRoute event while Status.Destination is a named non-star body ->
+    _dock_target is populated with (system_addr, body, name)."""
+    sender = FakeSender()
+    # Status at NavRoute time: station is the locked Destination.
+    st_station = SimpleNamespace(
+        destination=SimpleNamespace(name="Robigo Mines", body=4, system=55555),
+        in_supercruise=True, docked=False, fsd_charging=False,
+        fsd_cooldown=False, fsd_mass_locked=False, overheating=False)
+
+    class _NR:
+        route = [SimpleNamespace(system_address=55555, star_system="Robigo")]
+
+    r = FlowRunner(
+        procedures=_full_procs(), sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None, status_supplier=lambda: st_station,
+        navroute_reader=type("R", (), {"poll": lambda self: _NR(),
+                                       "current": _NR()})())
+    r._on_tail_event(_ev("NavRoute"))
+
+    assert r._dock_target == (55555, 4, "Robigo Mines")
+
+
+def test_capture_at_plot_ignores_system_star_dest():
+    """NavRoute event while Status.Destination is a SYSTEM star (Body 0) ->
+    _dock_target stays None -> park path is preserved (fail-safe)."""
+    sender = FakeSender()
+
+    class _NR:
+        route = [SimpleNamespace(system_address=99999, star_system="Robigo")]
+
+    r = FlowRunner(
+        procedures=_full_procs(), sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None, status_supplier=lambda: _system_status(),
+        navroute_reader=type("R", (), {"poll": lambda self: _NR(),
+                                       "current": _NR()})())
+    r._on_tail_event(_ev("NavRoute"))
+
+    assert r._dock_target is None
+
+
+def test_route_complete_with_captured_station_runs_dock():
+    """Route arrives at the captured station's system -> dock runs (SetSpeed50)
+    instead of park (SetSpeedZero), even though live Status.Destination has been
+    overwritten to the system star (Body 0) by target_next_route hops."""
+    sender = FakeSender()
+    records = []
+
+    # Live status at arrival: Destination has been overwritten to the star.
+    star_dest = SimpleNamespace(name="Robigo", body=0, system=55555)
+    st_arrival = SimpleNamespace(
+        destination=star_dest, in_supercruise=True, docked=False,
+        fsd_charging=False, fsd_cooldown=False, fsd_mass_locked=False,
+        overheating=False)
+
+    r = FlowRunner(
+        procedures=_full_procs(), sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None, status_supplier=lambda: st_arrival,
+        record=lambda n, p: records.append((n, p)))
+    r._current_system = "Robigo"
+    r._final_waypoint = (55555, "Robigo")
+    # Simulate a prior capture-at-plot: the station was snapshotted when the
+    # operator plotted to "Robigo Mines" and Status.Destination.Body was 4.
+    r._dock_target = (55555, 4, "Robigo Mines")
+    r._docked = True
+    r._docked_station = "Robigo Mines"
+
+    r._on_tail_event(_ev("NavRouteClear", timestamp="2026-06-08T05:44:54Z"))
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Robigo",
+                   system_address=55555, timestamp="2026-06-08T05:45:05Z"))
+
+    assert "SetSpeed50" in sender.actions()              # dock ran
+    assert "SetSpeedZero" not in sender.actions()        # NOT the park path
+    assert any(n == "RouteCompleteStation" and p["station"] == "Robigo Mines"
+               for n, p in records)
+
+
+def test_route_complete_no_capture_parks():
+    """No capture-at-plot (_dock_target is None) AND live Destination is the
+    system star -> system park path (SetSpeedZero), not dock (SetSpeed50)."""
+    sender = FakeSender()
+    records = []
+
+    r = FlowRunner(
+        procedures=_full_procs(), sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None, status_supplier=lambda: _system_status(),
+        record=lambda n, p: records.append((n, p)))
+    r._current_system = "Robigo"
+    r._final_waypoint = (99999, "Robigo")
+    # _dock_target is None (default) — the current park behavior.
+
+    r._on_tail_event(_ev("NavRouteClear", timestamp="2026-06-08T05:44:54Z"))
+    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Robigo",
+                   system_address=99999, timestamp="2026-06-08T05:45:05Z"))
+
+    assert "SetSpeedZero" in sender.actions()            # park ran
+    assert "SetSpeed50" not in sender.actions()          # dock did NOT run
+    assert not any(n == "RouteCompleteStation" for n, _ in records)
