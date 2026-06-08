@@ -1,0 +1,40 @@
+# SC restart RESUME path — ship already in supercruise and CLEAR of the main
+# star (2026-06-08 operator spec). Runs when _maybe_startup detects that the
+# Status.Destination is NOT the local star (a station, a route-hop system, or
+# nothing locked) and therefore the arrival get-around (nav_panel_target ->
+# sc_assist_orbit) is unnecessary AND harmful (the Robigo incident: that
+# get-around locked "DSV Stellar cross | 9589", a Fleet Carrier, and wrecked
+# the plotted route).
+#
+# NO nav_panel_target, NO sc_assist_orbit, NO scoop pit-stop (ship is already
+# clear; scooping is an arrival-scene concern). The ship just needs to target
+# the next hop, throttle up, orient, and jump — same as the post-orbit leg of
+# arrival.toml, but without the orbit prefix.
+#
+# engage_jump is the distance-based FSD obstruction backstop: if the ship is
+# somehow too close to a star it will fail closed (never force a jump into
+# an obstructed FSD). The operator-test gate for the "manually-targeted a
+# station while physically nose-on the star" edge case is documented in the
+# design spec (2026-06-08); that residual is rare, the obstruction check bounds
+# the damage, and the NEAR path (arrival.toml) handles the confirmed nose-on case.
+#
+# step kinds (tag at start of each step comment):
+#   tap     atomic keypress, no precondition, no wait
+#   gated   keypress with Status.json precondition (fails closed on bad flag)
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+parallel_tracks = ["honk"]   # honk fires every system, no matter what
+
+[on_required_fail]
+retry_from = "target_next_route"
+max_retries = 3
+backoff_s = 2.0
+
+steps = [
+  { action = "target_next_route", required = true },       # gated  | 1 lock next hop (also cancels any SC-assist)
+  { action = "set_throttle", pct = 100 },                  # tap    | 2 full burn
+  { action = "reset_power_distribution" },                 # tap    | 3 normalise pips after throttle-100
+  { action = "orient_compass", required = true },          # vision | 4a coarse align to the hop
+  { action = "orient_widget_ring", required = true },      # vision | 4b fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },             # gated  | 5 FSD jump (distance-based obstruction fail-closed gate)
+  { action = "hold_alignment", required = true },          # vision | 6 hold cone until StartJump — event/state-gated, no clock
+]

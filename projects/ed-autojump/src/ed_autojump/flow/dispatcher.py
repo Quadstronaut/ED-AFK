@@ -28,7 +28,7 @@ from .model import Procedure
 # toward the station, so a star smack (SupercruiseExit Body=Star) mid-approach
 # yanks that scene away and must hand off to smack_recovery instead of grinding
 # the dock retry loop against normal-space glare.
-_PREEMPT_ON_SMACK = frozenset({"arrival", "startup", "dock"})
+_PREEMPT_ON_SMACK = frozenset({"arrival", "startup", "dock", "sc_resume"})
 
 # Route-complete correlation join window. NavRouteClear fires in witchspace
 # ~10s before the destination FSDJump; this is the max gap (in JOURNAL
@@ -921,13 +921,43 @@ class FlowRunner:
                     self.record("RouteCompleteIdleOnRestart",
                                 {"system": self._current_system})
                 return
-            # Restart mid-route (2026-06-06 13:26 star smack): a bot launched
-            # while the ship is ALREADY in supercruise is sitting at its last
-            # arrival star, nose-on — the ARRIVAL scene, not the fresh-load
-            # scene startup.toml was written for. startup's throttle-100-
-            # then-orient dove straight into the scoop zone (FuelScoop
-            # 13:26:17 -> SupercruiseExit Body=Star 13:26:21). arrival.toml
-            # orbits the star and clears it BEFORE throttling up.
+            # PROXIMITY BRANCH (2026-06-08 operator spec, Robigo incident):
+            # On first launch with ship in supercruise and a route plotted,
+            # check whether the ship is nose-on the local star (needing the
+            # orbit get-around) or is already clear (just throttle+orient+jump).
+            #
+            # Signal: _destination_is_local_star(st, _current_system)
+            #   False  -> FAR  -> sc_resume: no nav_panel_target, no orbit.
+            #             This is the common case when the operator loiters in a
+            #             populated system (e.g. Robigo): Destination is a
+            #             station or a route-hop system, returns False, the
+            #             Fleet-Carrier mislock never happens.
+            #   True   -> NEAR -> arrival: the genuine nose-on-star scene.
+            #   None   -> INDETERMINATE -> FAIL-SAFE to arrival (current
+            #             behavior, never worse than today).
+            #
+            # This is a pure STATUS READ — never touches the nav panel, never
+            # issues a lock. The mislock in the Robigo incident came from
+            # *writing* a lock (nav_panel_target); this only *reads* what ED
+            # already has locked.
+            from .steps import _destination_is_local_star
+            near_star = _destination_is_local_star(st, self._current_system)
+            if near_star is False:
+                # FAR: ship is clear of the star (or nothing/non-star locked).
+                # Light resume path — target next hop, throttle, orient, jump.
+                # NO nav_panel_target, NO sc_assist_orbit.
+                if self.record is not None:
+                    self.record("ScResumeOnRestart",
+                                {"system": self._current_system,
+                                 "reason": "not_local_star"})
+                self._run("sc_resume")
+                return
+            # NEAR (True) or INDETERMINATE (None): run arrival.toml get-around.
+            # None = fail-safe to current behavior — indeterminate is never worse.
+            if self.record is not None:
+                self.record("ArrivalOnRestart",
+                            {"system": self._current_system,
+                             "near_star": near_star is True})
             self._run("arrival")
             return
         if self._smacked and getattr(st, "fsd_cooldown", False):
