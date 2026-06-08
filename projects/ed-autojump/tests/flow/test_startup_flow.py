@@ -1,7 +1,14 @@
-"""Wiring tests for the 2026-06-07 operator-dictated startup flow: pips first
-in both lanes, recovery clears the star (lock row 0 -> pitch astern -> SC ->
-SC-assist orbit) before the hop lock, and the 13s clearance wait is the
-retry anchor for everything after it."""
+"""Wiring tests for startup.toml structure.
+
+Original (2026-06-07 operator redesign): pips first in both lanes, recovery
+clears the star (lock row 0 -> SC -> SC-assist orbit) before the hop lock,
+and the 13s clearance wait is the retry anchor for everything after it.
+
+Updated (2026-06-08 council Fix 3): pitch_compass(until=behind) REMOVED from
+the recovery lane — it caused the "pitched 180° away for no reason" incident
+on the Wolf 359 no-route fresh login, and was already removed from arrival.toml
+in the 2026-06-07 redesign. SC-assist orbit + the 13s clearance burn are
+sufficient (proven live by arrival). See test_startup_recovery_has_no_pitch_astern."""
 
 from pathlib import Path
 
@@ -47,14 +54,19 @@ def test_first_lane_is_pips_then_direct_jump():
 
 
 def test_recovery_lane_clears_the_star_before_the_hop():
+    """Fix 3 (2026-06-08 council): pitch_compass(until=behind) removed from the
+    recovery lane. The step caused the Wolf 359 "pitched 180° away for no reason"
+    incident and was already removed from arrival's recovery in the 2026-06-07
+    redesign. SC-assist orbit + 13s clearance burn clear the star without it
+    (arrival proves this live). The rest of the recovery lane is unchanged."""
     actions = [s.action for s in _startup().steps]
     assert actions[7:] == [
-        "target_ahead", "set_throttle", "nav_panel_target", "pitch_compass",
+        "target_ahead", "set_throttle", "nav_panel_target",
         "pips_engines", "engage_supercruise",
-        "orient_compass",      # 12b nose back on the star before the assist
+        "orient_compass",      # nose back on the star before the assist
         "sc_assist_orbit",
         "target_next_route", "set_throttle",
-        "reset_power_distribution",   # 15b pip-normalise after the post-SC throttle-100
+        "reset_power_distribution",   # pip-normalise after the post-SC throttle-100
         "wait",
         "orient_compass", "orient_widget_ring", "engage_jump",
         "hold_alignment",
@@ -72,7 +84,9 @@ def test_clearance_wait_is_the_only_retry_anchor():
     assert proc.on_required_fail.max_retries == 3
 
 
-def test_recovery_pitch_is_best_effort():
+def test_startup_recovery_has_no_pitch_astern():
+    """Fix 3 REGRESSION GUARD: pitch_compass must not re-appear in startup.toml.
+    The 'pitch star astern' step caused the Wolf 359 180°-away incident and was
+    already removed from arrival. Explicit guard against re-introduction."""
     proc = _startup()
-    pitch = next(s for s in proc.steps if s.action == "pitch_compass")
-    assert pitch.required is False   # a noisy classifier must not burn retries
+    assert "pitch_compass" not in [s.action for s in proc.steps]

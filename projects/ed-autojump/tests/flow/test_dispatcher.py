@@ -47,10 +47,28 @@ def test_supercruise_exit_not_star_is_ignored():
     assert sender.actions() == []
 
 
-def _startup_runner(sender, *, in_supercruise, docked=False, fsd_cooldown=False):
+def _make_navroute_reader(route):
+    """Minimal navroute_reader stub: .poll() returns None, .current holds the
+    route object. Matches the _navroute_state() poll/current contract."""
+    from types import SimpleNamespace as NS
+    nr = NS(route=route)
+    reader = NS(poll=lambda: None, current=nr)
+    return reader
+
+
+def _startup_runner(sender, *, in_supercruise, docked=False, fsd_cooldown=False,
+                    route=None):
     """Runner with distinguishable single-step procedures: startup presses
     SelectTarget (target_ahead), arrival presses TargetNextRouteSystem
-    (target_next_route), smack_recovery presses SetSpeed50 (set_throttle 50)."""
+    (target_next_route), smack_recovery presses SetSpeed50 (set_throttle 50).
+
+    `route` (2026-06-08 council Fix 1): when provided, wires a navroute_reader
+    so _navroute_state() returns it — any test that expects startup/arrival to
+    RUN must pass a non-empty route, because the empty-route guard now aborts.
+    Default None = no reader (_navroute_state returns None = unknown route) which
+    now triggers the NoRouteOnStartup abort for any normal-space non-docked
+    non-smacked non-SC startup path.  Tests for branch priority (docked, SC,
+    smacked) are unaffected because those branches return BEFORE the guard."""
     procs = {
         "startup": Procedure(name="startup", steps=(Step("target_ahead"),)),
         "arrival": Procedure(name="arrival", steps=(Step("target_next_route"),)),
@@ -58,13 +76,16 @@ def _startup_runner(sender, *, in_supercruise, docked=False, fsd_cooldown=False)
             name="smack_recovery",
             steps=(Step("set_throttle", {"pct": 50}),)),
     }
-    return FlowRunner(
+    r = FlowRunner(
         procedures=procs, sender=sender, clock=lambda: 0.0,
         sleeper=lambda s: None,
         status_supplier=lambda: SimpleNamespace(
             docked=docked, in_supercruise=in_supercruise, fsd_charging=False,
             fsd_cooldown=fsd_cooldown, fsd_mass_locked=False, overheating=False),
     )
+    if route is not None:
+        r.navroute_reader = _make_navroute_reader(route)
+    return r
 
 
 def test_startup_in_supercruise_runs_arrival_instead():
@@ -72,17 +93,142 @@ def test_startup_in_supercruise_runs_arrival_instead():
     in supercruise sat at its last arrival star, nose-on — startup's
     throttle-100-then-orient dove it into the scoop zone (FuelScoop 13:26:17
     -> SupercruiseExit Body=Star 13:26:21). In-supercruise restart IS the
-    arrival scene: orbit the star and clear it BEFORE throttling."""
+    arrival scene: orbit the star and clear it BEFORE throttling.
+
+    Route wired so the in-SC branch reaches arrival (the empty-route guard
+    fires AFTER the in-SC branch, so the route actually doesn't matter for SC
+    routing, but wiring it makes the intent explicit and guards against the
+    _is_parked_terminal branch intercepting it — a non-empty route is not
+    parked-terminal)."""
     sender = FakeSender()
-    r = _startup_runner(sender, in_supercruise=True)
+    from types import SimpleNamespace as NS
+    origin = NS(system_address=1, star_system="Wolf 359")
+    hop = NS(system_address=2, star_system="Sol")
+    r = _startup_runner(sender, in_supercruise=True, route=[origin, hop])
     r._maybe_startup()
     assert sender.actions() == ["TargetNextRouteSystem"]   # arrival ran
     assert r._startup_done is True
 
 
-def test_startup_in_normal_space_runs_startup():
+def test_startup_in_normal_space_with_route_runs_startup():
+    """Fix 1 happy path: a normal-space fresh login WITH a real route plotted
+    (len >= 2) must NOT be blocked by the empty-route guard — startup runs."""
     sender = FakeSender()
+    from types import SimpleNamespace as NS
+    origin = NS(system_address=1, star_system="Wolf 359")
+    hop = NS(system_address=2, star_system="Sol")
+    r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
+    r._maybe_startup()
+    assert sender.actions() == ["SelectTarget"]            # startup ran
+    assert r._startup_done is True
+
+
+def test_startup_normal_space_empty_route_aborts():
+    """Fix 1 (2026-06-08 council, Wolf 359 no-route flail): a fresh login in
+    normal space with an EMPTY NavRoute must abort cleanly — not run the jump
+    flow, not spin a 60s watchdog, not pitch 180° away from nothing.
+    NoRouteOnStartup must be recorded; startup must NOT have run (no
+    SelectTarget press)."""
+    sender = FakeSender()
+    records: list[tuple[str, dict]] = []
+    from types import SimpleNamespace as NS
+    r = _startup_runner(sender, in_supercruise=False, route=[])
+    r.record = lambda name, payload: records.append((name, payload))
+    r._maybe_startup()
+    assert sender.actions() == []                          # startup did NOT run
+    assert r._startup_done is True
+    assert any(n == "NoRouteOnStartup" for n, _ in records)
+
+
+def test_startup_normal_space_absent_route_reader_aborts():
+    """Fix 1: no navroute_reader at all (nr is None = unknown) -> safe abort.
+    The guard treats 'unknown' the same as empty — fail closed, never fly
+    blind."""
+    sender = FakeSender()
+    records: list[tuple[str, dict]] = []
+    # No route= kwarg -> navroute_reader stays None
     r = _startup_runner(sender, in_supercruise=False)
+    r.record = lambda name, payload: records.append((name, payload))
+    r._maybe_startup()
+    assert sender.actions() == []
+    assert r._startup_done is True
+    assert any(n == "NoRouteOnStartup" for n, _ in records)
+
+
+def test_startup_normal_space_origin_only_route_runs_startup():
+    """Fix 1 design decision: `not route` is truthy for [] only, not [origin].
+    A single-element route (origin only) is technically unjumpable, but Fix 1
+    uses `not route` which passes a len-1 list through to startup — Fix 2's
+    step-level fast-fail handles that degenerate case at target_next_route.
+    This test documents the split responsibility."""
+    sender = FakeSender()
+    from types import SimpleNamespace as NS
+    origin = NS(system_address=1, star_system="Wolf 359")
+    r = _startup_runner(sender, in_supercruise=False, route=[origin])
+    r._maybe_startup()
+    # Startup RUNS (Fix 1 passes it through); Fix 2 will fast-fail the step.
+    assert sender.actions() == ["SelectTarget"]
+    assert r._startup_done is True
+
+
+def test_startup_docked_route_irrelevant():
+    """Guard priority: docked branch fires BEFORE the empty-route guard.
+    An empty route on a docked login must idle via the docked path, not fire
+    NoRouteOnStartup."""
+    sender = FakeSender()
+    records: list[tuple[str, dict]] = []
+    # empty route, but docked — docked branch takes precedence
+    r = _startup_runner(sender, in_supercruise=False, docked=True, route=[])
+    r.record = lambda name, payload: records.append((name, payload))
+    r._maybe_startup()
+    assert sender.actions() == []
+    assert r._startup_done is True
+    assert not any(n == "NoRouteOnStartup" for n, _ in records)
+
+
+def test_startup_in_supercruise_empty_route_runs_parked_idle():
+    """Guard priority: in-supercruise branch fires BEFORE the empty-route guard.
+    An empty route + in_supercruise + local-star destination = parked-terminal
+    idle (RouteCompleteIdleOnRestart), NOT NoRouteOnStartup."""
+    from types import SimpleNamespace as NS
+    sender = FakeSender()
+    records: list[tuple[str, dict]] = []
+    # Build runner with empty route (so _is_parked_terminal passes) and a
+    # local-star destination lock.
+    procs = {
+        "startup": Procedure(name="startup", steps=(Step("target_ahead"),)),
+        "arrival": Procedure(name="arrival", steps=(Step("target_next_route"),)),
+        "smack_recovery": Procedure(
+            name="smack_recovery",
+            steps=(Step("set_throttle", {"pct": 50}),)),
+    }
+    system = "Wolf 359"
+    dest = NS(name=system, system=99, body=0)
+    r = FlowRunner(
+        procedures=procs, sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None,
+        status_supplier=lambda: NS(
+            docked=False, in_supercruise=True, fsd_charging=False,
+            fsd_cooldown=False, fsd_mass_locked=False, overheating=False,
+            destination=dest),
+        record=lambda name, payload: records.append((name, payload)),
+        navroute_reader=_make_navroute_reader([]),
+    )
+    r._current_system = system
+    r._maybe_startup()
+    assert sender.actions() == []                     # neither startup nor arrival ran
+    assert any(n == "RouteCompleteIdleOnRestart" for n, _ in records)
+    assert not any(n == "NoRouteOnStartup" for n, _ in records)
+
+
+def test_startup_in_normal_space_runs_startup():
+    """Legacy name kept for grep continuity; now requires a route to reach
+    startup (Fix 1). The real no-route case is test_startup_normal_space_*."""
+    sender = FakeSender()
+    from types import SimpleNamespace as NS
+    origin = NS(system_address=1, star_system="Wolf 359")
+    hop = NS(system_address=2, star_system="Sol")
+    r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
     r._maybe_startup()
     assert sender.actions() == ["SelectTarget"]            # startup ran
 
@@ -113,17 +259,25 @@ def test_stale_star_drop_without_cooldown_runs_startup():
     and launched the bot seconds later. The cooldown gate is the
     discriminator: a manual drop's ~5s cooldown is gone by boot, a real
     smack's ~40s is not. No live cooldown -> the smacked inference is stale
-    -> startup, whose recovery lane does the star-astern escape anyway."""
+    -> startup, whose recovery lane does the star-astern escape anyway.
+    Route wired (Fix 1: a route must exist for startup to run)."""
+    from types import SimpleNamespace as NS
     sender = FakeSender()
-    r = _startup_runner(sender, in_supercruise=False, fsd_cooldown=False)
+    origin = NS(system_address=1, star_system="Wolf 359")
+    hop = NS(system_address=2, star_system="Sol")
+    r = _startup_runner(sender, in_supercruise=False, fsd_cooldown=False,
+                        route=[origin, hop])
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))   # backlog
     r._maybe_startup()
     assert sender.actions() == ["SelectTarget"]    # startup ran, NOT smack
 
 
 def test_smacked_scene_cleared_by_supercruise_entry():
+    from types import SimpleNamespace as NS
     sender = FakeSender()
-    r = _startup_runner(sender, in_supercruise=False)
+    origin = NS(system_address=1, star_system="Wolf 359")
+    hop = NS(system_address=2, star_system="Sol")
+    r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
     r._on_tail_event(_ev("SupercruiseEntry"))      # recovered before restart
     r._maybe_startup()
@@ -131,8 +285,11 @@ def test_smacked_scene_cleared_by_supercruise_entry():
 
 
 def test_smacked_scene_cleared_by_fsdjump():
+    from types import SimpleNamespace as NS
     sender = FakeSender()
-    r = _startup_runner(sender, in_supercruise=False)
+    origin = NS(system_address=1, star_system="Wolf 359")
+    hop = NS(system_address=2, star_system="Sol")
+    r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
     r._on_tail_event(_ev("FSDJump", star_system="X"))
     r._maybe_startup()
@@ -140,8 +297,11 @@ def test_smacked_scene_cleared_by_fsdjump():
 
 
 def test_non_star_drop_is_not_smacked():
+    from types import SimpleNamespace as NS
     sender = FakeSender()
-    r = _startup_runner(sender, in_supercruise=False)
+    origin = NS(system_address=1, star_system="Wolf 359")
+    hop = NS(system_address=2, star_system="Sol")
+    r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
     r._on_tail_event(_ev("SupercruiseExit", body_type="Planet"))
     r._maybe_startup()
     assert sender.actions() == ["SelectTarget"]    # plain startup

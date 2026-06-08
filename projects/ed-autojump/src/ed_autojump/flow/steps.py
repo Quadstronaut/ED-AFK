@@ -112,6 +112,25 @@ def step_target_next_route(
     seq0, _ = ctx.fsd_target_supplier()
     if not _press(ctx, "TargetNextRouteSystem"):
         return False
+    # Fast-fail on an empty / origin-only NavRoute (2026-06-08 council): with no
+    # onward hop the press emits NO new FSDTarget (seq never advances) and
+    # Status.Destination can only ever point at route[0] (the system we sit in)
+    # or nothing — so NEITHER confirm path below can EVER conclude, and the loop
+    # used to spin the full 60s watchdog (operator's "very slow"). Recognise the
+    # no-hop route by STATE and return promptly. NOT a clock shortcut: the gate
+    # keys off route length, not a reduced timeout (no-arbitrary-timed-waits).
+    # route[0] is the origin (see docstring); a jumpable route needs route[1:].
+    # nav is None == supplier UNWIRED (default lambda: None / unit tests with no
+    # journal) -> "unknown, not empty" -> skip the gate, preserving the legacy
+    # press-only fallback and the real-route watchdog test. Only checked when
+    # event_waiter is wired (the case that would spin the watchdog).
+    if ctx.event_waiter is not None:
+        nav = ctx.navroute_supplier()
+        if nav is not None:
+            route = getattr(nav, "route", None)
+            if route is None or len(route) <= 1:
+                ctx.log("TargetNextRouteDone", {"reason": "no_route"})
+                return False
     if ctx.event_waiter is None:
         return True
     from ..fsd.danger import is_dangerous

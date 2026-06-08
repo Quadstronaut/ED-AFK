@@ -108,11 +108,25 @@ def test_target_next_route_refuses_danger_already_targeted(cls):
 def test_target_next_route_fails_closed_when_destination_off_route():
     """Destination set but its address isn't an onward route hop (manual
     off-route target / no usable star class) -> unknown class -> fail closed
-    via the watchdog, never confirm blind."""
+    via the watchdog, never confirm blind.
+
+    UPDATED 2026-06-08 (Fix 2): the original test used a len-1 route
+    [origin_only] with dest_system=999. Under Fix 2, a len-1 route is the
+    no-route fast-fail case (returns False at << 60s), not the off-route
+    watchdog case. To keep this test as a genuine off-route-watchdog test,
+    the route is extended to len-2 so the fast-fail gate is skipped and the
+    old off-route semantics are preserved:
+      route = [origin(addr=7), onward_hop(addr=42)] with dest_system=999
+      -> dest doesn't match addr=7 (origin, skipped by [1:]) or addr=42
+      -> no confirm, watchdog fires."""
     sender = FakeSender()
     ctx, now = _already_targeted_ctx(sender, dest_system=999,
-                                     route=[SimpleNamespace(system_address=7,
-                                                            star_class="G")])
+                                     route=[
+                                         SimpleNamespace(system_address=7,
+                                                         star_class="G"),
+                                         SimpleNamespace(system_address=42,
+                                                         star_class="K"),
+                                     ])
     assert STEP_REGISTRY["target_next_route"](ctx) is False
     assert now[0] >= 60.0
 
@@ -354,3 +368,74 @@ def test_engage_supercruise_press_false_waits_without_pressing():
                                              press=False)
     assert ok is True
     assert "Supercruise" not in sender.actions()
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — target_next_route fast-fail on empty/origin-only NavRoute
+# (2026-06-08 council, Wolf 359 no-route flail)
+# ---------------------------------------------------------------------------
+
+def _fast_fail_ctx(sender, route):
+    """ctx wired with an explicit navroute_supplier so the fast-fail gate fires."""
+    now = [0.0]
+    def waiter(ev, t):
+        now[0] += t
+        return False
+    ctx = StepContext(
+        sender=sender,
+        clock=lambda: now[0],
+        sleeper=lambda s: None,
+        event_waiter=waiter,
+        fsd_target_supplier=lambda: (0, None),
+        navroute_supplier=lambda: SimpleNamespace(route=route),
+    )
+    return ctx, now
+
+
+def test_target_next_route_fast_fails_on_empty_route():
+    """Fix 2 (2026-06-08 council): an EMPTY NavRoute means no onward hop exists —
+    the press can never produce a new FSDTarget, so spinning the 60s watchdog is
+    pure waste. Recognize the no-hop state and return False promptly.
+    NOT a clock shortcut: the gate keys off route length (STATE), not a reduced
+    timeout (no-arbitrary-timed-waits rule)."""
+    sender = FakeSender()
+    ctx, now = _fast_fail_ctx(sender, route=[])
+    result = STEP_REGISTRY["target_next_route"](ctx)
+    assert result is False
+    assert sender.actions() == ["TargetNextRouteSystem"]   # pressed once
+    assert now[0] < 60.0                                   # did NOT spin the watchdog
+
+
+def test_target_next_route_fast_fails_on_origin_only_route():
+    """Fix 2: a route with only the origin system (len=1) has no onward hop —
+    same fast-fail as empty. route[0] is the system we sit in; route[1:] is
+    what matters for jumping and is empty here."""
+    sender = FakeSender()
+    origin = SimpleNamespace(system_address=7, star_class="G")
+    ctx, now = _fast_fail_ctx(sender, route=[origin])
+    result = STEP_REGISTRY["target_next_route"](ctx)
+    assert result is False
+    assert sender.actions() == ["TargetNextRouteSystem"]
+    assert now[0] < 60.0
+
+
+def test_target_next_route_watchdog_preserved_when_nav_is_none():
+    """Fix 2 PRESERVE: the default navroute_supplier is lambda: None (unwired).
+    nav is None == 'unknown, not empty' -> gate skipped -> legacy watchdog path.
+    test_target_next_route_watchdog_when_no_fsdtarget exercises this; this test
+    confirms the fast-fail gate does NOT fire when the supplier returns None."""
+    now = [0.0]
+    def waiter(ev, t):
+        now[0] += t
+        return False
+    sender = FakeSender()
+    # navroute_supplier NOT set -> defaults to lambda: None in StepContext
+    ctx = StepContext(
+        sender=sender,
+        clock=lambda: now[0],
+        sleeper=lambda s: None,
+        event_waiter=waiter,
+        fsd_target_supplier=lambda: (0, None),
+    )
+    assert STEP_REGISTRY["target_next_route"](ctx) is False
+    assert now[0] >= 60.0   # still watchdogs — gate skipped on nav=None

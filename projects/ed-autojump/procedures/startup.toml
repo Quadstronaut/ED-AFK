@@ -9,15 +9,25 @@
 # REDESIGN 2026-06-07 (operator, line-by-line review):
 # - All pips to ENGINES first, in both lanes.
 # - The recovery lane now clears the star the way arrival does: deselect,
-#   throttle 100 just in case, lock the star (nav panel row 0), pitch it
-#   astern (best-effort), pips again, SC entry, SC-assist orbit the star
-#   (still locked from the row-0 step), THEN lock the hop, 13s clearance
-#   burn, orient, jump.
+#   throttle 100 just in case, lock the star (nav panel row 0), pips again,
+#   SC entry, SC-assist orbit the star (still locked from the row-0 step),
+#   THEN lock the hop, 13s clearance burn, orient, jump.
 # - The 13s wait carries retry_anchor = true: once the lane is past it, a
 #   required failure (orient/jump/hold) returns to the WAIT — fly 13 more
 #   seconds and re-orient — instead of restarting the lane ("if it makes it
 #   to 13, failures after that should return to 13"). Failures before the
 #   wait still restart from target_ahead.
+#
+# PATCH 2026-06-08 (council, Wolf 359 no-route fresh-login defect):
+# pitch_compass(until=behind) REMOVED from the recovery lane (was step 10).
+# The step caused the "pitched 180° away for no reason" incident on the
+# Wolf 359 fresh login (no route plotted; the recovery lane pitched the star
+# astern with nowhere to jump to). The same step was already removed from
+# arrival.toml in the 2026-06-07 redesign — "the SC-assist orbit alone is
+# the get-around, and 13s at 100% after the hop lock is the clearance burn"
+# (arrival header, line-by-line review). SC-assist + 13s clearance is
+# proven live by arrival; the pitch-astern adds nothing and actively harms
+# a fresh no-route startup by spending 75s pitching before abort.
 #
 # hold_alignment is a PURE EVENT-DRIVEN gate: StartJump / FsdJump flag =
 # success; FsdCharging true->false without either = the game aborted the
@@ -54,22 +64,19 @@ steps = [
   { action = "target_ahead" },                             # tap    | 7 deselect (no target ahead → clears)
   { action = "set_throttle", pct = 100 },                  # tap    | 8 just in case
   { action = "nav_panel_target" },                         # macro  | 9 EXCLUSIVE — star = nav panel row 0 (closest body)
-  # Best-effort (operator-confirmed 2026-06-07): a noisy classifier must fall
-  # through to SC entry, never burn the retry budget on a flickering dot.
-  { action = "pitch_compass", until = "behind", center_frac = 0.35, timeout_s = 75.0, max_iters = 40 },  # vision | 10 star astern (best effort)
-  { action = "pips_engines" },                             # tap    | 11 pips again before the climb
-  { action = "engage_supercruise", required = true },      # gated  | 12 event/state-gated on SupercruiseEntry
+  { action = "pips_engines" },                             # tap    | 10 pips again before the climb
+  { action = "engage_supercruise", required = true },      # gated  | 11 event/state-gated on SupercruiseEntry
   # SC entry leaves the nose on the ESCAPE bearing, not the star — orient
   # back onto the star lock before the assist macro (2026-06-07 council:
   # assist refuses an unaligned engage). Best-effort like arrival's 3b.
-  { action = "orient_compass" },                           # vision | 12b nose back on the star
-  { action = "sc_assist_orbit" },                          # macro  | 13 EXCLUSIVE — guarded SC-assist; a refusal degrades to the direct jump below
-  { action = "target_next_route", required = true },                        # gated  | 14 lock the NEXT SYSTEM in route
-  { action = "set_throttle", pct = 100 },                  # tap    | 15
-  { action = "reset_power_distribution" },                 # tap    | 15b normalize pips after the post-SC throttle-100 (operator 2026-06-07)
-  { action = "wait", s = 13.0, retry_anchor = true },      # wait   | 16 clearance burn — failures at/after here RETURN HERE
-  { action = "orient_compass", required = true },          # vision | 17 coarse
-  { action = "orient_widget_ring", required = true },      # vision | 18 fine
-  { action = "engage_jump", required = true },             # gated  | 19 press FSD combo
-  { action = "hold_alignment", required = true },          # vision | 20 hold cone until StartJump
+  { action = "orient_compass" },                           # vision | 11b nose back on the star
+  { action = "sc_assist_orbit" },                          # macro  | 12 EXCLUSIVE — guarded SC-assist; a refusal degrades to the direct jump below
+  { action = "target_next_route", required = true },                        # gated  | 13 lock the NEXT SYSTEM in route
+  { action = "set_throttle", pct = 100 },                  # tap    | 14
+  { action = "reset_power_distribution" },                 # tap    | 14b normalize pips after the post-SC throttle-100 (operator 2026-06-07)
+  { action = "wait", s = 13.0, retry_anchor = true },      # wait   | 15 clearance burn — failures at/after here RETURN HERE
+  { action = "orient_compass", required = true },          # vision | 16 coarse
+  { action = "orient_widget_ring", required = true },      # vision | 17 fine
+  { action = "engage_jump", required = true },             # gated  | 18 press FSD combo
+  { action = "hold_alignment", required = true },          # vision | 19 hold cone until StartJump
 ]
