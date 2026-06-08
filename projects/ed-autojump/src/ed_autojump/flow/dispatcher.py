@@ -923,42 +923,80 @@ class FlowRunner:
                 return
             # PROXIMITY BRANCH (2026-06-08 operator spec, Robigo incident):
             # On first launch with ship in supercruise and a route plotted,
-            # check whether the ship is nose-on the local star (needing the
-            # orbit get-around) or is already clear (just throttle+orient+jump).
+            # decide between arrival (orbit get-around) and sc_resume
+            # (throttle+orient+jump, no orbit) using a 4-priority gate.
             #
-            # Signal: _destination_is_local_star(st, _current_system)
-            #   False  -> FAR  -> sc_resume: no nav_panel_target, no orbit.
-            #             This is the common case when the operator loiters in a
-            #             populated system (e.g. Robigo): Destination is a
-            #             station or a route-hop system, returns False, the
-            #             Fleet-Carrier mislock never happens.
-            #   True   -> NEAR -> arrival: the genuine nose-on-star scene.
-            #   None   -> INDETERMINATE -> FAIL-SAFE to arrival (current
-            #             behavior, never worse than today).
+            # Gate priority (highest first):
+            #   1. INDETERMINATE (dest=None or system unknown) -> arrival
+            #      (fail-safe; indeterminate is never worse than today).
+            #   2. Destination IS the local star -> arrival
+            #      (genuine nose-on-star scene needs the orbit get-around).
+            #   3. jump_age <= FRESH_ARRIVAL_WINDOW_S -> arrival
+            #      SMACK GUARD: immediately after FSDJump, Status.Destination
+            #      is already the NEXT route hop (different system/body),
+            #      so _destination_is_local_star returns False even though
+            #      the ship is physically nose-on the arrival star. The 30s
+            #      window was operator-confirmed by Operator (2026-06-08) as a
+            #      DELIBERATE EXCEPTION to the [[no-arbitrary-timed-waits]]
+            #      rule: this is a CLASSIFIER heuristic only, not a
+            #      success/failure gate; the wall-clock span is bounded by
+            #      the ED FSDJump-to-scene-stable window and cannot be
+            #      replaced by a journal event (the signal we need — "am I
+            #      nose-on the star" — is overwritten by ED before we read it).
+            #   4. OTHERWISE (jump_age > 30s AND confident non-local-star lock)
+            #      -> sc_resume (fast path: Robigo loiter, named station, etc.)
             #
-            # This is a pure STATUS READ — never touches the nav panel, never
-            # issues a lock. The mislock in the Robigo incident came from
-            # *writing* a lock (nav_panel_target); this only *reads* what ED
-            # already has locked.
+            # FRESH_ARRIVAL_WINDOW_S: operator-confirmed override of the
+            # no-arbitrary-timed-waits rule FOR THIS CLASSIFIER ONLY.
+            FRESH_ARRIVAL_WINDOW_S = 30.0
+
             from .steps import _destination_is_local_star
+            dest = getattr(st, "destination", None)
             near_star = _destination_is_local_star(st, self._current_system)
-            if near_star is False:
-                # FAR: ship is clear of the star (or nothing/non-star locked).
-                # Light resume path — target next hop, throttle, orient, jump.
-                # NO nav_panel_target, NO sc_assist_orbit.
+
+            # Priority 1: indeterminate (no destination read / unknown system)
+            if near_star is None or dest is None:
                 if self.record is not None:
-                    self.record("ScResumeOnRestart",
+                    self.record("ArrivalOnRestart",
                                 {"system": self._current_system,
-                                 "reason": "not_local_star"})
-                self._run("sc_resume")
+                                 "near_star": None,
+                                 "reason": "indeterminate"})
+                self._run("arrival")
                 return
-            # NEAR (True) or INDETERMINATE (None): run arrival.toml get-around.
-            # None = fail-safe to current behavior — indeterminate is never worse.
+
+            # Priority 2: destination IS the local star -> orbit needed
+            if near_star is True:
+                if self.record is not None:
+                    self.record("ArrivalOnRestart",
+                                {"system": self._current_system,
+                                 "near_star": True,
+                                 "reason": "local_star"})
+                self._run("arrival")
+                return
+
+            # Priority 3: fresh arrival (smack guard) — even a confident
+            # non-local-star dest is unreliable within FRESH_ARRIVAL_WINDOW_S
+            # because ED pre-loads the NEXT hop before the scene has settled.
+            jump_age = self._jump_age()
+            if jump_age is None or jump_age <= FRESH_ARRIVAL_WINDOW_S:
+                if self.record is not None:
+                    self.record("ArrivalOnRestart",
+                                {"system": self._current_system,
+                                 "near_star": False,
+                                 "reason": "fresh_arrival",
+                                 "jump_age": jump_age})
+                self._run("arrival")
+                return
+
+            # Priority 4: stale loiter with a confident non-local-star lock
+            # (jump_age > FRESH_ARRIVAL_WINDOW_S): fast resume path.
+            # No nav_panel_target, no sc_assist_orbit.
             if self.record is not None:
-                self.record("ArrivalOnRestart",
+                self.record("ScResumeOnRestart",
                             {"system": self._current_system,
-                             "near_star": near_star is True})
-            self._run("arrival")
+                             "reason": "not_local_star",
+                             "jump_age": jump_age})
+            self._run("sc_resume")
             return
         if self._smacked and getattr(st, "fsd_cooldown", False):
             # Restart while SMACKED (normal space, last SC transition was a

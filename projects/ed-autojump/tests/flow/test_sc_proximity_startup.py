@@ -1,27 +1,18 @@
 """TDD tests for the SC restart proximity branch (2026-06-08 operator spec).
 
-Three cases:
-  FAR  — ship in supercruise, Destination is NOT the local star (e.g. a station
-          or a route-hop system) -> sc_resume runs (target_next_route + orient +
-          engage_jump), nav_panel_target NEVER called.
-  NEAR — ship in supercruise, Destination IS the local star (or indeterminate
-          None) -> arrival runs (the existing get-around).
-  INDETERMINATE — jump_age is None (no FSDJump seen in backlog) -> fail-safe to
-          arrival, never sc_resume.
+Four-priority launch gate (in order):
+  1. INDETERMINATE (dest=None / unknown system) -> arrival (fail-safe).
+  2. Destination IS the local star -> arrival (genuine nose-on-star scene).
+  3. jump_age <= FRESH_ARRIVAL_WINDOW_S (30s) -> arrival (smack guard: ED
+     pre-loads the next route hop into Status.Destination immediately after
+     FSDJump, so _destination_is_local_star returns False even nose-on star).
+  4. OTHERWISE (jump_age > 30s AND confident non-local-star lock) -> sc_resume.
 
-Signal used (Seat A / Seat B design spec, 2026-06-08):
-  _destination_is_local_star(st, _current_system)
-    False -> FAR  -> sc_resume
-    True  -> NEAR -> arrival
-    None  -> INDET -> arrival (fail-safe to current behavior)
-
-NOTE — the signal is journal/code-confirmed from live Status.json:
-  Robigo incident: Status.Destination = { Body:17, Name:"Tortooga" }
-  -> _destination_is_local_star returns False -> FAR -> sc_resume.
-  This is NOT operator-test-gated; the Status.Destination read is a pure
-  in-memory attribute read (no nav-panel touch, no mislock risk).
+jump_age is derived from _last_fsdjump_utc (set via _apply_state on FSDJump)
+and self.now_utc(), both injectable in tests.
 """
 
+from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace as NS
 
 import pytest
@@ -56,11 +47,20 @@ def _make_navroute_reader(route):
     return NS(poll=lambda: None, current=nr)
 
 
-def _prox_runner(sender, *, st, current_system, route=None, records=None):
+# Fixed UTC epoch used as "now" in tests: 2026-06-08T12:00:00Z
+_NOW_UTC = datetime(2026, 6, 8, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _prox_runner(sender, *, st, current_system, route=None, records=None,
+                 jump_age_s=None):
     """FlowRunner with distinguishable procedures:
       - sc_resume: presses SetSpeed25 (set_throttle 25) — unique sentinel.
       - arrival: presses TargetNextRouteSystem (target_next_route).
       - startup/smack_recovery: standard stubs.
+
+    jump_age_s: seconds since the last FSDJump, as seen by _jump_age().
+      None  -> no FSDJump tracked this session (_last_fsdjump_utc stays None).
+      float -> _last_fsdjump_utc is set so that (_NOW_UTC - ts) == jump_age_s.
     """
     procs = {
         "startup":        Procedure(name="startup",        steps=(Step("target_ahead"),)),
@@ -74,12 +74,18 @@ def _prox_runner(sender, *, st, current_system, route=None, records=None):
         clock=lambda: 0.0,
         sleeper=lambda s: None,
         status_supplier=lambda: st,
+        now_utc=lambda: _NOW_UTC,   # freeze "now" for deterministic age
     )
     if route is not None:
         r.navroute_reader = _make_navroute_reader(route)
     if records is not None:
         r.record = lambda name, payload: records.append((name, payload))
     r._current_system = current_system
+    # Wire jump_age: set _last_fsdjump_utc so the computed age equals jump_age_s.
+    if jump_age_s is not None:
+        r._last_fsdjump_utc = _NOW_UTC - timedelta(seconds=jump_age_s)
+    # else: _last_fsdjump_utc stays None -> _jump_age() returns None -> priority 3
+    # treats as indeterminate -> arrival (fail-safe).
     return r
 
 
@@ -90,63 +96,25 @@ _ROUTE = [NS(system_address=1, star_system="Robigo"),
 
 
 # ---------------------------------------------------------------------------
-# FAR path: Destination is a named non-star body (station) -> sc_resume
+# Priority 1 / 3: dest=None -> arrival (fail-safe, regardless of jump_age)
 # ---------------------------------------------------------------------------
 
-def test_far_station_dest_runs_sc_resume():
-    """Robigo-incident scenario: Status.Destination is a station (Body != 0,
-    Name != system name). _destination_is_local_star returns False -> FAR ->
-    sc_resume runs, arrival does NOT."""
-    sender = FakeSender()
-    dest = _dest(name="Tortooga", body=17, system=2832161837714)
-    st = _status(in_supercruise=True, destination=dest)
-    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE)
-    r._maybe_startup()
-    actions = sender.actions()
-    # sc_resume sentinel is SetSpeed25; arrival sentinel is TargetNextRouteSystem
-    assert "SetSpeed25" in actions, f"sc_resume did not run; actions={actions}"
-    assert "TargetNextRouteSystem" not in actions, "arrival must NOT run on FAR path"
-
-
-def test_far_station_dest_records_sc_resume_event():
-    """FAR path records ScResumeOnRestart with reason=not_local_star."""
-    sender = FakeSender()
-    records: list[tuple[str, dict]] = []
-    dest = _dest(name="Tortooga", body=17)
-    st = _status(in_supercruise=True, destination=dest)
-    r = _prox_runner(sender, st=st, current_system="Robigo",
-                     route=_ROUTE, records=records)
-    r._maybe_startup()
-    names = [n for n, _ in records]
-    assert "ScResumeOnRestart" in names, f"expected ScResumeOnRestart, got {names}"
-
-
-def test_far_route_hop_dest_runs_sc_resume():
-    """A route-hop Destination (Body=0, Name=next system, NOT current system)
-    also returns False from _destination_is_local_star -> FAR -> sc_resume."""
-    sender = FakeSender()
-    dest = _dest(name="Wredguia UH-U c16-10", body=0)
-    st = _status(in_supercruise=True, destination=dest)
-    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE)
-    r._maybe_startup()
-    actions = sender.actions()
-    assert "SetSpeed25" in actions, f"sc_resume did not run; actions={actions}"
-    assert "TargetNextRouteSystem" not in actions
-
-
-def test_far_no_destination_locked_runs_sc_resume():
-    """No Destination locked at all (dest=None): _destination_is_local_star
-    returns False (nothing locked = NOT the star) -> FAR -> sc_resume."""
+def test_no_destination_runs_arrival_failsafe():
+    """Priority 1 fail-safe: dest=None -> arrival, never sc_resume.
+    Previously 'test_far_no_destination_locked_runs_sc_resume' — FLIPPED per
+    operator spec (2026-06-08): indeterminate must fail-safe to arrival."""
     sender = FakeSender()
     st = _status(in_supercruise=True, destination=None)
-    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=120.0)   # stale — priority 1 fires before priority 4
     r._maybe_startup()
     actions = sender.actions()
-    assert "SetSpeed25" in actions, f"sc_resume did not run; actions={actions}"
+    assert "TargetNextRouteSystem" in actions, f"arrival must run; actions={actions}"
+    assert "SetSpeed25" not in actions, "sc_resume must NOT run when dest=None"
 
 
 # ---------------------------------------------------------------------------
-# NEAR path: Destination IS the local star -> arrival (get-around)
+# Priority 2: Destination IS the local star -> arrival
 # ---------------------------------------------------------------------------
 
 def test_near_primary_star_dest_runs_arrival():
@@ -155,7 +123,8 @@ def test_near_primary_star_dest_runs_arrival():
     sender = FakeSender()
     dest = _dest(name="Robigo", body=0)
     st = _status(in_supercruise=True, destination=dest)
-    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=120.0)
     r._maybe_startup()
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival did not run; actions={actions}"
@@ -167,7 +136,8 @@ def test_near_secondary_star_dest_runs_arrival():
     sender = FakeSender()
     dest = _dest(name="Robigo A", body=0)
     st = _status(in_supercruise=True, destination=dest)
-    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=120.0)
     r._maybe_startup()
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions
@@ -175,17 +145,144 @@ def test_near_secondary_star_dest_runs_arrival():
 
 
 # ---------------------------------------------------------------------------
-# INDETERMINATE: _destination_is_local_star returns None (no status or no
-# system name) -> FAIL-SAFE to arrival, NEVER sc_resume
+# Priority 3 (smack guard): fresh arrival within 30s -> arrival,
+#   regardless of what _destination_is_local_star returns
+# ---------------------------------------------------------------------------
+
+def test_fresh_arrival_route_hop_dest_runs_arrival():
+    """SMACK GUARD (priority 3): route-hop dest (False from _destination_is_local_star)
+    + jump_age <= 30s -> arrival. ED pre-loads the NEXT hop into Status.Destination
+    immediately after FSDJump; within the fresh window the ship is still nose-on
+    the arrival star and sc_resume would smack it."""
+    sender = FakeSender()
+    dest = _dest(name="Wredguia UH-U c16-10", body=0)
+    st = _status(in_supercruise=True, destination=dest)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=15.0)   # within 30s fresh window
+    r._maybe_startup()
+    actions = sender.actions()
+    assert "TargetNextRouteSystem" in actions, f"arrival must run (fresh); actions={actions}"
+    assert "SetSpeed25" not in actions, "sc_resume must NOT run within fresh window"
+
+
+def test_fresh_arrival_named_station_dest_runs_arrival():
+    """SMACK GUARD (priority 3): named-station dest + jump_age <= 30s -> arrival.
+    A fresh arrival still has the ship nose-on the star regardless of what
+    Status.Destination shows; the fast-path is unsafe until the window expires."""
+    sender = FakeSender()
+    dest = _dest(name="Tortooga", body=17, system=2832161837714)
+    st = _status(in_supercruise=True, destination=dest)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=5.0)
+    r._maybe_startup()
+    actions = sender.actions()
+    assert "TargetNextRouteSystem" in actions, f"arrival must run (fresh station); actions={actions}"
+    assert "SetSpeed25" not in actions
+
+
+def test_fresh_arrival_boundary_exactly_30s_runs_arrival():
+    """Boundary: jump_age == 30.0s is still WITHIN the window -> arrival.
+    30.0 <= 30.0 must be True."""
+    sender = FakeSender()
+    dest = _dest(name="Wredguia UH-U c16-10", body=0)
+    st = _status(in_supercruise=True, destination=dest)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=30.0)
+    r._maybe_startup()
+    actions = sender.actions()
+    assert "TargetNextRouteSystem" in actions, f"arrival must run at boundary 30.0s; actions={actions}"
+    assert "SetSpeed25" not in actions
+
+
+def test_stale_arrival_boundary_just_over_30s_runs_sc_resume():
+    """Boundary: jump_age == 30.1s is OUTSIDE the window -> sc_resume.
+    30.1 > 30.0 must be True, so priority 4 fires."""
+    sender = FakeSender()
+    dest = _dest(name="Wredguia UH-U c16-10", body=0)
+    st = _status(in_supercruise=True, destination=dest)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=30.1)
+    r._maybe_startup()
+    actions = sender.actions()
+    assert "SetSpeed25" in actions, f"sc_resume must run at 30.1s; actions={actions}"
+    assert "TargetNextRouteSystem" not in actions
+
+
+def test_jump_age_indeterminate_no_fsdjump_runs_arrival():
+    """Priority 3 fail-safe: no FSDJump seen this session (jump_age=None)
+    -> arrival. An unknown age is treated as 'possibly fresh' to fail-safe."""
+    sender = FakeSender()
+    dest = _dest(name="Wredguia UH-U c16-10", body=0)
+    st = _status(in_supercruise=True, destination=dest)
+    # jump_age_s=None -> _last_fsdjump_utc stays None -> _jump_age() returns None
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=None)
+    r._maybe_startup()
+    actions = sender.actions()
+    assert "TargetNextRouteSystem" in actions, f"arrival must run (no jump seen); actions={actions}"
+    assert "SetSpeed25" not in actions
+
+
+# ---------------------------------------------------------------------------
+# Priority 4 (FAR/stale): Destination is a named non-star body AND stale
+# ---------------------------------------------------------------------------
+
+def test_far_station_dest_runs_sc_resume():
+    """Robigo-incident scenario: Status.Destination is a station (Body != 0,
+    Name != system name) AND jump_age > 30s -> sc_resume runs, arrival does NOT.
+    This is the Robigo loiter fix: the operator is parked at a station and the
+    fast-resume path must not invoke the orbit get-around."""
+    sender = FakeSender()
+    dest = _dest(name="Tortooga", body=17, system=2832161837714)
+    st = _status(in_supercruise=True, destination=dest)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=120.0)
+    r._maybe_startup()
+    actions = sender.actions()
+    assert "SetSpeed25" in actions, f"sc_resume did not run; actions={actions}"
+    assert "TargetNextRouteSystem" not in actions, "arrival must NOT run on FAR/stale path"
+
+
+def test_far_station_dest_records_sc_resume_event():
+    """FAR/stale path records ScResumeOnRestart with reason=not_local_star."""
+    sender = FakeSender()
+    records: list[tuple[str, dict]] = []
+    dest = _dest(name="Tortooga", body=17)
+    st = _status(in_supercruise=True, destination=dest)
+    r = _prox_runner(sender, st=st, current_system="Robigo",
+                     route=_ROUTE, records=records, jump_age_s=120.0)
+    r._maybe_startup()
+    names = [n for n, _ in records]
+    assert "ScResumeOnRestart" in names, f"expected ScResumeOnRestart, got {names}"
+
+
+def test_far_route_hop_dest_stale_runs_sc_resume():
+    """Priority 4: route-hop Destination (Body=0, Name=next system, NOT current)
+    + jump_age > 30s -> sc_resume. The stale loiter case: the ship has been
+    in SC for a while at a route hop, not nose-on the arrival star."""
+    sender = FakeSender()
+    dest = _dest(name="Wredguia UH-U c16-10", body=0)
+    st = _status(in_supercruise=True, destination=dest)
+    r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
+                     jump_age_s=120.0)
+    r._maybe_startup()
+    actions = sender.actions()
+    assert "SetSpeed25" in actions, f"sc_resume did not run; actions={actions}"
+    assert "TargetNextRouteSystem" not in actions
+
+
+# ---------------------------------------------------------------------------
+# INDETERMINATE: _destination_is_local_star returns None (no system name)
 # ---------------------------------------------------------------------------
 
 def test_indeterminate_no_system_name_runs_arrival():
     """_current_system is None -> _destination_is_local_star returns None ->
-    indeterminate -> fail-safe to arrival (current behavior)."""
+    indeterminate -> fail-safe to arrival."""
     sender = FakeSender()
     dest = _dest(name="Robigo", body=0)
     st = _status(in_supercruise=True, destination=dest)
-    r = _prox_runner(sender, st=st, current_system=None, route=_ROUTE)
+    r = _prox_runner(sender, st=st, current_system=None, route=_ROUTE,
+                     jump_age_s=120.0)
     r._maybe_startup()
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival must run on indeterminate; actions={actions}"
@@ -249,6 +346,7 @@ def test_parked_terminal_still_idles_not_sc_resume():
         procedures=procs, sender=sender, clock=lambda: 0.0,
         sleeper=lambda s: None,
         status_supplier=lambda: st,
+        now_utc=lambda: _NOW_UTC,
         record=lambda name, payload: records.append((name, payload)),
         navroute_reader=_make_navroute_reader([]),   # empty route = parked
     )
@@ -277,6 +375,7 @@ def test_smacked_with_cooldown_still_runs_smack_recovery_not_sc_resume():
         procedures=procs, sender=sender, clock=lambda: 0.0,
         sleeper=lambda s: None,
         status_supplier=lambda: st,
+        now_utc=lambda: _NOW_UTC,
     )
     r.navroute_reader = _make_navroute_reader(_ROUTE)
     r._smacked = True
