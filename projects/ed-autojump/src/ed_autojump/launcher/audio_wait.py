@@ -37,8 +37,9 @@ def _peak_from_sessions(sessions, process_name: str = ED_PROCESS_NAME) -> Option
     no pycaw, no real audio device. A session is any object exposing
     `.Process` (with `.name()`) and `._ctl.QueryInterface(...)`.
     """
-    from pycaw.api.endpointvolume import IAudioMeterInformation
-
+    # IAudioMeterInformation import lives at its point of use (in the match
+    # try-block below), NOT here: the empty-list / no-match paths must stay
+    # pycaw-free so they're hermetic on a box without pycaw (opus review).
     for s in sessions:
         proc = s.Process
         if proc is None:
@@ -49,6 +50,7 @@ def _peak_from_sessions(sessions, process_name: str = ED_PROCESS_NAME) -> Option
         except Exception:
             continue
         try:
+            from pycaw.api.endpointvolume import IAudioMeterInformation
             meter = s._ctl.QueryInterface(IAudioMeterInformation)
             return float(meter.GetPeakValue())
         except Exception:
