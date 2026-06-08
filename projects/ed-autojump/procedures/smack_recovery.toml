@@ -48,7 +48,7 @@ steps = [
   { action = "set_throttle", pct = 0 },                                                       # tap    | 0 kill thrust
   { action = "pips_engines" },                                                                # tap    | 0.6 all pips ENG
   { action = "nav_panel_target", required = true },                                           # macro  | 1 EXCLUSIVE — star = row 0; compass-verified lock
-  { action = "set_throttle", pct = 100 },                                                     # tap    | 2 full burn through the flip (operator order)
+  { action = "set_throttle", pct = 75 },                                                     # tap    | 2 full burn through the flip (operator order)
   # timeout_s/max_iters are FAILSAFE ceilings (the gate is the compass read,
   # never the clock); center_frac 0.35 = "hollow dot and center" with ~0.07
   # read noise headroom (2026-06-06 run 5).
@@ -61,6 +61,8 @@ steps = [
   # watchdog, never a success gate. A re-press is only sent when no charge
   # ever started in its window (re-pressing a live charge would CANCEL it).
   { action = "engage_supercruise", required = true, until_charging = true, presses = 3, between_press_s = 15.0, max_charge_s = 240.0 },  # gated  | 5 press until a charge is LIVE
+  { action = "set_throttle", pct = 100 },
+  { action = "target_next_route", required = true, retry_anchor = true },
   { action = "orient_compass", required = true },                                             # vision | 5.5 center the spawned escape-vector dot
   { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 5.6 hold the vector to SC entry
 
