@@ -840,6 +840,13 @@ class FlowRunner:
                     getattr(d, "body", 0),
                     (getattr(d, "name", "") or "").strip(),
                 )
+                # TRACE (gate-walk): make capture-at-plot observable — did the
+                # station actually win the read at the NavRoute instant?
+                if self.record is not None:
+                    self.record("DockTargetCaptured", {
+                        "name": self._dock_target[2],
+                        "body": self._dock_target[1],
+                        "system": self._dock_target[0]})
             else:
                 # A new plot that is NOT to a station CLEARS any prior capture
                 # (skeptic seat): FlowRunner is long-lived, so a stale station
@@ -847,6 +854,13 @@ class FlowRunner:
                 # system-route and wrongly trigger the dock flow. Every NavRoute
                 # resets the latch to the CURRENT plot's intent.
                 self._dock_target = None
+                # TRACE (gate-walk): log WHAT the live Destination was so we can
+                # see WHY the capture missed (expecting star Body=0 at plot time).
+                if self.record is not None:
+                    _dm = getattr(st_cap, "destination", None) if st_cap is not None else None
+                    self.record("DockTargetMissed", {
+                        "dest_name": getattr(_dm, "name", None),
+                        "dest_body": getattr(_dm, "body", None)})
         elif name == "NavRouteClear":
             # Route cleared. Latch it + its journal timestamp. This fires on the
             # final hop (in witchspace) AND on a manual re-plot — the FSDJump
