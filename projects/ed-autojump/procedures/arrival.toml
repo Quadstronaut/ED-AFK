@@ -26,6 +26,20 @@ backoff_s = 2.0
 
 steps = [
   { action = "set_throttle", pct = 0 },             # tap    | 1 in case hyperspace auto-dethrottle is off
+  # EARLY STAR LOCK (operator 2026-06-08): lock the arrival star NOW, during the
+  # scoop idle, so on scoop exit sc_assist_orbit engages immediately on an
+  # already-locked star ("taking the targeting step off of refueling resulted in
+  # supercruise assist not catching" — the assist needs a LOCKED target to grab).
+  # Mirrors startup.toml's proven bare nav_panel_target re-lock (steps 2/14):
+  # best-effort (required defaults false), and CRUCIALLY no skip_to / no max_rows.
+  # A not-found here returns False and advances ONE step INTO the scoop — it can
+  # NEVER vault past it (a skip_to="target_next_route" on THIS step would jump
+  # OVER the scoop on a far star — forbidden). The CLOSE/FAR orbit-vs-direct
+  # decision stays on the BOUNDED gate below (the one with skip_to + max_rows=3),
+  # which still re-locks/verifies the star right before the orbit. Wide default
+  # bound on purpose: this lock's only job is to grab the star for the assist;
+  # the far-skip decision lives on the bounded gate, not here.
+  { action = "nav_panel_target" },                  # macro  | 1b EXCLUSIVE — early best-effort star lock (no skip_to, wide bound)
   # Scoop pit stop. GATE: fuel < refuel_below AND arrival star KGBFOAM (last
   # hyperspace StartJump StarClass) — else SKIP straight to the star lock.
   # Nose in at 25% until ScoopingFuel, keep closing until the observed rate
