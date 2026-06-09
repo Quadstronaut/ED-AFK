@@ -170,6 +170,16 @@ class StepContext:
     # short-circuit does not no-op it).
     scex_seq_supplier: Callable[[], int] = lambda: 0
 
+    # IDENTITY targeting (task #45): when BOTH are wired, step_body_tour reads
+    # the NAVIGATION panel and targets the next UNEXPLORED in-system body by
+    # NAME (cross-ref the autoscan_supplier scanned-set) instead of walking by
+    # blind row index. Either one None -> the legacy blind row walk (every unit
+    # test). nav_panel_reader is a NavPanelReader (.parse / .read); the grabber
+    # returns the nav-panel-region frame. CALIBRATION-PENDING: needs [cv] +
+    # tesseract + a live region (see vision/navpanel_reader.py).
+    nav_panel_reader: Optional[Any] = None
+    nav_panel_grabber: Optional[Callable[[], Any]] = None
+
     # cosmetic EDMCOverlay status writer (None -> no overlay). Duck-typed:
     # .step(proc, action, idx, total). Fail-soft; never blocks a step.
     overlay: Optional[Any] = None

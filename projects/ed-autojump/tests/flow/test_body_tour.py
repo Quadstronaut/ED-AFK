@@ -477,6 +477,98 @@ def test_body_tour_self_guards_each_body():
     assert all(d == 0 for d in holds_during_gate)   # released during the gate
 
 
+# ===========================================================================
+# 9. IDENTITY targeting (task #45) — read the panel, target by NAME not row
+# ===========================================================================
+
+class _FakeNavReader:
+    """Stand-in for NavPanelReader: `.parse` returns a fixed body list (bypasses
+    OCR). The real `next_unexplored` inside the step does the scanned-set filter."""
+
+    def __init__(self, bodies):
+        self._bodies = bodies
+
+    def parse(self, frame, system):
+        return list(self._bodies)
+
+
+def _identity_ctx(sender, box, bodies, *, on_each_pump=None, records_fn=None,
+                  system="Test Sys", reader=None, grabber=None, **kw):
+    ctx = _ctx(sender, box, on_each_pump=on_each_pump, records_fn=records_fn,
+               system=system, **kw)
+    ctx.nav_panel_reader = reader if reader is not None else _FakeNavReader(bodies)
+    ctx.nav_panel_grabber = grabber if grabber is not None else (lambda: object())
+    return ctx
+
+
+def test_body_tour_identity_targets_unexplored_in_order():
+    """The two unexplored planets are toured by NAME (the arrival star, already
+    in the scanned-set, is skipped), then the tour ends when none remain."""
+    from ed_autojump.vision.navpanel_reader import NavBody
+    sender = FakeSender()
+    box = _Box()
+    records, rec = _records()
+    box.autoscan_bodies.add("Test Sys A")           # arrival star pre-scanned
+    bodies = [
+        NavBody(row_index=0, name="Test Sys A", designator="A", raw=""),
+        NavBody(row_index=1, name="Test Sys A 1", designator="A 1", raw=""),
+        NavBody(row_index=2, name="Test Sys A 2", designator="A 2", raw=""),
+    ]
+
+    def pump(n):
+        # Each gate's first pump scans the lowest still-unscanned planet — which
+        # is exactly the body identity selection just targeted.
+        if "Test Sys A 1" not in box.autoscan_bodies:
+            box.scan("Test Sys A 1")
+        elif "Test Sys A 2" not in box.autoscan_bodies:
+            box.scan("Test Sys A 2")
+
+    ctx = _identity_ctx(sender, box, bodies, on_each_pump=pump, records_fn=rec,
+                        dwell_s=0.0)
+    assert step_body_tour(ctx) is True
+    targets = _payloads(records, "BodyTourTarget")
+    assert targets == [
+        {"row": 1, "body": "Test Sys A 1"},
+        {"row": 2, "body": "Test Sys A 2"},
+    ]
+    # Both planets registered as freshly scanned, then a clean no-unexplored end.
+    assert len(_payloads(records, "BodyTourBodyScanned")) == 2
+    assert "BodyTourNoUnexplored" in _types(records)
+    assert "BodyTourSkipLocalStar" not in _types(records)   # blind-only skip off
+
+
+def test_body_tour_identity_no_unexplored_immediate_end():
+    """Every panel body already scanned -> the tour ends before any keypress."""
+    from ed_autojump.vision.navpanel_reader import NavBody
+    sender = FakeSender()
+    box = _Box()
+    records, rec = _records()
+    box.autoscan_bodies.update({"Test Sys A", "Test Sys A 1"})
+    bodies = [
+        NavBody(row_index=0, name="Test Sys A", designator="A", raw=""),
+        NavBody(row_index=1, name="Test Sys A 1", designator="A 1", raw=""),
+    ]
+    ctx = _identity_ctx(sender, box, bodies, records_fn=rec)
+    assert step_body_tour(ctx) is True
+    assert sender.actions() == []                   # nothing to tour, no macro
+    assert "BodyTourNoUnexplored" in _types(records)
+
+
+def test_body_tour_identity_read_failure_fails_open():
+    """A grabber/OCR exception ends the tour cleanly (True), never raises."""
+    sender = FakeSender()
+    box = _Box()
+    records, rec = _records()
+
+    def boom():
+        raise RuntimeError("no tesseract")
+
+    ctx = _identity_ctx(sender, box, [], records_fn=rec, grabber=boom)
+    assert step_body_tour(ctx) is True
+    assert "BodyTourReadFail" in _types(records)
+    assert sender.actions() == []
+
+
 def test_body_tour_nullcontext_when_no_guard():
     """exclusive_guard=None -> the nullcontext fallback runs without error."""
     sender = FakeSender()

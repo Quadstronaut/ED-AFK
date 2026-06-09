@@ -362,9 +362,20 @@ def cmd_run(args) -> int:
     # which is OUTSIDE this block — always sees defined names, even on a
     # no-engage run. [council plan-gate fix]
     widget_ring_reader = widget_frame_grabber = None
+    # Nav-panel IDENTITY targeting (task #45). (None, None) unless
+    # [exploration].nav_panel_ocr_enabled AND [cv]+tesseract present; body_tour
+    # falls back to the blind row walk otherwise. Outer scope like the widget
+    # names so the FlowRunner call always sees them.
+    nav_panel_reader = nav_panel_grabber = None
     if args.engage_keys:
         from .vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
+        from .vision.capture import build_navpanel_vision
+        nav_panel_reader, nav_panel_grabber = build_navpanel_vision(cfg)
+        if nav_panel_reader is not None:
+            print(f"exploration: nav-panel identity targeting ON "
+                  f"(region={tuple(cfg.exploration.nav_panel_region)}) "
+                  f"[CALIBRATION-PENDING]")
         if compass_reader is not None:
             print(f"vision: alignment ON (backend={cfg.vision.backend}, "
                   f"region={tuple(cfg.vision.region)})")
@@ -478,6 +489,8 @@ def cmd_run(args) -> int:
         body_tour_max_rows=cfg.exploration.body_tour_max_rows,
         body_tour_orbit_timeout_s=cfg.exploration.body_tour_orbit_timeout_s,
         body_tour_min_bodies=cfg.exploration.body_tour_min_bodies,
+        nav_panel_reader=nav_panel_reader,
+        nav_panel_grabber=nav_panel_grabber,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
         frame_sink=frame_sink,
