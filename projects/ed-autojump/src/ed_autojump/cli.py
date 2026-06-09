@@ -477,6 +477,7 @@ def cmd_run(args) -> int:
         body_tour_max_bodies=cfg.exploration.body_tour_max_bodies,
         body_tour_max_rows=cfg.exploration.body_tour_max_rows,
         body_tour_orbit_timeout_s=cfg.exploration.body_tour_orbit_timeout_s,
+        body_tour_min_bodies=cfg.exploration.body_tour_min_bodies,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
         frame_sink=frame_sink,

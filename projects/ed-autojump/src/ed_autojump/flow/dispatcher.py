@@ -118,6 +118,7 @@ class FlowRunner:
         body_tour_max_bodies: int = 5,
         body_tour_max_rows: int = 8,
         body_tour_orbit_timeout_s: float = 120.0,
+        body_tour_min_bodies: int = 0,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -146,6 +147,7 @@ class FlowRunner:
         self._body_tour_max_bodies = body_tour_max_bodies
         self._body_tour_max_rows = body_tour_max_rows
         self._body_tour_orbit_timeout_s = body_tour_orbit_timeout_s
+        self._body_tour_min_bodies = body_tour_min_bodies
 
         self._event_times: dict[str, float] = {}
         # True while the journal's last SC transition is SupercruiseExit at a
@@ -195,6 +197,7 @@ class FlowRunner:
         self._autoscan_bodies: set[str] = set()
         self._autoscan_seq = 0          # monotone, mirrors _fsd_target_seq (D5)
         self._fss_discovered = False    # D4
+        self._fss_body_count = 0        # FSSDiscoveryScan BodyCount (min-bodies gate)
         self._drop_seq = 0              # SupercruiseDestinationDrop counter (PD1)
         self._scex_seq = 0              # SupercruiseExit counter (PD7)
         # scoop_refuel inputs (spec 2026-06-06-scoop-refuel-design §4.3),
@@ -394,6 +397,8 @@ class FlowRunner:
             body_tour_max_bodies=self._body_tour_max_bodies,
             body_tour_max_rows=self._body_tour_max_rows,
             body_tour_orbit_timeout_s=self._body_tour_orbit_timeout_s,
+            body_tour_min_bodies=self._body_tour_min_bodies,
+            fss_body_count_supplier=lambda: self._fss_body_count,
             fss_discovered_supplier=lambda: self._fss_discovered,
             autoscan_supplier=lambda: (self._autoscan_seq,
                                        frozenset(self._autoscan_bodies)),
@@ -794,6 +799,7 @@ class FlowRunner:
                 self._autoscan_bodies = set()
                 self._autoscan_seq = 0
                 self._fss_discovered = False
+                self._fss_body_count = 0
         elif name == "NavRoute":
             # A (re-)plotted route. Cache the LAST waypoint as the final
             # destination WHILE the route still exists (it's gone after the
@@ -888,6 +894,8 @@ class FlowRunner:
             # body_tour honk latch (D4): durable "this system honked" record,
             # independent of the tour's own waiter timing. Reset on FSDJump.
             self._fss_discovered = True
+            # BodyCount feeds the min-bodies gate (operator 2026-06-08).
+            self._fss_body_count = getattr(ev, "body_count", 0) or 0
         elif name == "SupercruiseDestinationDrop":
             # body_tour station/POI hint (D2): a toured row that DROPS is a
             # station/POI. Monotone session counter; the tour snapshots it.

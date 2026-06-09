@@ -72,6 +72,7 @@ class ExplorationConfig:
     body_tour_max_bodies: int = 5
     body_tour_max_rows: int = 8
     body_tour_orbit_timeout_s: float = 120.0   # per-body BACKSTOP only, never a success gate
+    body_tour_min_bodies: int = 0           # only tour a system whose honk BodyCount >= this (0 = every system)
 
 
 @dataclass
