@@ -16,6 +16,15 @@ fuel_safety_threshold = 0.20
 honk = true
 fss = "off"
 dss = "off"
+# Body-touring (BC1). LIVE TEST 2026-06-08 FOUND: the lock+engage macro fires the
+# correct keys but the ship never flies to a body — every body times out at 120s
+# with no AutoScan ("it's just jumping"). Likely the throttle is not in the
+# SC-assist blue zone at the per-body engage (the macro doesn't set it). DISABLED
+# pending an in-game check of what makes SC-assist fly to a non-star body + a fix.
+body_tour_enabled = false
+body_tour_min_bodies = 0
+body_tour_max_bodies = 40
+body_tour_max_rows = 60
 
 [safety]
 hull_panic_threshold = 0.70
