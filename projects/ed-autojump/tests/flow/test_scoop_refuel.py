@@ -424,10 +424,16 @@ def test_arrival_runs_the_pit_stop_before_the_climb_out():
     procs = load_procedures(PROC_DIR)
     actions = [s.action for s in procs["arrival"].steps]
     assert "scoop_refuel" in actions
-    # Pit stop sits between the throttle-zero and the climb-out macros: the
-    # scoop exploits the nose-into-star arrival pose; nav_panel_target +
-    # pitch-astern + sc_assist_orbit AFTER it are the operator's climb-out.
-    assert actions.index("scoop_refuel") < actions.index("nav_panel_target")
+    # The arrival star is now locked TWICE (operator 2026-06-08 early-lock):
+    #   [0] EARLY bare lock BEFORE the scoop — grab the star during the idle so
+    #       the assist catches on scoop exit (no skip_to).
+    #   [1] the CLOSE/FAR gate AFTER the scoop (skip_to="target_next_route").
+    # Load-bearing order: early lock -> scoop -> get-around (sc_assist_orbit).
+    assert actions.index("scoop_refuel") < actions.index("sc_assist_orbit")
+    assert actions.index("nav_panel_target") < actions.index("scoop_refuel")
+    gate = next(s for s in procs["arrival"].steps
+                if s.action == "nav_panel_target" and s.skip_to == "target_next_route")
+    assert procs["arrival"].steps.index(gate) > actions.index("scoop_refuel")
     scoop = next(s for s in procs["arrival"].steps
                  if s.action == "scoop_refuel")
     assert scoop.required is False           # best-effort by design

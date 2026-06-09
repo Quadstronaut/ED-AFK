@@ -190,7 +190,13 @@ def test_orbit_engages_on_a_verified_star_lock():
 def test_arrival_lock_then_orbit_order_and_gates():
     proc = load_procedures(PROC_DIR)["arrival"]
     actions = [s.action for s in proc.steps]
-    i = actions.index("nav_panel_target")
+    # The arrival star is now locked TWICE: an EARLY bare lock during the scoop
+    # idle (no skip_to), and the BOUNDED get-around gate right before the orbit.
+    # Pin the BOUNDED gate (the one carrying skip_to), not the first
+    # nav_panel_target by name — actions.index() would return the early lock,
+    # whose successor is scoop_refuel.
+    i = next(idx for idx, s in enumerate(proc.steps)
+             if s.action == "nav_panel_target" and s.skip_to == "target_next_route")
     # 3b orient DROPPED (operator, 2026-06-07 phase-1: post-refuel pose
     # engages the assist fine — "I think it's moot")
     assert actions[i:i + 2] == ["nav_panel_target", "sc_assist_orbit"]
@@ -207,8 +213,9 @@ def test_arrival_lock_then_orbit_order_and_gates():
     # vaults exactly sc_assist_orbit + its wait, nothing more)
     assert actions[i + 1] == "sc_assist_orbit"
     assert "target_next_route" in actions[i + 1:]
-    # retry_from still anchors the LATER required steps (orient/engage_jump) here
-    assert proc.on_required_fail.retry_from == "nav_panel_target"
+    # retry_from anchors retries at the scoop (re-establishes pose + lock both —
+    # arrival.toml [on_required_fail] retry_from = "scoop_refuel").
+    assert proc.on_required_fail.retry_from == "scoop_refuel"
 
 
 def test_nav_panel_target_pins_cursor_with_held_up_never_taps():
