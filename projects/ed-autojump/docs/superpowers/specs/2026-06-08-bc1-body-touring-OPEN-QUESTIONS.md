@@ -166,3 +166,32 @@ Options for Operator:
   pre-distinguishable in the nav panel, so this is not obviously simpler.
 - (C) Operator reviews spec+plan and we implement the drop-recovery together.
 Recommend (A) on Operator's go. Spec is locked; only the D2 path needs this one fix.
+
+---
+
+## LIVE TEST RESULT (2026-06-08) — tour macro fires, but the ship never flies to a body
+
+First-ever live run (body_tour_enabled=true, min_bodies=0, "scan everything"). Result:
+**the tour does not tour.** On each arrival the body_tour step ran and the lock+engage
+macro fired the CORRECT keys (keylog-confirmed: FocusLeftPanel -> UI_Down -> UI_Up pin ->
+walk -> UI_Select -> UI_Right -> UI_Select -> FocusLeftPanel = the LOCK-AND-SUPERCRUISE
+sequence). But in the 120s per-body window: ZERO AutoScan, ZERO SupercruiseDestinationDrop,
+ZERO SC transitions. Every body hit BodyTourBodyTimeout. Operator watching the screen:
+"it's just jumping" — the ship never flew out to a body.
+
+LIKELY ROOT CAUSE: SC-assist sets the APPROACH but the ship only MOVES with throttle in the
+blue zone. The per-body engage (engage_supercruise_assist_row) does the nav-panel
+LOCK-AND-SUPERCRUISE but NEVER sets the throttle, so at throttle ~0 (after the star-orbit +
+wait) the body locks but the ship sits still -> no proximity AutoScan -> timeout. The
+arrival STAR-orbit "works" only because the star is AT the arrival point (no fly-out needed).
+
+NEXT (needs Operator in-game verification — do NOT guess the mechanic):
+1. In-game: lock a planet, LOCK-AND-SUPERCRUISE — does the ship fly to it only when the
+   throttle is in the blue zone? What throttle makes SC-assist actually fly out?
+2. Fix: the per-body engage sets the throttle to the SC-assist blue zone
+   (sc_assist_throttle_action / SetSpeed75) so the ship flies to the body; re-tune
+   orbit_timeout_s for real fly-out distances (120s is likely far too short).
+
+DISABLED in config (body_tour_enabled=false) pending the fix. Subsystem code stays (8cf3e26
++ 7558835); only the engage throttle + timeout need the live fix. Early-lock + clean jump
+loop unaffected and running.
