@@ -46,7 +46,7 @@ Drive the ship into each state, fresh-launch the walk, read the `DISPATCH>` line
 | 5 | In SC, fresh arrival ≤30s (smack guard window) | `arrival` | | |
 | 6 | In SC, stale loiter >30s, confident non-local-star dest | `sc_resume` | | |
 | 7 | Smacked (normal space, last SC transition = star drop, FsdCooldown burning) | `smack_recovery` | | |
-| 8 | Docked on load | (no escape — return) | | |
+| 8 | Docked on load | (no escape — return) | **no DISPATCH** whole trace; `_maybe_startup` returns at docked guard (L1023-1024). `SMACKED` flag (panic-drop backlog) correctly ignored — docked guard precedes smack guard (L1114) | ✅ (+⚠️ silent — see note) |
 
 > **§1 walk note (2026-06-09, live + adversarially confirmed).** Observed real state
 > *Tyroopps OT-X b48-0*, SC, dest `…b48-0 A`, route=108, **jump_age=83s** → `DISPATCH> ARRIVAL`,
@@ -58,6 +58,16 @@ Drive the ship into each state, fresh-launch the walk, read the `DISPATCH>` line
 > **Caveat for boundary rows (4 vs 6):** the `[STATE]`/snapshot `jump_age_s` is read at snapshot
 > time, not gate time (seen as 82.5 vs 83 drift) — near the 30s threshold trust the `[DECISION]`
 > `ArrivalOnRestart`/`ScResumeOnRestart` payload's `jump_age`, not the `[STATE]` column.
+
+> **§1 row 8 (2026-06-09, live + self-confirmed direct read).** Docked at *Schee Hypa QM-D
+> c15-0*, state `DOCKED fsd=[MASSLOCK,SMACKED] route=248 jump_age=1230s`. **Zero `DISPATCH>`
+> lines** the whole trace — `_maybe_startup` returns at the docked guard (dispatcher.py
+> L1023-1024); nothing flies. ✅. Bonus robustness: `_smacked=True` (set from the panic-drop
+> `SupercruiseExit Body=Star` in the backlog) is correctly **ignored** — the docked guard
+> (L1023) precedes the smack guard (L1114). **⚠️ Observability gap (candidate KNOWN ISSUE,
+> easy-code):** the docked branch is a bare `return` — no `record()`, no overlay, unlike
+> `NoRouteOnStartup`. A user loading docked gets NO "docked, idling — undock to run" signal;
+> only the absence of activity. Fix: one-line `record("DockedOnStartup", …)` + overlay status.
 
 ## 2 · Full jump — live `dispatch` + arrival.toml (THE row today's bug lives on)
 
