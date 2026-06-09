@@ -114,3 +114,24 @@ between bodies. Council's lean; flag for Operator.
 ### Net
 Gating cluster = Tests 1, 2, 3 (round 1) + Test 5 (round 2), plus the engage_jump guard
 (do independently). One in-game session clears the cluster; then BC1 builds in one pass.
+
+---
+
+## ANSWERS RECEIVED (2026-06-08) — Tests 1-4 resolved, v3 relaunched
+
+Operator (ground truth) + journal-verified by me:
+- **TEST 1:** SC-assist **ORBITS all bodies** in supercruise (no drop). Only stations/POI/
+  signal-sources DROP to real space. => PURE ORBIT model; the tour never leaves supercruise.
+- **TEST 2:** LOCK-AND-SUPERCRUISE is the same detail-pane spot + keystrokes
+  (UI_Select -> UI_Right -> UI_Select) on all bodies.
+- **TEST 3:** nav-panel cursor persists until a system jump.
+- **TEST 4 (journal-verified):** `SupercruiseDestinationDrop.Type` = station/POI name + a
+  `MarketID`; fires for stations/POI ONLY (bodies emit none). Per-body confirm = the
+  `Scan` `ScanType:"AutoScan"` event (carries `BodyName`) — which is ALSO the exploration data.
+- **TEST 5 (Destination.Body):** deferred by Operator AND now MOOT — gate per-body on the
+  AutoScan Scan event, never `Destination.Body`.
+
+=> **BC1 v3 relaunched** (pure orbit model + AutoScan-gated per-body confirm + station-drop
+recovery + combined lock+engage). The `engage_jump` in_supercruise gap (#44) does NOT bite
+BC1 (tour stays in supercruise). Confirmed mechanics saved to memory
+`sc-assist-orbit-vs-drop-mechanics`.
