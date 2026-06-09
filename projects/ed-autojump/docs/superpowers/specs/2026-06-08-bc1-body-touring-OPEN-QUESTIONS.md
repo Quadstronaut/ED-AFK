@@ -229,6 +229,38 @@ This is a proper spec->plan->build (council), building on the existing vision/OC
 
 ---
 
+## IDENTIFY PORTION BUILT (2026-06-09) — commits 8ed3ba8 + 4d73423
+
+Part 1 of the fix (identity targeting) is implemented, wired, and real-frame-validated.
+Body_tour stays DISABLED (part 2, the throttle fly-out, is still open).
+
+- `vision/navpanel_reader.py` — three layers: PARSE (lines -> in-system NavBody[]),
+  SELECT (`next_unexplored` vs the journal scanned-set), READ (lazy cv2+pytesseract OCR,
+  CALIBRATION-PENDING). Canonical body name == journal `Scan.BodyName`, so the
+  scanned-set cross-ref is plain equality.
+- `step_body_tour` runs IDENTITY mode when `nav_panel_reader` + `nav_panel_grabber` are
+  wired (else the legacy blind walk); a `tried` set stops a timed-out body from being
+  re-picked; read failure fails OPEN (tour ends, jump resumes). Wired through
+  StepContext / FlowRunner / config / capture.build_navpanel_vision / cli, all gated on
+  `[exploration].nav_panel_ocr_enabled` (OFF).
+- Real frames pinned (`tests/fixtures/navpanel/tyriedgoea_kn-o_b47-1_*.png`). They
+  surfaced + hardened the shared-region-prefix case (nearby systems "Tyriedgoea LN-O
+  B47-1" vs current "Tyriedgoea KN-O B47-1") and the longer-mass-code sibling ("B47-10"
+  vs "B47-1") — `_system_prefix_match` now requires a space boundary. `DEFAULT_NAV_REGION`
+  corrected to the measured body-name column (505,435,410,330).
+- Tests: 15 reader + 3 body_tour identity, all green; 13 pre-existing reds unchanged.
+
+REMAINING for live use:
+1. **Part 2 — throttle fly-out** (the original task #45): per-body engage must SetSpeed75
+   (SC-assist blue zone) so the ship actually flies to the locked body; re-tune
+   `body_tour_orbit_timeout_s` for real fly-out distances.
+2. **OCR live pass** — `pip install -e .[cv]` + a tesseract binary, then validate
+   `read_nav_panel_lines` against the pinned region fixture and tune psm/preprocessing.
+   Best done on a PLANET-RICH system (both pinned samples are 2-star; a planet-rich
+   frame would exercise "A 1"/"A 2"/moon "A 2 a" rows + the in-panel "unexplored" marker).
+
+---
+
 ## NAV-PANEL CALIBRATION (2026-06-08, live screenshot + Operator confirmed)
 
 Parked the ship orbiting, opened the NAVIGATION panel, captured navpanel_calib_full.png.
