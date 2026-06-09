@@ -22,3 +22,4 @@ calibration/profile.json
 /_*.png
 /_*.csv
 /_compass_frames/
+data/.harvest_state.json
