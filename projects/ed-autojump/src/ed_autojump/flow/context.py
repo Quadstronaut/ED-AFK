@@ -150,12 +150,16 @@ class StepContext:
     body_tour_max_bodies: int = 5
     body_tour_max_rows: int = 8
     body_tour_orbit_timeout_s: float = 120.0
+    # min FSSDiscoveryScan BodyCount to tour a system (0 = tour every system).
+    body_tour_min_bodies: int = 0
     # Latched journal state for the tour, wired by FlowRunner as SUPPLIERS
     # (NOT event_waiters): the hub poll clears a subscriber's queue, so two
     # sequential waiters would lose a drop arriving in the same batch as a
     # Scan miss (PD1). The gate reads these snapshots instead.
     # fss_discovered (D4): advisory honk-complete latch.
     fss_discovered_supplier: Callable[[], bool] = lambda: False
+    # FSSDiscoveryScan total BodyCount this system — the body_tour_min_bodies gate.
+    fss_body_count_supplier: Callable[[], int] = lambda: 0
     # (seq, frozenset[BodyName]) of AutoScan bodies seen THIS system (D5).
     autoscan_supplier: Callable[[], tuple] = lambda: (0, frozenset())
     # monotone SupercruiseDestinationDrop counter (station/POI drop hint, D2).

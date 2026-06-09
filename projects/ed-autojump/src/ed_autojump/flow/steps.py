@@ -1890,6 +1890,15 @@ def step_body_tour(
     ctx.log("BodyTourFssState",
             {"fss_discovered": ctx.fss_discovered_supplier()})
 
+    # 2b. MIN-BODY GATE (operator 2026-06-08): only tour a system whose honk
+    # BodyCount >= body_tour_min_bodies (0 = tour every system). Skips small
+    # systems so the tour fires only on substantial ones.
+    min_bodies = ctx.body_tour_min_bodies
+    if min_bodies > 0 and ctx.fss_body_count_supplier() < min_bodies:
+        ctx.log("BodyTourSkippedFewBodies",
+                {"body_count": ctx.fss_body_count_supplier(), "min": min_bodies})
+        return True
+
     max_bodies = ctx.body_tour_max_bodies
     max_rows = ctx.body_tour_max_rows
     dwell_s = ctx.body_tour_dwell_s

@@ -72,7 +72,7 @@ def _payloads(records, name):
 def _ctx(sender, box, *, enabled=True, on_each_pump=None, clock=None,
          records_fn=None, status=None, system=None, guard=None,
          dwell_s=2.0, max_bodies=5, max_rows=8, orbit_timeout_s=120.0,
-         k_start=1, should_abort=None, no_waiter=False):
+         k_start=1, should_abort=None, no_waiter=False, min_bodies=0, fss_count=0):
     """Build a StepContext wired to `box`. `on_each_pump()` runs on every gate
     poll (the place the real journal would advance a latch)."""
     pumps = {"n": 0}
@@ -105,6 +105,8 @@ def _ctx(sender, box, *, enabled=True, on_each_pump=None, clock=None,
         body_tour_max_bodies=max_bodies,
         body_tour_max_rows=max_rows,
         body_tour_orbit_timeout_s=orbit_timeout_s,
+        body_tour_min_bodies=min_bodies,
+        fss_body_count_supplier=(lambda: fss_count),
         fss_discovered_supplier=(lambda: box.fss),
         autoscan_supplier=(lambda: (box.autoscan_seq,
                                     frozenset(box.autoscan_bodies))),
@@ -126,6 +128,35 @@ def test_body_tour_off_is_noop():
     assert sender.actions() == []                  # byte-identical: zero keypresses
     assert _types(records) == ["BodyTourSkipped"]
     assert records[0][1] == {"reason": "disabled"}
+
+
+def test_body_tour_min_bodies_skips_small_system():
+    """min-body gate (operator 2026-06-08): a system with fewer than the
+    threshold is skipped entirely (zero keypresses), the jump resumes."""
+    sender = FakeSender()
+    box = _Box()
+    records, rec = _records()
+    ctx = _ctx(sender, box, records_fn=rec, min_bodies=40, fss_count=20)
+    assert step_body_tour(ctx) is True
+    assert sender.actions() == []                  # skipped before any macro
+    assert "BodyTourSkippedFewBodies" in _types(records)
+    assert _payloads(records, "BodyTourSkippedFewBodies")[0] == {
+        "body_count": 20, "min": 40}
+
+
+def test_body_tour_min_bodies_tours_when_threshold_met():
+    """min-body gate: a system AT the threshold is NOT skipped — the tour
+    proceeds past the gate (no BodyTourSkippedFewBodies)."""
+    sender = FakeSender()
+    box = _Box()
+    records, rec = _records()
+    # fss_count == min: gate passes. max_rows=1 tours zero rows, but the point
+    # is the gate did NOT short-circuit -> BodyTourComplete, not the skip.
+    ctx = _ctx(sender, box, records_fn=rec, min_bodies=40, fss_count=40,
+               max_rows=1)
+    assert step_body_tour(ctx) is True
+    assert "BodyTourSkippedFewBodies" not in _types(records)
+    assert "BodyTourComplete" in _types(records)
 
 
 def test_body_tour_off_reads_no_suppliers():
