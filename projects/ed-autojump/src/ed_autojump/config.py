@@ -63,6 +63,15 @@ class ExplorationConfig:
     dss_max_distance_ls: float = 50_000.0
     dss_per_system_cap: int = 4
     dss_tier_threshold: int = 1
+    # Body-touring subsystem (body_tour). OPT-IN: enabled=False == byte-
+    # identical to the pre-feature jump loop. When on, arrival tours the
+    # arrival system's unexplored bodies (SC-assist orbit each, gated on its
+    # AutoScan) between the star orbit and target_next_route.
+    body_tour_enabled: bool = False
+    body_tour_dwell_s: float = 2.0          # post-AutoScan pacing loiter (sleeper, NOT a gate)
+    body_tour_max_bodies: int = 5
+    body_tour_max_rows: int = 8
+    body_tour_orbit_timeout_s: float = 120.0   # per-body BACKSTOP only, never a success gate
 
 
 @dataclass

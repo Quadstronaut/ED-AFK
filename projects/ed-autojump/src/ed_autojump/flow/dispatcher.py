@@ -113,6 +113,11 @@ class FlowRunner:
         navroute_reader: Optional[Any] = None,
         panic_switch: Optional[Any] = None,
         heat_eject_cooldown_s: float = 10.0,
+        body_tour_enabled: bool = False,
+        body_tour_dwell_s: float = 2.0,
+        body_tour_max_bodies: int = 5,
+        body_tour_max_rows: int = 8,
+        body_tour_orbit_timeout_s: float = 120.0,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -136,6 +141,11 @@ class FlowRunner:
         self.navroute_reader = navroute_reader
         self.panic_switch = panic_switch
         self.heat_eject_cooldown_s = heat_eject_cooldown_s
+        self._body_tour_enabled = body_tour_enabled
+        self._body_tour_dwell_s = body_tour_dwell_s
+        self._body_tour_max_bodies = body_tour_max_bodies
+        self._body_tour_max_rows = body_tour_max_rows
+        self._body_tour_orbit_timeout_s = body_tour_orbit_timeout_s
 
         self._event_times: dict[str, float] = {}
         # True while the journal's last SC transition is SupercruiseExit at a
@@ -176,6 +186,17 @@ class FlowRunner:
         # reads these to tell a NEW target from a stale one.
         self._fsd_target_seq = 0
         self._latest_fsd_target: Optional[Any] = None
+        # body_tour latches (set in _apply_state, exposed via _make_context).
+        # _autoscan_bodies / _autoscan_seq / _fss_discovered are SYSTEM-SCOPED
+        # (reset on FSDJump). _drop_seq / _scex_seq are monotone SESSION
+        # counters compared only against a same-loop snapshot — resetting them
+        # is unnecessary and a mid-arrival reset cannot occur during a SC-only
+        # tour (matches _fsd_target_seq, which also never resets).
+        self._autoscan_bodies: set[str] = set()
+        self._autoscan_seq = 0          # monotone, mirrors _fsd_target_seq (D5)
+        self._fss_discovered = False    # D4
+        self._drop_seq = 0              # SupercruiseDestinationDrop counter (PD1)
+        self._scex_seq = 0              # SupercruiseExit counter (PD7)
         # scoop_refuel inputs (spec 2026-06-06-scoop-refuel-design §4.3),
         # fed by backlog AND live events like _smacked:
         # - the CURRENT system's arrival-star class = the last HYPERSPACE
@@ -368,6 +389,16 @@ class FlowRunner:
             widget_ring_reader=self.widget_ring_reader,
             widget_frame_grabber=self.widget_frame_grabber,
             widget_ring_on_miss=self.widget_ring_on_miss,
+            body_tour_enabled=self._body_tour_enabled,
+            body_tour_dwell_s=self._body_tour_dwell_s,
+            body_tour_max_bodies=self._body_tour_max_bodies,
+            body_tour_max_rows=self._body_tour_max_rows,
+            body_tour_orbit_timeout_s=self._body_tour_orbit_timeout_s,
+            fss_discovered_supplier=lambda: self._fss_discovered,
+            autoscan_supplier=lambda: (self._autoscan_seq,
+                                       frozenset(self._autoscan_bodies)),
+            drop_seq_supplier=lambda: self._drop_seq,
+            scex_seq_supplier=lambda: self._scex_seq,
             overlay=self.overlay,
             status_supplier=self._fresh_status,
             event_time=self.event_time,
@@ -757,6 +788,12 @@ class FlowRunner:
                 ts = getattr(ev, "timestamp", None)
                 if ts:
                     self._last_fsdjump_utc = self._parse_journal_ts(ts)
+                # body_tour per-system reset (D5): a new system has its own
+                # body list + its own honk. _drop_seq / _scex_seq are NOT
+                # reset (monotone session counters, see __init__).
+                self._autoscan_bodies = set()
+                self._autoscan_seq = 0
+                self._fss_discovered = False
         elif name == "NavRoute":
             # A (re-)plotted route. Cache the LAST waypoint as the final
             # destination WHILE the route still exists (it's gone after the
@@ -838,6 +875,28 @@ class FlowRunner:
                         if scoop_item is not None else None)
                 self._ship_fuel = ShipFuel(capacity_t=float(cap),
                                            scoop_max_rate_t_s=rate)
+        elif name == "Scan":
+            # body_tour per-body ARRIVAL+DATA gate (M5/D5): the proximity
+            # AutoScan that fires when the ship flies up to / orbits a body.
+            # Detailed/NavBeacon scans do NOT count toward the tour gate.
+            if getattr(ev, "scan_type", None) == "AutoScan":
+                bn = getattr(ev, "body_name", None)
+                if bn:
+                    self._autoscan_bodies.add(bn)
+                    self._autoscan_seq += 1
+        elif name == "FSSDiscoveryScan":
+            # body_tour honk latch (D4): durable "this system honked" record,
+            # independent of the tour's own waiter timing. Reset on FSDJump.
+            self._fss_discovered = True
+        elif name == "SupercruiseDestinationDrop":
+            # body_tour station/POI hint (D2): a toured row that DROPS is a
+            # station/POI. Monotone session counter; the tour snapshots it.
+            self._drop_seq += 1
+        elif name == "SupercruiseExit":
+            # body_tour re-engage trigger (PD7): the drop's matching exit is
+            # what actually puts the ship in real space. Monotone session
+            # counter; the station-drop recovery re-engages on this bump.
+            self._scex_seq += 1
 
     def _fsd_target_state(self) -> tuple:
         return (self._fsd_target_seq, self._latest_fsd_target)

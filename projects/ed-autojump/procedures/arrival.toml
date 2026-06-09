@@ -80,6 +80,13 @@ steps = [
   # actual engagement.
   { action = "sc_assist_orbit" },                    # macro  | 4 EXCLUSIVE — guarded SC-assist orbit
   { action = "wait", s = 13.0 },                    # wait   | 5 let orbit acquire
+  # OPT-IN body tour (config [exploration].body_tour_enabled; OFF == byte-identical).
+  # Tours the arrival system's bodies (SC-assist orbit each, AutoScan-gated) then
+  # falls through to target_next_route. Best-effort (required defaults false): it
+  # can NEVER block the jump, and stays in supercruise the whole time (resume jump
+  # is from SC). Far-star automatic skip: step 3's skip_to="target_next_route"
+  # vaults steps 4+5+5b on a far star, so the tour runs ONLY on the close-star path.
+  { action = "body_tour" },                          # macro  | 5b NEW opt-in tour; OFF == no-op, resumes in SC
   { action = "target_next_route", required = true },                # gated  | 6 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },           # tap    | 7 burn
   { action = "wait", s = 13.0 },                    # wait   | 8 clear the star — TRAJECTORY PACING, not a gate
