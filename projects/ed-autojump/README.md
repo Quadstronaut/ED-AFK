@@ -1,17 +1,30 @@
 # ed-autojump
 
-Autonomous exploration bot for Elite Dangerous: Odyssey. First tool in the
-ED-AFK monorepo. Navigates a plotted route overnight: honk on arrival, scoop
-fuel at scoopable stars, orient the ship, jump. Optional game launch via
-MinEdLauncher. FSS, DSS, and docking are framework-only stubs deferred
-pending live calibration.
+An assistive exploration harness for Elite Dangerous: Odyssey, and the first
+tool in the ED-AFK monorepo. It flies a plotted route end to end — honk on
+arrival, scoop fuel at scoopable stars, orient the ship, jump, and dock at the
+end — performing the sustained, timing-critical piloting that a player's hands
+or input hardware may not be able to. Optional game launch via MinEdLauncher.
+FSS and DSS scanning remain framework-only stubs.
 
-> **Status:** v0.2 — Phases 0–6 + Phase 12 (main loop) + Phase 13
-> (headless launcher) production-ready on `master`. 880 tests under
-> triple-test discipline. Phases 7–10 ship as framework + offline replay
-> tests; in-game evidence deferred pending live calibration. See SPEC.md
-> §17 for phase exit criteria; `calibration/README.md` and
-> `calibration/overnight-runbook.md` for what to validate in-game.
+See the [repo-root README](../../README.md) for the **why** — the accessibility
+motivation, the credit owed to AbleGamers / SpecialEffect / the adaptive-gaming
+field, and the honest Terms-of-Service disclaimer. This file is the operator's
+manual: setup, calibration, and the CLI.
+
+> **Status: alpha.** The flight loop (arrival / startup / sc_resume /
+> smack_recovery / route_complete_park), the docking lane (`dock` /
+> `dock_resume`), the parallel honk track, the danger filter, Spansh
+> auto-plotting, and MinEdLauncher launch all **ship on `master`** and are
+> exercised by a large offline unit + replay suite. But large parts are **not
+> live-tested** (the fuel-scoop pit-stop and several flows are explicitly
+> marked so), and there are **open defects that can strand or crash the ship** —
+> docking is currently broken on `master` (missing `dock_approach` step),
+> `sc_resume` can throttle a star-parked ship into the star, and
+> `smack_recovery` can mis-flip. The authoritative per-step audit, with every
+> gate and known defect, is [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md)
+> at the repo root. `calibration/README.md` and `calibration/overnight-runbook.md`
+> cover what to validate in-game.
 
 ## Quick start
 
@@ -20,7 +33,7 @@ cd projects/ed-autojump
 py -3.11 -m venv .venv      # 3.11, 3.12, 3.13, or 3.14 all work
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev,hotkey]  # add ,cv for tier-C CV deps (opencv, dxcam, tesseract)
-pytest                       # 385 pass, 3 @requires_game deselected, recorded-sessions auto-skip if absent
+pytest                       # ~1240 collected, 1 @requires_game deselected by default (run it with -m requires_game), recorded-sessions auto-skip if absent
 ed-autojump doctor           # pre-flight: binds, journal-dir, sessions-dir, EDHM, pydirectinput
 ed-autojump --help
 
@@ -45,19 +58,25 @@ ed-autojump run --launch --commander CmdrOne --group CmdrFour \
     --record --engage-keys --route-plot --duration 21600
 ```
 
-> **Dependency note (v0.2):** the bot uses `pydirectinput-rgx` (the fork
+> **Dependency note:** the bot uses `pydirectinput-rgx` (the fork
 > with explicit `scancode_keyDown`/`scancode_keyUp`), NOT the upstream
 > `pydirectinput`. If you have the wrong package, `doctor` fails loudly:
 > `pip uninstall pydirectinput && pip install pydirectinput-rgx`.
 
-## Orienting the ship — nav-compass alignment (Phase 14)
+## Orienting the ship — nav-compass alignment
 
 A blind key-presser can engage the FSD but can't *point* at the next system,
 so it would fire while still aimed at the arrival star. Alignment closes that
 loop: the bot reads the in-cockpit **nav compass** (item 13 on the HUD — the
 small disc left of the radar), then pitches/yaws until the target dot is
-centred and **in front** (filled, not hollow) before it jumps. A failed
+centred and **in front** (filled, not hollow) before it jumps. A second,
+finer pass then drives the reticle ring onto the HUD widget. A failed
 alignment **blocks** the jump — vision uncertainty fails safe.
+
+This closed-loop alignment is exactly the burden the harness exists to remove:
+holding an analog axis steady on a moving target through an FSD spool is a
+precise, sustained input task. The bot performs it from the compass read so the
+pilot doesn't have to.
 
 It reads the compass with a small YOLO model (reused from EDAPGui), with a
 colour-free OpenCV fallback so it works regardless of your HUD colour /
@@ -92,15 +111,17 @@ aligned) to the session JSONL so the timings can be tuned.
   the bot presses `TargetNextRouteSystem` (H) before each engage, so the next
   route star is locked deterministically — no fragile nav-panel scrolling —
   and the compass has a target to align to.
-- **Supercruise Assist (in-system docking / orbit — groundwork, off):** ED has
-  **no keybind** for Supercruise Assist, so the bot can't toggle it with a key.
-  The supported path is throttle-mode: in ED's right panel / flight settings,
-  set Supercruise Assist to engage on **blue-zone throttle**; then the bot
-  engages it by locking a target and throttling into the blue zone. The full
-  approach/drop flow plugs into the Phase 9/10 docking + DSS work (deferred
-  pending in-game calibration); `[nav].supercruise_assist` is the switch.
+- **Supercruise Assist (orbit get-around + docking approach — load-bearing):**
+  ED has **no keybind** for Supercruise Assist, so the bot can't toggle it with
+  a key. The supported path is the nav-panel macro: lock a target, then engage
+  assist through the panel. This is how `arrival` orbits the star to clear the
+  next hop's geometry, and how the `dock` lane flies the station approach — so
+  **the ship must have Supercruise Assist available (blue-zone throttle mode
+  fitted) and an Advanced Docking Computer installed.** ED exposes no
+  assist-engaged flag, so engagement is unprovable in-code; the steps post-check
+  "still in supercruise" and degrade to a direct path if assist refuses.
 
-## Launching the game (Phase 13)
+## Launching the game
 
 The bot can drive `MinEdLauncher.exe` (rfvgyhn fork) end-to-end:
 
@@ -172,11 +193,11 @@ projects/ed-autojump/
     executor/             # state-driven macros (honk, jump, scoop, fss, dss)
     eddn/                 # EDDN publisher (opt-in)
     hud/                  # EDHM detect, GraphicsConfigurationOverride writer
-    docking/              # v2 pre-flight predicates + permission flow
-    launcher/             # Phase 13: MEL spawn + dryrun + menu nav + wizards + flow
+    docking/              # docking pre-flight predicates + permission flow
+    launcher/             # MEL spawn + dryrun + menu nav + wizards + flow
     binds/                # bundled ED-AFK.4.2.binds preset
     data/                 # bundled FSD constants (fsd_modules.json)
-    orchestrator.py       # Phase 12 main loop (JournalTail -> dispatch -> Recorder)
+    orchestrator.py       # main loop (JournalTail -> dispatch -> Recorder)
     panic.py              # thread-safe panic switch (poll + trip + on_trip callback)
     recorder.py           # session JSONL writer (overnight capture)
     anonymizer.py         # scrub CMDR / FID / AccountID from session JSONL
@@ -184,7 +205,7 @@ projects/ed-autojump/
     doctor.py             # pre-flight checks (binds + dirs + EDHM + pydirectinput)
   tests/
     fixtures/journals/    # anonymized real-journal samples
-    test_*.py             # 200+ offline tests, 3 @requires_game stubs
+    test_*.py             # ~1240 offline tests, 1 @requires_game stub
   scripts/
     nightly-run.ps1       # Tier-2 unattended runner (manual or task-scheduled)
     ed-afk-nightly.xml    # Task Scheduler XML (manual import only)
@@ -193,24 +214,31 @@ projects/ed-autojump/
     overnight-runbook.md  # Tier-1/2 capture + morning regression-check loop
 ```
 
-## Phase status
+## Capability status
 
-| Phase | Scope | Status |
-|---|---|---|
-| 0 | skeleton, tailers, journal models | implemented |
-| 1 | binds preset + StartPreset swap | implemented |
-| 2 | honk MVP (req 4) | implemented |
-| 3 | jump + escape + route safety (req 1, 3, 7) | implemented |
-| 4 | fuel scoop (req 2) | implemented |
-| 5 | EDDN publisher | implemented |
-| 6 | EDHM detect + calibration skeleton | implemented |
-| 7 | FSS keyboard sweep (req 5) | framework — deferred pending calibration |
-| 8 | FSS CV-assisted | framework — deferred pending calibration |
-| 9 | DSS 6-direction (req 6) | framework — deferred pending calibration |
-| 10 | docking (v2) | framework — deferred pending calibration |
-| 11 | headless launcher framework (v2 stub) | superseded by Phase 13 |
-| 12 | Orchestrator main loop + panic + Spansh + Status + EDDN + doctor | implemented |
-| 13 | MinEdLauncher spawn + dryrun + main-menu wait + PG nav + LoadGame verify | implemented |
+Honest state on `master`. "Shipped" means wired into the live path and covered
+by the offline suite; it does **not** mean live-proven. The authoritative
+per-step audit, including every open defect, is
+[`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md).
+
+| Capability | Status |
+|---|---|
+| Journal / Status / NavRoute readers, in-memory FSM | shipped |
+| Bundled binds preset + StartPreset swap/restore | shipped |
+| Honk (parallel discovery-scan track) | shipped |
+| Jump + escape + route-safety danger filter | shipped |
+| Fuel scoop (`scoop_refuel`) | shipped — **NOT live-tested** |
+| EDDN publisher (opt-in) | shipped |
+| EDHM detect + vision calibration | shipped |
+| Nav-compass + widget-ring alignment (fail-closed) | shipped |
+| Orchestrator main loop + panic + Spansh + doctor | shipped |
+| MinEdLauncher launch + main-menu / private-group nav | shipped |
+| Docking lane (`dock` / `dock_resume`) + Starport Services | shipped — **broken on `master`** (missing `dock_approach`, defect #1) |
+| `sc_resume` fast-resume lane | shipped — **can ram a star** (defect #2) |
+| `smack_recovery` exclusion-zone escape | shipped — **can mis-flip** (defect #3) |
+| FSS keyboard sweep / FSS CV-assisted | framework stub — not built |
+| DSS 6-direction surface scan | framework stub — not built |
+| Ships without SC-assist / Advanced Docking Computer | unsupported |
 
 ## Attribution
 
