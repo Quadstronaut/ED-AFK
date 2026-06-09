@@ -113,7 +113,7 @@ Walk a complete hop and confirm a procedure runs at EACH arrival.
 | 1 | route terminus is a station | target station, approach, no-fire-zone, request, dock | | |
 | 2 | capture-at-plot: station locked at plot time | `_dock_target` set | | |
 | 3 | new route plotted while docked | `dock_resume` | | |
-| 4 | `Undocked` | resume | | |
+| 4 | `Undocked` | resume | **zero dispatch** whole 549-line trace (Undocked @21:55:10 → state DOCKED→normal, no DISPATCH/DECISION). `dispatch` has **no Undocked branch**; real resume = NavRoute-while-docked → `dock_resume` (row 3, untested). Manual undock inert; loaded-docked stays inert (see §1 r8) | ⚠️ row mis-framed |
 
 ## 5 · Smack recovery
 
