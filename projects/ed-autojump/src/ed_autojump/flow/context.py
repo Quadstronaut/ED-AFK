@@ -141,6 +141,31 @@ class StepContext:
     widget_frame_grabber: Optional[Callable[[], Any]] = None
     widget_ring_on_miss: str = "degrade"
 
+    # body_tour (opt-in body-touring subsystem). enabled OFF == byte-identical
+    # to the pre-feature loop: step_body_tour returns True before any keypress
+    # or supplier read. All defaulted -> zero impact on existing test call
+    # sites (every test builds StepContext(sender=...)).
+    body_tour_enabled: bool = False
+    body_tour_dwell_s: float = 2.0
+    body_tour_max_bodies: int = 5
+    body_tour_max_rows: int = 8
+    body_tour_orbit_timeout_s: float = 120.0
+    # Latched journal state for the tour, wired by FlowRunner as SUPPLIERS
+    # (NOT event_waiters): the hub poll clears a subscriber's queue, so two
+    # sequential waiters would lose a drop arriving in the same batch as a
+    # Scan miss (PD1). The gate reads these snapshots instead.
+    # fss_discovered (D4): advisory honk-complete latch.
+    fss_discovered_supplier: Callable[[], bool] = lambda: False
+    # (seq, frozenset[BodyName]) of AutoScan bodies seen THIS system (D5).
+    autoscan_supplier: Callable[[], tuple] = lambda: (0, frozenset())
+    # monotone SupercruiseDestinationDrop counter (station/POI drop hint, D2).
+    drop_seq_supplier: Callable[[], int] = lambda: 0
+    # monotone SupercruiseExit counter — the station-drop re-engage trigger
+    # (PD7: re-engage on SupercruiseExit, NOT the drop, so the press happens
+    # from real normal space and step_engage_supercruise's in_supercruise
+    # short-circuit does not no-op it).
+    scex_seq_supplier: Callable[[], int] = lambda: 0
+
     # cosmetic EDMCOverlay status writer (None -> no overlay). Duck-typed:
     # .step(proc, action, idx, total). Fail-soft; never blocks a step.
     overlay: Optional[Any] = None

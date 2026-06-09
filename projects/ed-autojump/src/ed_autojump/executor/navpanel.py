@@ -107,6 +107,56 @@ def engage_supercruise_assist(
     sleeper(settle_s)
 
 
+def engage_supercruise_assist_row(
+    sender: Sender,
+    *,
+    sleeper: Callable[[float], None] = time.sleep,
+    settle_s: float = DEFAULT_SETTLE_S,
+    row: int = 0,
+    pin_to_top: bool = True,
+    pin_hold_s: float = 4.0,
+    panel_focus_action: str = "FocusLeftPanel",
+) -> None:
+    """engage_supercruise_assist GENERALIZED to an arbitrary nav-panel row k.
+
+    engage_supercruise_assist (above) only ever targets the DEFAULT-selected
+    top row (the arrival star on a hyperspace drop). The body-touring
+    subsystem (body_tour) needs to lock + SC-assist toward bodies BELOW the
+    star, so this variant prepends the same pin+walk prelude
+    `_target_pin_and_walk` that target_via_navpanel / request_docking already
+    use, then runs the identical SC-assist tail:
+
+        panel_focus_action  -> open the left nav panel
+        [pin to top + walk]  -> _target_pin_and_walk: pin the (persistent,
+                               M4) cursor to row 0, then UI_Down x`row`
+        UI_Select           -> open that row's detail pane (lands on Lock
+                               Destination)
+        UI_Right            -> move onto the LOCK AND SUPERCRUISE control
+        UI_Select           -> activate it -> lock + engage assist (M3/D3)
+        panel_focus_action  -> close the nav panel
+
+    `row=0, pin_to_top=True` reproduces engage_supercruise_assist's star path
+    plus the M4 pin (the held up-key saturates at row 0, so the pin is safe
+    on the top row too). A SINGLE panel open does BOTH the lock and the
+    engage (D3) — never split across two opens.
+
+    NO new binds: FocusLeftPanel / UI_Down / UI_Up / UI_Select / UI_Right are
+    all already in REQUIRED_ACTIONS. Raises KeyError (via the sender) on any
+    unbound key; the caller (step_body_tour) catches it.
+    """
+    sender.press(panel_focus_action)
+    sleeper(settle_s)
+    _target_pin_and_walk(sender, sleeper, settle_s, row, pin_to_top, pin_hold_s)
+    sender.press("UI_Select")
+    sleeper(settle_s)
+    sender.press("UI_Right")
+    sleeper(settle_s)
+    sender.press("UI_Select")
+    sleeper(settle_s)
+    sender.press(panel_focus_action)
+    sleeper(settle_s)
+
+
 def target_via_navpanel(
     sender: Sender,
     *,
