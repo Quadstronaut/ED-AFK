@@ -75,3 +75,42 @@ overnight implementation committed against a guess about how SC-Assist treats pl
 gate worked: it caught a design that would have engaged the assist toward the wrong body
 or mis-modeled the drop/orbit behavior. Answer §A and the re-spec → plan → implement runs
 clean.
+
+---
+
+## Round 2 (2026-06-08) — v2 spec ALSO blocked (1/3): new mechanic + a latent bug
+
+The re-spec (drop-or-orbit-agnostic loop, combined lock+engage primitive, latched FSS
+flag — all the round-1 directives applied) hit a NEW unverified mechanic and surfaced a
+real latent safety gap. BC1 clearly depends on a *cluster* of interlocking ED mechanics;
+rather than grind more spec rounds one-unknown-at-a-time, **BC1 needs ONE in-game test
+session answering all of Tests 1-5 together**, then spec->plan->implement runs clean.
+
+### NEW in-game test for Operator
+**TEST 5 — Planet/moon `Body` field when SC-assist-locked.** Lock a planet/moon via the
+nav panel (LOCK AND SUPERCRUISE), then read `Status.json` -> `Destination.Body`. Is it
+**non-zero** (like a station) or **0** (like a star / FSD route hop)?
+-> The per-body arrival-confirm predicate `_dest_is_named_station` requires `Body != 0`.
+If planets lock with `Body = 0`, that predicate fails on EVERY body and the tour
+terminates on the first one — we'd need a name-only confirm (no Body gate). Load-bearing;
+verify before building. (Confirmed for stations only today; dispatcher.py:241 even marks
+the station case "UNCONFIRMED from journals".)
+
+### LATENT SAFETY GAP (independent of BC1 — [[ed-fsd-masslock-realspace]] already flagged it)
+**`step_engage_jump` (steps.py:149) does not check `in_supercruise`.** It gates on
+docked / fsd_charging / fsd_cooldown / fsd_mass_locked / overheating — but NOT supercruise.
+In the drop model (or any normal-space-at-jump edge), it would press SetSpeed100 +
+Hyperspace in normal space; ED silently refuses and the route stalls. Correct fix: add an
+`in_supercruise` guard to `engage_jump` (you can only hyperspace FROM supercruise, so this
+is right in general), OR an `in_supercruise` check at the end of `step_body_tour` before it
+returns True. Tracked as its own safety task — deserves a dedicated council, not a hasty
+fold-in, and the running bot does not hit it (arrival is always in supercruise at the jump).
+
+### DESIGN DECISION (heat watchdog)
+`body_tour` in `INPUT_EXCLUSIVE_ACTIONS` pauses the heat watchdog for the WHOLE multi-minute
+tour. Better: wrap each per-body lock+engage individually so heat protection stays live
+between bodies. Council's lean; flag for Operator.
+
+### Net
+Gating cluster = Tests 1, 2, 3 (round 1) + Test 5 (round 2), plus the engage_jump guard
+(do independently). One in-game session clears the cluster; then BC1 builds in one pass.
