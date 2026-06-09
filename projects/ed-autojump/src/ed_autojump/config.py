@@ -76,11 +76,11 @@ class ExplorationConfig:
     # IDENTITY targeting (task #45): when on, body_tour reads the NAVIGATION
     # panel (OCR) and targets the next UNEXPLORED body by NAME instead of a
     # blind row walk. OFF by default — needs the [cv] extra (pytesseract +
-    # tesseract binary) AND a calibrated region validated on a real planet-rich
-    # frame (none pinned yet). nav_panel_region is (x, y, w, h) @1920x1080; the
-    # default is the 2026-06-08 calibration ESTIMATE, not yet validated.
+    # tesseract binary) and a live OCR pass to lock psm/preprocessing.
+    # nav_panel_region is (x, y, w, h) @1920x1080, MEASURED from a real frame
+    # (the body-name column); see vision/navpanel_reader.DEFAULT_NAV_REGION.
     nav_panel_ocr_enabled: bool = False
-    nav_panel_region: tuple[int, int, int, int] = (310, 145, 235, 125)
+    nav_panel_region: tuple[int, int, int, int] = (505, 435, 410, 330)
 
 
 @dataclass

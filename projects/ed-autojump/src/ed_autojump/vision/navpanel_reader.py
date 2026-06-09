@@ -35,9 +35,15 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Callable, Iterable, List, Optional, Sequence
 
-# Calibration ESTIMATE @1920x1080 (x, y, w, h) — body list approx x310-545,
-# y145-270 (commit 09efffb).  NOT validated against a planet-rich frame.
-DEFAULT_NAV_REGION = (310, 145, 235, 125)
+# MEASURED @1920x1080 (x, y, w, h) from the real frame
+# tests/fixtures/navpanel/tyriedgoea_kn-o_b47-1_full.png — the body-NAME column
+# of the NAVIGATION list (icons at the left edge, ~8 rows tall). The distance
+# column sits far right past a dark gap and is intentionally EXCLUDED: the
+# system-prefix + space-boundary + designator rule drops nearby systems without
+# it, so the Ls/Ly read is redundant insurance, not required.  The exact crop +
+# OCR psm/preprocessing still want a live pytesseract pass to lock in (the OCR
+# READ layer stays CALIBRATION-PENDING); the PARSE/SELECT logic is validated.
+DEFAULT_NAV_REGION = (505, 435, 410, 330)
 
 # A body DESIGNATOR after the system name: 0-3 capital letters then an optional
 # run of " <n>"/" <letter>" parts — "A", "A 1", "AB 3", "A 1 a", "1".  At least
@@ -94,24 +100,31 @@ def _is_nearby_system_row(raw: str) -> bool:
 
 
 def _system_prefix_match(norm_line: str, norm_system: str, fuzzy: float) -> Optional[str]:
-    """If `norm_line` begins with the (possibly OCR-garbled) system name, return
-    the remainder (the candidate designator); else None.
+    """If `norm_line` begins with the (possibly OCR-garbled) system name FOLLOWED
+    BY A SPACE, return the remainder (the candidate designator); else None.
 
-    Exact prefix first; then a fuzzy leading-window match so a slipped char in
-    the system name ("SlFI" for "SIFI") still binds.  `fuzzy` is the min
+    The trailing-space boundary is load-bearing (real-frame hardening, frame
+    navpanel_calib_full.png): a body row is always "<system> <designator>", so a
+    nearby system that merely shares a longer mass-code prefix — "...B47-10" vs
+    the current "...B47-1" — must NOT match.  Without the space, startswith would
+    treat "B47-10" as body "0" of the current system.  Nearby systems also carry
+    NO trailing designator (just the bare name), so requiring something after the
+    space drops them even when the names differ by a single char (fuzzy ~0.95).
+
+    Exact prefix first; then a fuzzy leading-window match so a slipped char in the
+    system name ("KN-O"/"LN-O", "SlFI"/"SIFI") is tolerated.  `fuzzy` is the min
     SequenceMatcher ratio on the leading len(system) window.
     """
     if not norm_system:
         return None
-    if norm_line.startswith(norm_system):
-        return norm_line[len(norm_system):].strip()
-    # Fuzzy: compare the same-length leading window, then split on the first
-    # space AFTER that window so we don't bisect the designator.
-    window = norm_line[:len(norm_system)]
-    if SequenceMatcher(None, window, norm_system).ratio() >= fuzzy:
-        rest = norm_line[len(norm_system):]
-        # The garble may have eaten/added a char; re-anchor on the first space.
-        return rest.strip()
+    n = len(norm_system)
+    if norm_line.startswith(norm_system + " "):
+        return norm_line[n:].strip()
+    # Fuzzy: the system name may be OCR-garbled. Require the same space boundary
+    # at position n so the designator (if any) is what follows.
+    if len(norm_line) > n and norm_line[n] == " ":
+        if SequenceMatcher(None, norm_line[:n], norm_system).ratio() >= fuzzy:
+            return norm_line[n:].strip()
     return None
 
 
