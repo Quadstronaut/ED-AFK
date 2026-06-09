@@ -18,26 +18,25 @@ Two modes:
                    that LOGS the dispatch decision (which procedure the real
                    `_maybe_startup`/`dispatch` chose, plus a full state snapshot)
                    and returns WITHOUT executing the procedure's motor steps.
-                   This is the precise instrument for plan §5.2 "confusion at
-                   different starting locations" — walk every `_maybe_startup`
-                   branch and every `dispatch(event)` branch with real states.
-                   The decision code is 100% real; only the motor execution is
-                   skipped (Operator flies the motor manually).
 
   --mode step      FULL procedures run against real state with read-only vision
-                   built from config (compass / widget / nav-panel readers).
-                   NullSender still presses nothing, so vision STEER steps
-                   (orient_*) cannot succeed and will fail-closed — that is
-                   expected and itself auditable. Use this to walk the per-step
-                   gates (Status preconditions, danger filter, scoop gates,
-                   nav-panel reads) against live frames.
+                   built from config. NullSender presses nothing, so vision
+                   STEER steps (orient_*) fail-close — expected, itself auditable.
 
-SCOPE / LIMIT (state honestly): keys are OFF, so this harness audits ROUTING
-and GATE branches. It does NOT reproduce a keys-ON run's exact event-consumption
-TIMING (a procedure blocking ~70s on a live jump while its in-procedure waiter
-drains the journal). For a timing-path reproduction use the real engine with
-keys: `ed-autojump run --record --engage-keys`. See the checklist for which
-rows each tool covers.
+VISIBILITY (operator ask 2026-06-09: "I want the conditions and flags too — what
+it is thinking, not just that it got stuck on item 9"): every loop this prints a
+[STATE] line whenever ANY watched flag/condition changes (and on a heartbeat),
+showing the full set of inputs the dispatch/gates read — supercruise, docked,
+FSD charging/cooldown/jump, GUI focus, pips, destination, route, next hop,
+witchspace, smacked, jump age, FSS body count, FSD target + star class. The
+[DECISION] stream carries every ctx.log/recorder outcome (Step, gate results,
+HoldAlignmentDone reason, ProcedureAborted, …). So a "stuck on step 9" shows the
+flags it was staring at, not just the step name.
+
+SCOPE / LIMIT (state honestly): keys are OFF, so this harness audits ROUTING and
+GATE branches. It does NOT reproduce a keys-ON run's exact event-consumption
+TIMING. For that use `ed-autojump run --record --engage-keys`, and for an offline
+deterministic replay of a captured journal use `scripts/replay_driver.py`.
 
 Usage (PowerShell, from projects/ed-autojump):
     .venv\Scripts\python scripts\gatewalk.py --mode routing
@@ -48,7 +47,6 @@ from __future__ import annotations
 
 import argparse
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,47 +66,56 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # ── pretty-printing ────────────────────────────────────────────────────────
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%H:%M:%S.") + \
-        f"{datetime.now(timezone.utc).microsecond // 1000:03d}"
+    t = datetime.now(timezone.utc)
+    return t.strftime("%H:%M:%S.") + f"{t.microsecond // 1000:03d}"
 
 
 def _line(tag: str, msg: str) -> None:
     # One terminal, one stream. Tags are fixed-width so columns line up.
-    print(f"{_now()}  {tag:<10} {msg}", flush=True)
+    print(f"{_now()}  {tag:<11} {msg}", flush=True)
 
 
 # ── state snapshot (real FlowRunner attributes — read, never compute) ───────
 def _snapshot(runner: FlowRunner) -> dict:
-    """Pull the same state the real dispatch branches read, for the record.
-
-    Every value comes straight off the live FlowRunner / real readers — this
-    does NOT recompute any gate, it just photographs the inputs a gate sees."""
-    st = None
-    try:
-        st = runner._fresh_status()
-    except Exception:  # noqa: BLE001 — a snapshot must never abort the walk
-        pass
+    """Photograph every input the real dispatch/gate code reads. Uses the bot's
+    OWN cached `_latest_status` (set by run_live's `_poll_status`) so we show the
+    exact view the gates see and don't race a second reader. Recomputes nothing."""
+    st = getattr(runner, "_latest_status", None)
     nr = None
     try:
         nr = runner._navroute_state()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — a snapshot must never abort the walk
         pass
     route = getattr(nr, "route", None) if nr is not None else None
     dest = getattr(st, "destination", None) if st is not None else None
+    tgt = getattr(runner, "_latest_fsd_target", None)
+
+    def g(obj, attr):
+        return getattr(obj, attr, None) if obj is not None else None
+
     snap = {
         "system": getattr(runner, "_current_system", None),
-        "in_supercruise": getattr(st, "in_supercruise", None) if st else None,
-        "docked": getattr(st, "docked", None) if st else None,
-        "fsd_charging": getattr(st, "fsd_charging", None) if st else None,
-        "fsd_cooldown": getattr(st, "fsd_cooldown", None) if st else None,
-        "fsd_jump": getattr(st, "fsd_jump", None) if st else None,
-        "gui_focus": getattr(st, "gui_focus", None) if st else None,
-        "destination": (getattr(dest, "name", None) if dest else None),
+        "in_supercruise": g(st, "in_supercruise"),
+        "docked": g(st, "docked"),
+        "fsd_charging": g(st, "fsd_charging"),
+        "fsd_cooldown": g(st, "fsd_cooldown"),
+        "fsd_jump": g(st, "fsd_jump"),
+        "fsd_mass_locked": g(st, "fsd_mass_locked"),
+        "low_fuel": g(st, "low_fuel"),
+        "gui_focus": g(st, "gui_focus"),
+        "pips": g(st, "pips"),
+        "destination": g(dest, "name"),
         "route_len": (len(route) if route else 0),
-        "next_hop": (getattr(route[0], "star_system", None)
-                     if route else None),
+        "next_hop": (g(route[0], "star_system") if route else None),
         "in_witchspace": getattr(runner, "_in_witchspace", None),
         "smacked": getattr(runner, "_smacked", None),
+        "fss_body_count": getattr(runner, "_fss_body_count", None),
+        "fss_discovered": getattr(runner, "_fss_discovered", None),
+        "arrival_star_class": getattr(runner, "_arrival_star_class", None),
+        "fsd_target": g(tgt, "name"),
+        "fsd_target_class": g(tgt, "star_class"),
+        "caught_up": getattr(runner, "_caught_up", None),
+        "running_proc": getattr(runner, "_running_proc", None),
     }
     try:
         snap["jump_age_s"] = runner._jump_age()
@@ -117,69 +124,109 @@ def _snapshot(runner: FlowRunner) -> dict:
     return snap
 
 
-def _fmt_snapshot(snap: dict) -> str:
-    sc = "SC" if snap.get("in_supercruise") else "normal"
-    if snap.get("docked"):
-        sc = "DOCKED"
-    bits = [
-        f"sys={snap.get('system')}",
-        sc,
-        f"route={snap.get('route_len')}",
-    ]
+def _fmt_state(snap: dict) -> str:
+    sc = "DOCKED" if snap.get("docked") else ("SC" if snap.get("in_supercruise") else "normal")
+    bits = [f"sys={snap.get('system')}", sc]
+    fsd = []
+    if snap.get("fsd_charging"):
+        fsd.append("CHARGING")
+    if snap.get("fsd_cooldown"):
+        fsd.append("COOLDOWN")
+    if snap.get("fsd_jump"):
+        fsd.append("JUMPbit")
+    if snap.get("fsd_mass_locked"):
+        fsd.append("MASSLOCK")
+    if snap.get("in_witchspace"):
+        fsd.append("WITCHSPACE")
+    if snap.get("smacked"):
+        fsd.append("SMACKED")
+    bits.append(f"fsd=[{','.join(fsd) or '-'}]")
+    bits.append(f"gui={snap.get('gui_focus')}")
+    if snap.get("pips") is not None:
+        bits.append(f"pips={snap.get('pips')}")
+    bits.append(f"route={snap.get('route_len')}")
     if snap.get("next_hop"):
         bits.append(f"next={snap['next_hop']}")
     if snap.get("destination"):
         bits.append(f"dest={snap['destination']}")
-    if snap.get("in_witchspace"):
-        bits.append("WITCHSPACE")
-    if snap.get("smacked"):
-        bits.append("SMACKED")
+    if snap.get("fsd_target"):
+        bits.append(f"target={snap['fsd_target']}({snap.get('fsd_target_class')})")
+    if snap.get("fss_body_count"):
+        bits.append(f"fss={snap['fss_body_count']}")
+    if snap.get("arrival_star_class"):
+        bits.append(f"arrstar={snap['arrival_star_class']}")
     if snap.get("jump_age_s") is not None:
         bits.append(f"jump_age={snap['jump_age_s']:.0f}s")
+    bits.append(f"caught_up={snap.get('caught_up')}")
+    if snap.get("running_proc"):
+        bits.append(f"RUNNING={snap['running_proc']}")
     return "  ".join(bits)
+
+
+# ── state monitor (the "what it's thinking" stream) ─────────────────────────
+def _state_monitor_loop(runner: FlowRunner, stop: threading.Event,
+                        heartbeat_s: float) -> None:
+    """Print a [STATE] line whenever any watched flag changes, plus a heartbeat
+    every `heartbeat_s` so a WEDGED/STUCK state keeps showing its conditions
+    (not silence). Reads only — never steers."""
+    prev = None
+    last_beat = 0.0
+    import time
+    while not stop.is_set():
+        try:
+            snap = _snapshot(runner)
+            now = time.monotonic()
+            changed = snap != prev
+            beat = (now - last_beat) >= heartbeat_s
+            if changed or beat:
+                _line("[STATE]", _fmt_state(snap))
+                prev = snap
+                last_beat = now
+        except Exception as exc:  # noqa: BLE001 — display must never crash the run
+            _line("[STATE-ERR]", repr(exc))
+        stop.wait(0.4)
 
 
 # ── raw game-truth tail (independent of the bot — cross-check) ───────────────
 def _raw_tail_loop(journal_dir: Path, stop: threading.Event) -> None:
     """Tail Journal.*.log + Status.json + NavRoute.json with the REAL parsers,
-    printing each GAME-TRUTH transition so we can confirm the bot saw reality.
-
-    StatusReader/NavRouteReader.poll() return None when the file is unchanged
-    (mtime-deduped), so a non-None poll IS a transition — no manual diffing."""
+    printing each GAME-TRUTH transition so we can confirm the bot saw reality."""
     jt = JournalTail(journal_dir)
     sr = StatusReader(journal_dir / "Status.json")
     nr = NavRouteReader(journal_dir / "NavRoute.json")
-    jt.step()  # drain backlog once; we only want LIVE transitions on screen
-    # Prime the readers so we don't dump the whole current state as "changes".
+    jt.step()  # drain backlog once; only LIVE transitions on screen
     try:
         sr.poll()
         nr.poll()
     except Exception:  # noqa: BLE001
         pass
     _salient = ("StarSystem", "Body", "BodyType", "JumpType", "StarClass",
-                "Name", "Docked", "Scooped")
+                "Name", "Docked", "Scooped", "RemainingJumpsInRoute")
     while not stop.is_set():
         try:
             for ev in jt.step():
                 name = getattr(ev, "event", "?")
                 fields = []
+                dump = ev.model_dump(by_alias=True) if hasattr(ev, "model_dump") else {}
                 for k in _salient:
                     v = getattr(ev, k.lower(), None)
-                    if v is None and hasattr(ev, "model_dump"):
-                        v = ev.model_dump(by_alias=True).get(k)
+                    if v is None:
+                        v = dump.get(k)
                     if v is not None:
                         fields.append(f"{k}={v}")
                 _line("[JOURNAL]", f"{name}  " + " ".join(fields))
             st = sr.poll()
             if st is not None:
-                sc = "SC" if getattr(st, "in_supercruise", False) else "normal"
-                if getattr(st, "docked", False):
-                    sc = "DOCKED"
+                sc = "DOCKED" if getattr(st, "docked", False) else (
+                    "SC" if getattr(st, "in_supercruise", False) else "normal")
                 d = getattr(st, "destination", None)
                 _line("[STATUS]",
                       f"{sc} charging={getattr(st, 'fsd_charging', None)} "
                       f"cooldown={getattr(st, 'fsd_cooldown', None)} "
+                      f"jumpbit={getattr(st, 'fsd_jump', None)} "
+                      f"masslock={getattr(st, 'fsd_mass_locked', None)} "
                       f"gui={getattr(st, 'gui_focus', None)} "
+                      f"pips={getattr(st, 'pips', None)} "
                       f"dest={getattr(d, 'name', None) if d else None}")
             route = nr.poll()
             if route is not None:
@@ -187,7 +234,7 @@ def _raw_tail_loop(journal_dir: Path, stop: threading.Event) -> None:
                 nxt = r[0].star_system if r else None
                 last = r[-1].star_system if r else None
                 _line("[ROUTE]", f"len={len(r)} next={nxt} final={last}")
-        except Exception as exc:  # noqa: BLE001 — display must never crash the run
+        except Exception as exc:  # noqa: BLE001
             _line("[TAIL-ERR]", repr(exc))
         stop.wait(0.5)
 
@@ -201,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
                          "step: run full procedures with read-only vision.")
     ap.add_argument("--duration", type=float, default=3600.0,
                     help="seconds to run the walk (default 3600)")
+    ap.add_argument("--heartbeat", type=float, default=5.0,
+                    help="seconds between [STATE] heartbeats even when unchanged (default 5)")
     ap.add_argument("--sessions-dir", type=Path, default=None,
                     help="where to write the session jsonl (default ~/ed-afk-sessions)")
     ap.add_argument("--no-raw-tail", action="store_true",
@@ -211,9 +260,6 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(cfg_path if cfg_path.is_file() else None)
     journal_dir = cfg.paths.journal_dir_expanded()
 
-    # Session recorder — the canonical audit trail (journal NOT included; the
-    # raw tail shows that). Distinct gatewalk_ prefix so these never mix with
-    # real flight sessions in tests/test_recorded_sessions.py.
     base = args.sessions_dir or (Path.home() / "ed-afk-sessions")
     base.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S")
@@ -221,14 +267,11 @@ def main(argv: list[str] | None = None) -> int:
     recorder = Recorder(session_path)
 
     # record Tee: every ctx.log()/dispatcher.record() lands in the jsonl AND
-    # prints live. ctx.log -> ctx.record -> this. So Step/HoldAlignmentDone/
-    # ProcedureAborted/ArrivalOnRestart/RouteComplete all stream here.
+    # prints live. ctx.log -> ctx.record -> this.
     def record(outcome_type: str, payload) -> None:
         recorder.record_outcome(outcome_type, payload)
         _line("[DECISION]", f"{outcome_type}  {payload}")
 
-    # NullSender = keys OFF. LoggingSender wraps it so the (empty) keypress log
-    # is still recorded, exactly like the real `run --record` path.
     sender = LoggingSender(NullSender(), recorder)
 
     status_reader = StatusReader(journal_dir / "Status.json")
@@ -243,8 +286,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"procedure error: {p}")
         return 2
 
-    # Vision: OFF in routing mode (procedures never run). READ-ONLY in step
-    # mode — the same builders the real run uses, gated by config calibration.
     compass_reader = frame_grabber = None
     widget_ring_reader = widget_frame_grabber = None
     nav_panel_reader = nav_panel_grabber = None
@@ -297,37 +338,31 @@ def main(argv: list[str] | None = None) -> int:
         panic_switch=panic,
     )
 
-    # ROUTING mode: replace the motor (_run) with a decision tracer. run_live's
-    # real _maybe_startup / dispatch / _caught_up / witchspace logic is left
-    # untouched — only the procedure EXECUTION is skipped, so the trace is the
-    # pure routing decision for each real state Operator drives the ship into.
     if args.mode == "routing":
         def _trace_dispatch(name: str) -> None:
             snap = _snapshot(runner)
             record("GatewalkDispatch", {"procedure": name, "state": snap})
-            _line("DISPATCH>", f"--> {name.upper():<16} | {_fmt_snapshot(snap)}")
+            _line("DISPATCH>", f"==> {name.upper():<16} | {_fmt_state(snap)}")
         runner._run = _trace_dispatch  # type: ignore[method-assign]
 
-    # ── banner ──
-    print("=" * 78)
+    print("=" * 80)
     print(f"  GATE/PATH WALK  ·  mode={args.mode}  ·  keys=OFF (NullSender)")
     print(f"  journal : {journal_dir}")
     print(f"  session : {session_path}")
-    if args.mode == "routing":
-        print("  Operator drives the ship into each state; each line marked")
-        print("  'DISPATCH>' is the REAL procedure the live code would run.")
-        print("  Watch a full jump: normal+route -> SC -> hyperspace -> arrival.")
-    else:
-        print("  Full procedures run vs live state; orient_* fail-close (no keys).")
-    print("  Ctrl+C to stop.")
-    print("=" * 78)
+    print("  [STATE] = every flag/condition the gates read (changes + heartbeat).")
+    print("  [DECISION] = every ctx.log/recorder outcome.  DISPATCH> = chosen procedure.")
+    print("  [JOURNAL]/[STATUS]/[ROUTE] = game ground-truth.  Ctrl+C to stop.")
+    print("=" * 80)
 
     stop = threading.Event()
-    tail_thread = None
+    threads = []
+    threads.append(threading.Thread(
+        target=_state_monitor_loop, args=(runner, stop, args.heartbeat), daemon=True))
     if not args.no_raw_tail:
-        tail_thread = threading.Thread(
-            target=_raw_tail_loop, args=(journal_dir, stop), daemon=True)
-        tail_thread.start()
+        threads.append(threading.Thread(
+            target=_raw_tail_loop, args=(journal_dir, stop), daemon=True))
+    for t in threads:
+        t.start()
 
     try:
         runner.run_live(duration_s=args.duration)
@@ -337,8 +372,8 @@ def main(argv: list[str] | None = None) -> int:
         runner.request_stop()
     finally:
         stop.set()
-        if tail_thread is not None:
-            tail_thread.join(timeout=2.0)
+        for t in threads:
+            t.join(timeout=2.0)
         recorder.close()
         print(f"\nsession written -> {session_path}")
     return 0
