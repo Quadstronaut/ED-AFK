@@ -288,6 +288,37 @@ def build_widget_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[], 
 
 
 # ---------------------------------------------------------------------------
+# Nav-panel IDENTITY-targeting factory (task #45)
+# ---------------------------------------------------------------------------
+
+def build_navpanel_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[], Any]]]:
+    """Construct (NavPanelReader, navpanel_grabber.grab) for body_tour identity
+    targeting, or (None, None) if disabled / unavailable.
+
+    Gated on cfg.exploration.nav_panel_ocr_enabled (default OFF). The OCR layer
+    needs the [cv] extra (pytesseract) + a tesseract binary + a calibrated
+    region — none assumed here; if anything is missing the build degrades to
+    (None, None) and body_tour falls back to the blind row walk. CALIBRATION-
+    PENDING until a real planet-rich frame validates the region.
+
+    Mirrors build_widget_vision: returns the BOUND `.grab` (every call site does
+    grabber()). NEVER raises."""
+    expl = getattr(cfg, "exploration", None)
+    if expl is None or not getattr(expl, "nav_panel_ocr_enabled", False):
+        return None, None
+    try:
+        from .navpanel_reader import NavPanelReader
+
+        region = tuple(getattr(expl, "nav_panel_region", (310, 145, 235, 125)))
+        reader = NavPanelReader(region=region)
+        grabber = ScreenGrabber(region, backend=cfg.vision.capture_backend)
+        return reader, grabber.grab
+    except Exception as e:  # noqa: BLE001 — degrade to blind row walk, never crash.
+        log.warning("nav_panel_ocr on but unavailable (%s); body_tour stays blind", e)
+        return None, None
+
+
+# ---------------------------------------------------------------------------
 # Sun-region grabber factory
 # ---------------------------------------------------------------------------
 

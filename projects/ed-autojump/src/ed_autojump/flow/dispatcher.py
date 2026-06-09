@@ -119,6 +119,8 @@ class FlowRunner:
         body_tour_max_rows: int = 8,
         body_tour_orbit_timeout_s: float = 120.0,
         body_tour_min_bodies: int = 0,
+        nav_panel_reader: Optional[Any] = None,
+        nav_panel_grabber: Optional[Callable[[], Any]] = None,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -148,6 +150,8 @@ class FlowRunner:
         self._body_tour_max_rows = body_tour_max_rows
         self._body_tour_orbit_timeout_s = body_tour_orbit_timeout_s
         self._body_tour_min_bodies = body_tour_min_bodies
+        self.nav_panel_reader = nav_panel_reader      # identity targeting (task #45)
+        self.nav_panel_grabber = nav_panel_grabber
 
         self._event_times: dict[str, float] = {}
         # True while the journal's last SC transition is SupercruiseExit at a
@@ -398,6 +402,8 @@ class FlowRunner:
             body_tour_max_rows=self._body_tour_max_rows,
             body_tour_orbit_timeout_s=self._body_tour_orbit_timeout_s,
             body_tour_min_bodies=self._body_tour_min_bodies,
+            nav_panel_reader=self.nav_panel_reader,
+            nav_panel_grabber=self.nav_panel_grabber,
             fss_body_count_supplier=lambda: self._fss_body_count,
             fss_discovered_supplier=lambda: self._fss_discovered,
             autoscan_supplier=lambda: (self._autoscan_seq,

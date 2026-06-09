@@ -1850,6 +1850,25 @@ INPUT_EXCLUSIVE_ACTIONS = frozenset({
     "station_services", "auto_launch",
 })
 
+def _body_tour_identity_target(ctx: StepContext, tried: set):
+    """IDENTITY targeting helper (task #45): read the NAVIGATION panel and return
+    the next UNEXPLORED in-system body — one not in the journal scanned-set and
+    not already tried this tour. Its `row_index` drives the nav-panel cursor
+    walk. Returns None when none remain. FAIL-OPEN: any read/OCR error (no
+    tesseract, bad frame, uncalibrated region) is logged and returns None, which
+    ends the tour and lets the jump resume — never raises into the loop."""
+    try:
+        from ..vision.navpanel_reader import next_unexplored
+        frame = ctx.nav_panel_grabber()
+        _, scanned = ctx.autoscan_supplier()
+        system = ctx.current_system_supplier()
+        bodies = ctx.nav_panel_reader.parse(frame, system)
+        return next_unexplored(bodies, set(scanned) | tried)
+    except Exception as e:  # fail-open: OCR/env/frame issues never block the jump
+        ctx.log("BodyTourReadFail", {"err": type(e).__name__})
+        return None
+
+
 def step_body_tour(
     ctx: StepContext, *,
     settle_s: float = 0.4,
@@ -1904,6 +1923,14 @@ def step_body_tour(
     dwell_s = ctx.body_tour_dwell_s
     orbit_timeout_s = ctx.body_tour_orbit_timeout_s
 
+    # IDENTITY mode (task #45): read the panel + target the next UNEXPLORED body
+    # by name when the reader+grabber are wired; else the legacy blind row walk.
+    identity_mode = (ctx.nav_panel_reader is not None
+                     and ctx.nav_panel_grabber is not None)
+    tried: set[str] = set()      # body names already attempted this tour (timed
+                                 # out or scanned) so identity selection advances
+                                 # instead of re-picking a stuck body forever.
+
     row = k_start
     bodies_toured = 0
     consecutive_nonbody = 0
@@ -1920,6 +1947,19 @@ def step_body_tour(
             ctx.log("BodyTourNonBodyStop",
                     {"row": row, "consecutive": consecutive_nonbody})
             break
+
+        # ---- IDENTITY target selection (task #45) ------------------------
+        # Read the NAVIGATION panel, pick the next in-system body not yet in the
+        # scanned-set OR already tried this tour. None => no unexplored bodies
+        # left (clean end). Any read failure fails OPEN -> end tour, jump resumes.
+        if identity_mode:
+            target = _body_tour_identity_target(ctx, tried)
+            if target is None:
+                ctx.log("BodyTourNoUnexplored", {"toured": bodies_toured})
+                break
+            row = target.row_index
+            tried.add(target.name)
+            ctx.log("BodyTourTarget", {"row": row, "body": target.name})
 
         # ---- snapshot latches BEFORE locking (mirrors target_next_route) --
         seq0, seen0 = ctx.autoscan_supplier()
@@ -1942,7 +1982,10 @@ def step_body_tour(
         # guard RELEASED here -> heat watchdog runs during the gate + dwell.
 
         # ---- first-row local-star identity skip (criterion 2 layer 2) -----
-        if row == k_start:
+        # Blind-walk only: identity mode already skips the scanned arrival star
+        # via the scanned-set cross-ref, and its `row` is a panel index, not the
+        # k_start cursor, so this positional skip must not fire there.
+        if not identity_mode and row == k_start:
             st = ctx.status_supplier()
             system = ctx.current_system_supplier()
             if _destination_is_local_star(st, system) is True:
