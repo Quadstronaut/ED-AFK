@@ -105,6 +105,7 @@ def _snapshot(runner: FlowRunner) -> dict:
         "gui_focus": g(st, "gui_focus"),
         "pips": g(st, "pips"),
         "destination": g(dest, "name"),
+        "destination_body": g(dest, "body"),
         "route_len": (len(route) if route else 0),
         "next_hop": (g(route[0], "star_system") if route else None),
         "in_witchspace": getattr(runner, "_in_witchspace", None),
@@ -148,7 +149,7 @@ def _fmt_state(snap: dict) -> str:
     if snap.get("next_hop"):
         bits.append(f"next={snap['next_hop']}")
     if snap.get("destination"):
-        bits.append(f"dest={snap['destination']}")
+        bits.append(f"dest={snap['destination']}/b{snap.get('destination_body')}")
     if snap.get("fsd_target"):
         bits.append(f"target={snap['fsd_target']}({snap.get('fsd_target_class')})")
     if snap.get("fss_body_count"):
@@ -227,7 +228,8 @@ def _raw_tail_loop(journal_dir: Path, stop: threading.Event) -> None:
                       f"masslock={getattr(st, 'fsd_mass_locked', None)} "
                       f"gui={getattr(st, 'gui_focus', None)} "
                       f"pips={getattr(st, 'pips', None)} "
-                      f"dest={getattr(d, 'name', None) if d else None}")
+                      f"dest={getattr(d, 'name', None) if d else None}"
+                      f"/body={getattr(d, 'body', None) if d else None}")
             route = nr.poll()
             if route is not None:
                 r = getattr(route, "route", None) or []
