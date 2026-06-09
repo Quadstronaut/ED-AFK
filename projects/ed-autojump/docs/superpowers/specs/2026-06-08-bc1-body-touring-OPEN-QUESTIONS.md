@@ -226,3 +226,24 @@ OPEN (in-game, for the spec — do NOT guess):
   - Nav-panel CV region calibration (a new `calibrate-navpanel` like calibrate-compass).
 
 This is a proper spec->plan->build (council), building on the existing vision/OCR stack.
+
+---
+
+## NAV-PANEL CALIBRATION (2026-06-08, live screenshot + Operator confirmed)
+
+Parked the ship orbiting, opened the NAVIGATION panel, captured navpanel_calib_full.png.
+Confirmed (memory ed-navpanel-navigation-tab-format):
+- NAVIGATION tab = distance-sorted, INTERLEAVED: in-system bodies (Ls, current-system name +
+  designator " A"/"A 1"/...) + nearby SYSTEMS (Ly, other designations). NOT a clean body list.
+- CV/OCR keeps the Ls / current-system rows, drops the Ly / other-system rows.
+- Planets show in the SAME list, in Ls, as "A 1", "A 2"...
+- "unexplored" marker on a body until you are close (readable by CV; journal scanned-set backstop).
+- WORTH-TOURING = honk BodyCount > a few -> body_tour_min_bodies gate set LOW (~5-8, not 40).
+- Region @1920x1080 (approx): body list x~310-545, y~145-270 (refine with the OCR crop).
+
+CV/OCR reader (task #45): arrival -> if BodyCount >= ~few -> open NAVIGATION -> OCR rows ->
+keep Ls/current-system bodies -> next UNEXPLORED planet (marker + journal cross-ref) -> target
+it -> (throttle blue-zone fix) fly out -> AutoScan gate -> next.
+
+REMAINING sample: a PLANET-RICH system to see planet rows + the "unexplored" marker live (the
+2-star sample could not show them).
