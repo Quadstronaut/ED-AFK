@@ -249,6 +249,16 @@ class DirectInputSender(Sender):
         # Library default pause is 0.1s between calls — we manage timing
         # ourselves and 0.1s per key would crater throughput.
         pydirectinput.PAUSE = 0.0
+        # Disable pydirectinput's mouse-corner fail-safe (council 2026-06-09,
+        # 4/5). It raises FailSafeException on ANY input call — keyboard
+        # scancodes included — when the cursor sits in a screen corner, and it
+        # KILLED an unattended run mid-orient (the cursor drifting to a corner is
+        # indistinguishable from "at rest"). This bot legitimately sends input
+        # regardless of cursor position; the real operator-abort path is the
+        # PanicSwitch hotkey + Ctrl+C, not a corner gesture. Belt-and-suspenders:
+        # the interpreter now also turns a step raise into a fail-closed abort,
+        # and run_live parks rather than crashing.
+        pydirectinput.FAILSAFE = False
         self._pdi = pydirectinput
         # Verify the rgx API surface up front: if someone pip-installed the
         # wrong package (the upstream `pydirectinput`), fail loudly here

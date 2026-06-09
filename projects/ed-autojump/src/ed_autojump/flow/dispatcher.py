@@ -1191,6 +1191,34 @@ class FlowRunner:
                 for ev in events:
                     if self._caught_up:
                         self.dispatch(ev)
+        except Exception as exc:  # noqa: BLE001 — never die silently mid-flight
+            # PARK, don't crash (council 2026-06-09). An unhandled exception
+            # anywhere in the live loop (a step raise the interpreter didn't
+            # catch, a dispatch/_maybe_startup fault, a library error) used to
+            # propagate out, kill the process, and leave the overlay FROZEN on
+            # its last line — the 2026-06-09 NE-Y b34-0 "stuck on hold_alignment
+            # forever" report. Park instead: record the reason, release keys,
+            # label the overlay, trip panic, and stop the loop cleanly via the
+            # finally below. KeyboardInterrupt/BaseException are NOT caught here,
+            # so Ctrl+C / panic still propagate to cmd_run.
+            if self.record is not None:
+                self.record("CrashParked", {"reason": repr(exc)})
+            try:
+                self.sender.release_all()
+            except Exception:  # noqa: BLE001
+                pass
+            if self.overlay is not None:
+                try:
+                    self.overlay.status(
+                        f"[CRASH-PARKED] {type(exc).__name__}: {exc}")
+                except Exception:  # noqa: BLE001
+                    pass
+            if self.panic_switch is not None:
+                try:
+                    self.panic_switch.trip()
+                except Exception:  # noqa: BLE001
+                    pass
+            self.stop_requested = True
         finally:
             watchdog_stop.set()
             self._hub.unsubscribe(main_handle)
