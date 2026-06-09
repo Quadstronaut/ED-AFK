@@ -63,13 +63,18 @@ Walk a complete hop and confirm a procedure runs at EACH arrival.
 | 7 | witchspace StartJump→FSDJump (interpreter pause) | pause then **resume** (not wedge) | | |
 | 8 | next FSDJump arrival → arrival again | dispatch repeats every hop | | |
 
-> **Known regression (2026-06-09):** fresh launch in *Dryio Eaec XQ-U b36-0*
-> (normal+route) ran `startup`, jumped cleanly to *Dryio Eaec NE-Y b34-0*
-> (FSDJump 18:05:15Z) — then **no procedure ran for the arrival**. Overlay froze
-> on `STARTUP > HOLD_ALIGNMENT`, ship idled in SC 18 min (passive scoop only).
-> Fault is isolated to row 2/7: `dispatch(FSDJump)→arrival` either never fired or
-> wedged in the witchspace pause (`interpreter.py:59`) before its first step.
-> This walk + the offline journal-driver are how we confirm which.
+> **Regression 2026-06-09 — ROOT-CAUSED + FIXED (commit 9d2a99b).** Fresh launch
+> in *Dryio Eaec XQ-U b36-0* (normal+route) ran `startup`, jumped cleanly to
+> *Dryio Eaec NE-Y b34-0* (FSDJump 18:05:15Z) — then **no procedure ran**, overlay
+> froze on `STARTUP > HOLD_ALIGNMENT`, ship sat dead ~56 min. Two councils (4+5
+> reviewers) + `scripts/replay_driver.py` proved the **trigger is sound**:
+> `dispatch(FSDJump)→arrival` fired for all 10 arrivals in that journal. The real
+> failure was the **process crashing** on an unhandled
+> `pydirectinput.FailSafeException` (cursor in a screen corner); the overlay just
+> froze on the last live line. Key up/down duration was never relevant. Fix:
+> `FAILSAFE=False` + interpreter step-crash→abort (`StepCrashed`) + run_live
+> `[CRASH-PARKED]` instead of dying. **This row is now a fix-holds check:** force a
+> step error and confirm StepCrashed + abort/park with the process ALIVE.
 
 ## 3 · Refuel — `scoop_refuel`
 
