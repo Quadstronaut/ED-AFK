@@ -195,3 +195,34 @@ NEXT (needs Operator in-game verification — do NOT guess the mechanic):
 DISABLED in config (body_tour_enabled=false) pending the fix. Subsystem code stays (8cf3e26
 + 7558835); only the engage throttle + timeout need the live fix. Early-lock + clean jump
 loop unaffected and running.
+
+---
+
+## FIX DIRECTION (Operator 2026-06-08) — CV/OCR unexplored-body targeting
+
+Two gaps to close (body_tour_enabled=false until both land):
+
+**1. TARGETING — read the panel, do not walk by row index.** Replace the blind
+positional walk (engage_supercruise_assist_row pins row 0 + UI_Down x k) with a
+CV/OCR read of the nav panel:
+  - OCR the nav-panel body rows (tesseract is already configured: config.cv.ocr_engine).
+  - Cross-reference the journal scanned-set the bot already keeps (_autoscan_bodies).
+  - "Unexplored" = a panel body name NOT yet in the scanned-set.
+  - Target THAT body's row (naturally skips the star at row 0, stations, and already-
+    scanned bodies — no row-index assumptions).
+
+**2. FLY-OUT — set the throttle to the SC-assist blue zone.** The per-body engage
+must SetSpeed75 (sc_assist_throttle_action) so the ship actually flies to the locked
+body; re-tune orbit_timeout_s for real fly-out distances (120s was far too short).
+
+Placement is already CORRECT (Operator's sequence: arrival -> refuel if needed -> SC-assist
+clear the star -> wait -> target planet 1). The bug is the targeting + the fly-out.
+
+OPEN (in-game, for the spec — do NOT guess):
+  - After honk, does the nav panel list ALL bodies by readable name (the OCR target)?
+    Does it scroll / how many fit on screen?
+  - How does the panel mark explored vs unexplored (or do we rely solely on the journal
+    scanned-set + name cross-ref)?
+  - Nav-panel CV region calibration (a new `calibrate-navpanel` like calibrate-compass).
+
+This is a proper spec->plan->build (council), building on the existing vision/OCR stack.
