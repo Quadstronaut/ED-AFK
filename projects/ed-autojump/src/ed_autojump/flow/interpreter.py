@@ -86,13 +86,30 @@ def run_procedure(
         fn = reg.get(step.action)
         if fn is None:
             ok = False
-        elif step.action in INPUT_EXCLUSIVE_ACTIONS and ctx.exclusive_guard is not None:
-            # UI macro owns input for its duration — the heat watchdog pauses
-            # so a DeployHeatSink tap can't desync the panel state.
-            with ctx.exclusive_guard():
-                ok = bool(fn(ctx, **step.params))
         else:
-            ok = bool(fn(ctx, **step.params))
+            try:
+                if (step.action in INPUT_EXCLUSIVE_ACTIONS
+                        and ctx.exclusive_guard is not None):
+                    # UI macro owns input for its duration — the heat watchdog
+                    # pauses so a DeployHeatSink tap can't desync the panel state.
+                    with ctx.exclusive_guard():
+                        ok = bool(fn(ctx, **step.params))
+                else:
+                    ok = bool(fn(ctx, **step.params))
+            except KeyboardInterrupt:
+                raise  # operator abort / panic must propagate, never be parked
+            except Exception as exc:  # noqa: BLE001
+                # A step that RAISES (e.g. pydirectinput.FailSafeException from a
+                # cursor-corner trip, or a vision/OS error) must NOT kill the
+                # process and freeze the overlay mid-flight (2026-06-09 NE-Y b34-0
+                # incident). Treat a crash as a FAILED step: ok=False routes into
+                # the required-fail / abort machinery below — fail-closed, the
+                # process stays alive, and the failing step is named. Per-press
+                # key release is handled by the sender's own finally.
+                ok = False
+                ctx.log("StepCrashed",
+                        {"procedure": proc.name, "action": step.action,
+                         "error": repr(exc)})
         result.steps.append(StepResult(step.action, ok))
         ctx.log("Step", {"procedure": proc.name, "action": step.action, "ok": ok})
 
