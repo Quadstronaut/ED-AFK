@@ -135,3 +135,34 @@ Operator (ground truth) + journal-verified by me:
 recovery + combined lock+engage). The `engage_jump` in_supercruise gap (#44) does NOT bite
 BC1 (tour stays in supercruise). Confirmed mechanics saved to memory
 `sc-assist-orbit-vs-drop-mechanics`.
+
+---
+
+## v3 outcome (2026-06-08): SPEC PASSED (3/3), PLAN blocked 2/3 on the station-drop edge
+
+Big progress: with mechanics confirmed, the **spec passed unanimous** and verified correct
+against the real code (executor/navpanel.py path; INPUT_EXCLUSIVE wraps the WHOLE step so
+body_tour must NOT be in it; _TailHub broadcasts to all subscribers; arrival.toml skip_to
+vaults by NAME so the insertion is safe; StepContext new fields = zero test blast radius;
+ExplorationConfig is in the load_config merge list; _apply_state FSDJump is the reset point).
+**The pure body-orbit happy path is clean.**
+
+The PLAN stalled at 2/3 TWICE — both times on the **station/POI drop-recovery path (D2)**.
+The body-orbit feature itself is fine; SC-assisting a station (which DROPS) is the intricate
+edge:
+- Round A (fixed): the per-body gate used two event_waiter calls; a drop in the same batch as
+  a Scan-miss got consumed by the queue clear. Fixed with a drop-latch supplier (drop_seq).
+- Round B (OPEN): `SupercruiseDestinationDrop` fires ~5s BEFORE `SupercruiseExit`, so when the
+  drop-latch triggers, `in_supercruise` is STILL true -> `step_engage_supercruise`
+  short-circuits (no-op) -> the ship drops 5s later -> the tour continues from NORMAL SPACE,
+  breaking the pure-orbit guarantee. **Council's fix:** gate the "dropped" outcome on
+  `SupercruiseExit` (a scex_seq supplier), NOT `SupercruiseDestinationDrop`; and wrap
+  `_ensure_cockpit_focus` + the re-engage in the exclusive guard.
+
+STOPPED here — three full rounds is the right autonomous limit. The fix is small + clear.
+Options for Operator:
+- **(A) one focused resume** with the SupercruiseExit-gate fix — likely lands it.
+- (B) drop the station-recovery for v1 — but bodies vs stations are not cleanly
+  pre-distinguishable in the nav panel, so this is not obviously simpler.
+- (C) Operator reviews spec+plan and we implement the drop-recovery together.
+Recommend (A) on Operator's go. Spec is locked; only the D2 path needs this one fix.
