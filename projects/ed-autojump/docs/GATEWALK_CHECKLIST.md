@@ -42,11 +42,22 @@ Drive the ship into each state, fresh-launch the walk, read the `DISPATCH>` line
 | 1 | Normal space, at a star, route plotted | `startup` | | |
 | 2 | Normal space, **no** route | (no fly — `NoRouteOnStartup`, idle) | | |
 | 3 | In SC, parked at completed route terminus (route empty, dest=local star) | idle (`RouteCompleteIdleOnRestart`) | | |
-| 4 | In SC, fresh arrival ≤30s, dest=local star | `arrival` (orbit get-around) | | |
+| 4 | In SC, fresh arrival ≤30s, dest=local star | `arrival` (orbit get-around) | `arrival` via **P2 `local_star`** — dest `…b48-0 A`→`_destination_is_local_star`=True. jump_age=83s **not** the cause (P2 short-circuits before the ≤30s check) | ✅ |
 | 5 | In SC, fresh arrival ≤30s (smack guard window) | `arrival` | | |
 | 6 | In SC, stale loiter >30s, confident non-local-star dest | `sc_resume` | | |
 | 7 | Smacked (normal space, last SC transition = star drop, FsdCooldown burning) | `smack_recovery` | | |
 | 8 | Docked on load | (no escape — return) | | |
+
+> **§1 walk note (2026-06-09, live + adversarially confirmed).** Observed real state
+> *Tyroopps OT-X b48-0*, SC, dest `…b48-0 A`, route=108, **jump_age=83s** → `DISPATCH> ARRIVAL`,
+> `reason=local_star`. This proves the **gate priority precedence**: `_maybe_startup` P2
+> (dest IS local star) outranks P4 (stale-loiter `sc_resume`) **even when jump_age>30s** — the
+> "≤30s" qualifier on rows 4–6 is incidental, the binding discriminator is
+> `_destination_is_local_star`. Harness faithfulness CONFIRMED: every routing branch dispatches
+> via `self._run(name)`, which the routing tracer intercepts — no silent dispatch path.
+> **Caveat for boundary rows (4 vs 6):** the `[STATE]`/snapshot `jump_age_s` is read at snapshot
+> time, not gate time (seen as 82.5 vs 83 drift) — near the 30s threshold trust the `[DECISION]`
+> `ArrivalOnRestart`/`ScResumeOnRestart` payload's `jump_age`, not the `[STATE]` column.
 
 ## 2 · Full jump — live `dispatch` + arrival.toml (THE row today's bug lives on)
 
