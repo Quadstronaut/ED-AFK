@@ -122,6 +122,17 @@ Walk a complete hop and confirm a procedure runs at EACH arrival.
 | 2 | final hop, station destination | full dock, stay docked | | |
 | 3 | restart while parked at terminus | idle, no re-arrival | | |
 
+## 7 · Operator-observed efficiency targets (2026-06-09 live AFK watch — "the jumps are too long")
+
+Added by Operator watching live hops at ~90–130s each. These are efficiency/correctness
+defects, not just timing. Validate against his pending **play-by-play reference logic**
+(the desired gates/ifs) to pin gaps vs erroneous code.
+
+| # | Observed behaviour | What to test | Got | ✅/⚠️/❌ |
+|---|---|---|---|---|
+| 1 | Nav-panel **Target** fires too many times per hop, with very long pauses | count `target_next_route`/`nav_panel_target` invocations per hop; locate the long-pause source (watchdog wait / retries / event-gate stall) | | |
+| 2 | Post-SC-assist **wait sometimes unnecessary** — next target already in front, no get-around needed | is there an "already in front / aligned" short-circuit, or does the orbit+wait always run? | | |
+
 ---
 
 ## ❌ → issue template (plan §6)
