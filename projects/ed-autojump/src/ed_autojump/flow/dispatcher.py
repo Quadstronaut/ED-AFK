@@ -282,6 +282,17 @@ class FlowRunner:
         #    this capture works. If Body == 0 -> capture-at-plot is dead;
         #    a different signal is needed before this helps.
         self._dock_target: Optional[tuple[int, int, str]] = None
+        # ROUTE-COMPLETE SETTLE re-poll (live-proven 2026-06-09): at a real
+        # station terminus the game auto-targets the terminus station into
+        # Status.Destination ~1.09s AFTER the FSDJump (measured: TRC Holding
+        # Inc., Body=29, appeared 1.09s post-jump and stayed through docking).
+        # The legacy one-shot read at the FSDJump instant therefore sees only
+        # the arrival STAR (Body=0) and wrongly parks. These bound a short
+        # re-poll of Destination so the station flag can resolve. The CAP is a
+        # ceiling on the wait, NEVER the success signal (the Destination flag
+        # decides success); on cap-exhaust we fall back to today's park path.
+        self._route_complete_settle_s = 2.0       # ceiling (live flip <=1.09s)
+        self._route_complete_settle_poll_s = 0.25  # re-read cadence
 
     # ---- public state accessors ------------------------------------------
     def event_time(self, name: str) -> Optional[float]:
@@ -624,7 +635,7 @@ class FlowRunner:
         service) and STAY DOCKED, idle. SYSTEM/star destination -> park in
         orbit and hold. (A NEW route plotted while docked later triggers the
         pit-stop resume from dispatch(); absent that, the bot stays docked.)"""
-        from .steps import _destination_is_local_star
+        from .steps import _destination_is_local_star, _dest_is_named_station
 
         system = (getattr(ev, "star_system", None)
                   or (self._final_waypoint[1] if self._final_waypoint else None)
@@ -648,16 +659,54 @@ class FlowRunner:
             is_station = True
             station_name = captured[2]
         else:
-            # Legacy live-status path (unchanged): covers the edge case where
-            # Status still holds a station at arrival (e.g. no target_next_route
-            # ran on a single-hop route). Do NOT weaken any existing guard.
-            local_star = _destination_is_local_star(status, self._current_system)
-            if (dest is not None
-                    and getattr(dest, "body", 0) != 0
-                    and getattr(dest, "system", None) == arrival_addr
-                    and local_star is False):
-                is_station = True
-                station_name = (getattr(dest, "name", "") or "").strip() or "station"
+            # Legacy live-status path with a BOUNDED SETTLE re-poll. The game
+            # auto-targets the terminus station into Status.Destination ~1.09s
+            # AFTER the FSDJump (live-proven 2026-06-09; see __init__ tunables),
+            # so a single read at the jump instant sees only the arrival star.
+            # Re-read Destination on a short cadence until the station flag
+            # resolves OR the read budget is spent. The THREE existing guards
+            # below (Body!=0, system==arrival, not-local-star) are PRESERVED
+            # exactly — the budget only bounds the wait; the Destination flag
+            # alone decides success. On budget-exhaust: is_station stays False
+            # -> the unchanged park path (today's behavior).
+            #
+            # Bound by READ COUNT, not wall-clock: a frozen clock (the test
+            # harness uses clock=lambda: 0.0) never trips a deadline and would
+            # spin forever. max_reads gives the same ~2s window under a real
+            # sleeper and terminates deterministically under a no-op one.
+            max_reads = max(1, round(
+                self._route_complete_settle_s
+                / self._route_complete_settle_poll_s))
+            reads = 0
+            while reads < max_reads:
+                reads += 1
+                # Drain promptly on stop/panic instead of waiting out the budget.
+                if self._should_abort():
+                    break
+                # _fresh_status() can return None mid-loop (a transient stat/
+                # parse miss): treat as a non-resolving read and keep polling.
+                if status is not None:
+                    local_star = _destination_is_local_star(
+                        status, self._current_system)
+                    dest = getattr(status, "destination", None)
+                    if (_dest_is_named_station(status)
+                            and dest is not None
+                            and getattr(dest, "body", 0) != 0
+                            and getattr(dest, "system", None) == arrival_addr
+                            and local_star is False):
+                        is_station = True
+                        station_name = (
+                            (getattr(dest, "name", "") or "").strip()
+                            or "station")
+                        break
+                if reads < max_reads:
+                    self.sleeper(self._route_complete_settle_poll_s)
+                    status = self._fresh_status()
+            if self.record is not None:
+                self.record("RouteCompleteSettle", {
+                    "reads": reads,
+                    "station_found": is_station,
+                    "station": station_name if is_station else None})
 
         if is_station:
             # Run the real dock flow (procedures/dock.toml): approach under SC
