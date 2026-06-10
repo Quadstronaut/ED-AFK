@@ -18,6 +18,12 @@ param(
     [string[]]$Extra
 )
 
+# TODO (revisit once the core bot function is solid -- Operator 2026-06-09):
+#   Expose every optional BOT FEATURE as a toggle here, as -Switch params that
+#   flow through Get-CliArgs into the CLI -- e.g. discovery / body-tour mode
+#   (fly to all the bodies), scoop-refuel, dock servicing, smack-recovery, etc.
+#   Decide the -Yes (unattended) defaults at that point; do NOT wire defaults yet.
+
 $ErrorActionPreference = "Stop"
 
 function Show-FriendlyHelp {

@@ -173,3 +173,114 @@ A consolidated list of triggers that fire in the game with no bot handler, with 
 *Gap count: **8** confirmed unhandled trigger categories.*
 
 *Sources: `projects/ed-autojump/src/ed_autojump/flow/dispatcher.py`, `steps.py`, `procedures/*.toml`, `C:\Users\<user>\ed-afk-sessions\gatewalk_routing_2026-06-09T*.jsonl`.*
+
+---
+
+## GuiFocus reference (operator-confirmed live, 2026-06-09)
+
+Status.json `GuiFocus` values, confirmed by Operator in-game during the gate-walk.
+These are the focus touchpoints the dock / undock / galmap procedures read or await.
+
+| GuiFocus | Screen | Notes |
+|---|---|---|
+| 0 | No map / main view | default flying |
+| 1 | Right-hand panel | internal / systems (candidate for future use) |
+| 2 | Left-hand panel | NAV + CONTACTS — the docking-request panel |
+| 5 | Starport Services | docked services menu |
+| 6 | Galaxy map | route plotting |
+| (unchanged) | Advanced Maintenance screen | does NOT change GuiFocus -> OCR/vision only |
+
+UNDOCK (operator play-by-play, NOT yet wired in code): AUTO LAUNCH = (S) down once
+from home position, then Spacebar to submit; autodock ends ~10 km from the station.
+OPEN QUESTION (observe in the undock test): does this docked menu change GuiFocus,
+or is it invisible like Advanced Maintenance? If invisible, the bot must locate
+AUTO LAUNCH by OCR/vision, not by awaiting a focus value.
+
+---
+
+## UNDOCK touchpoints (operator-confirmed live, 2026-06-09)
+
+Manual undock at Tortooga, keys OFF, observed via gate-walk trace + Status poll.
+
+- AUTO LAUNCH = (S) down once from the docked home position, then Spacebar. Does
+  NOT change GuiFocus (stays 0, like Advanced Maintenance) -> the bot must OCR /
+  blind-macro it, it cannot await a focus value.
+- Autodock fly-out drops the ship at ~3.85 km from the station (NOT 10 km),
+  throttle 0, normal space. DockingComputer music runs ~58 s (Undocked 23:11:37 ->
+  NoTrack 23:12:35) marking the autodock disengage.
+- Ship is STILL FsdMassLocked at 3.85 km (Status Flags bit16=65536, confirmed) ->
+  cannot FSD-jump. This is WHY the reference says "throttle to 10.1km, orient, jump"
+  -- the throttle-out exists to CLEAR the station mass-lock, not for distance itself.
+- UNDOCK JUMP GATE (design): FsdMassLocked flag CLEARS (a Status flag, compliant) --
+  NOT a hardcoded 10 km. Throttle out until the flag drops, then orient + jump.
+- Bot dispatches NOTHING on Undocked (no Undocked branch in dispatch; checklist
+  S4 r4). The undock procedure is unbuilt; this is the spec to build it from.
+- MASS-LOCK SOURCE caveat vs memory ed-fsd-masslock-realspace ("mass lock only from
+  other ships"): a STATION at 3.85 km appears to mass-lock too. Source not yet proven
+  vs a nearby NPC -- confirm before amending that memory. Jump-gate-on-flag holds regardless.
+
+---
+
+## UNDOCK spec refinement (operator, 2026-06-09) — egress is blind + mass-lock-gated
+
+- Drop distance VARIES by station; some may NOT drop at ~3.85 km. The only reliable
+  signals are: DockingComputer music STOPS (autodock disengage) and FsdMassLocked is
+  present in ALL cases.
+- Egress is BLIND and STRAIGHT: thrust 100% + thruster BOOST (B) after the 100%,
+  heading straight away from whatever we undocked from. NO turning / vision / orient
+  during egress -- turning could point back into the mass-lock zone.
+- Sequence: exit mass lock (FsdMassLocked flag CLEARS) -> WAIT 5 s (maneuver buffer to
+  gain distance so orienting back does not re-enter mass-lock; a maneuver DURATION,
+  not a success gate) -> orient -> jump.
+- Rationale: if the destination is BEHIND us, turning back before clearing mass-lock +
+  the 5 s buffer would re-enter mass-lock and wreck the jump.
+
+---
+
+## DOCKED SERVICES — pit-stop macro (operator, 2026-06-09)
+
+On confirmed DOCKED (the `Docked` event / docked flag), WAIT 2 s for the services
+menu to fully materialize (a UI-settle DURATION, not a success gate -- the gate is
+DOCKED), then the blind key sequence:
+
+    W, SPACE, D, SPACE, D, SPACE, S
+
+Effect (operator-stated): refuel, repair, rearm, then reset cursor (the trailing S).
+Mapping: W=up, D=right, SPACE=select, S=down/reset. Produces the RefuelAll /
+RepairAll / BuyAmmo journal events (see catalog section G). This is the spec for the
+dock flow's "service" step (dock.toml ends at dock_await_docked; servicing is unbuilt).
+
+---
+
+## DOCKED MENU — CV slot calibration (live 1920x1080 GDI capture, 2026-06-09)
+
+The docked dashboard menu's HIGHLIGHTED item = one solid bright-orange bar
+(x ~784-790, w ~345, h ~40-46, mean RGB ~(165,87,1)). Identify which item is
+highlighted by the bar's vertical CENTRE:
+
+  STARPORT SERVICES (top)    ycentre ~822   (bar y=803 h=39)
+  AUTO LAUNCH       (middle) ycentre ~873   (bar y=852 h=42)
+  DISEMBARK         (bottom) ycentre ~925   (bar y=902 h=46)
+
+~51px even spacing -> decision boundaries y~847 (SERVICES|AUTO) and y~899
+(AUTO|DISEMBARK); +/-20px tolerance is clean. NO bar in the region = menu not up.
+Detector region: x[760..1160] y[795..955]. Fixtures: tests/fixtures/station_menu_*_live.png.
+
+USES: undock confirms the bar is on AUTO LAUNCH before pressing select;
+service-test-1 confirms a bar is present (menu up) before the W,SPACE,D,... macro.
+NOTE: pasted-screenshot frames arrive DOWNSCALED (1880x1000); these coords are
+from the bot's own 1920x1080 capture path -- calibrate/run against that path, not pastes.
+
+---
+
+## DOCK BLIND-MANEUVER — pitch timing scales with ship size (operator, 2026-06-09)
+
+The blind-maneuver PITCH duration scales with ship AGILITY (a slow ship -- e.g. a
+Type-9 -- needs more pitch time to clear the star before throttle/orient). Operator rule:
+  LARGE-class  ship -> pitch 7s
+  MEDIUM-class ship -> pitch 4s
+  SMALL-class  ship -> pitch 3s
+Throttle 100% stays 7s; orient + SC-assist unchanged. Exact timings may be refined.
+Ship MODEL is detectable from the journal (LoadGame/Loadout "Ship" field, e.g.
+"mandalay"); map model -> size class via a table (Mandalay = MEDIUM -> 4s). This
+same maneuver is also the SC-assist-disengaged recovery.
