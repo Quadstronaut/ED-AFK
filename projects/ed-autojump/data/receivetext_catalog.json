@@ -47,10 +47,10 @@
   "$Commuter_AuthorityScan04;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-09T23:16:47Z",
     "from_example": "Winterstein",
-    "last_seen": "2026-06-09T23:16:47Z",
+    "last_seen": "2026-06-09T23:56:44Z",
     "message_localised": "Is this really necessary?"
   },
   "$Commuter_AuthorityScan08;": {
@@ -83,10 +83,10 @@
   "$CruiseLiner_SCPatrol01;": {
     "category": "other",
     "channel": "npc",
-    "count": 21,
+    "count": 28,
     "first_seen": "2026-05-25T09:49:31Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-09T10:15:39Z",
+    "last_seen": "2026-06-10T00:52:09Z",
     "message_localised": "And don't forget, this Liner is in the top 1% of all Liners out there."
   },
   "$CruiseLiner_SCPatrol02;": {
@@ -101,28 +101,28 @@
   "$CruiseLiner_SCPatrol03;": {
     "category": "other",
     "channel": "npc",
-    "count": 43,
+    "count": 48,
     "first_seen": "2026-05-25T03:44:04Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-09T10:14:03Z",
+    "last_seen": "2026-06-10T00:45:25Z",
     "message_localised": "Today's cruise includes some delightful views, our flight attendants are on hand with full details."
   },
   "$CruiseLiner_SCPatrol04;": {
     "category": "other",
     "channel": "npc",
-    "count": 26,
+    "count": 27,
     "first_seen": "2026-05-25T09:42:02Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-09T22:36:26Z",
+    "last_seen": "2026-06-10T00:51:36Z",
     "message_localised": "I'd like to direct your attention to our flight attendants for a brief safety demonstration."
   },
   "$CruiseLiner_SCPatrol05;": {
     "category": "other",
     "channel": "npc",
-    "count": 24,
+    "count": 27,
     "first_seen": "2026-05-25T09:42:32Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-09T22:35:50Z",
+    "last_seen": "2026-06-10T00:40:56Z",
     "message_localised": "This is your captain. Due to some unforeseen delays, we will be arriving at our next destination later than scheduled."
   },
   "$DockingChatter_Allied;": {
@@ -362,10 +362,10 @@
   "$STATION_NoFireZone_exited;": {
     "category": "station",
     "channel": "npc",
-    "count": 21,
+    "count": 22,
     "first_seen": "2025-09-18T14:17:12Z",
     "from_example": "THE WALKING CANE | OWCH",
-    "last_seen": "2026-06-09T23:23:46Z",
+    "last_seen": "2026-06-10T00:14:08Z",
     "message_localised": "No fire zone exited."
   },
   "$STATION_docking_granted;": {
