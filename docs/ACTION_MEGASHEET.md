@@ -94,7 +94,7 @@ Sorted: procedures (arrival → startup → sc_resume → smack_recovery → rou
 | **dock_resume** s7 | engage_jump required=true | FSD jump bind | Fire FSD jump on resumed leg | Status FsdMassLocked / FSD-ready bits (fails closed) | required | retry_from=target_next_route | none |
 | **dock_resume** s8 | hold_alignment required=true | pitch/yaw closed-loop | Hold cone until StartJump; EXCLUSIVE vision, event/state-gated | journal StartJump / alignment state | required | retry_from=target_next_route | none |
 | **dock** (terminus) | dock_target_station required | SelectTarget (T); fallback request_docking macro (FocusLeftPanel,CycleNextPanel×2,pin,UI_Select,UI_Right,UI_Select,FocusLeftPanel) | EXCLUSIVE: ensure STATION is active target before SC-assist | Status.Destination is named non-star body (_dest_is_named_station); already-locked guard skips T | required | False on KeyError/focus-fail/both-miss→caller policy | none (already-locked guard added 2026-06-08 fixed untarget-on-arrival) |
-| **dock** (terminus) | dock_sc_assist required | nav-panel SC-assist macro | EXCLUSIVE: engage SC-assist toward station, wait for drop | SupercruiseExit OR in_supercruise→false; refuses if not in SC | required | False if not in SC/focus/KeyError/watchdog/abort | **MISSING dock_approach on master → SC-assist drops outside 7.5km, dock_request denies forever** (max_approach_s=600 FAIL backstop) |
+| **dock** (terminus) | dock_sc_assist required | nav-panel SC-assist macro | EXCLUSIVE: engage SC-assist toward station, wait for drop | SupercruiseExit OR in_supercruise→false; refuses if not in SC | required | False if not in SC/focus/KeyError/watchdog/abort | max_approach_s=600 FAIL backstop; dock_approach (step 3, merged) closes to <7.5km after this drop |
 | **dock** (terminus) | dock_request required | request_docking macro (FocusLeftPanel,CycleNextPanel×2,pin,UI_Select,UI_Right,UI_Select,FocusLeftPanel) | EXCLUSIVE: request docking inside 7.5km NFZ, gate on grant | ReceiveText(NoFireZone) or (normal-space + station targeted) to arm; then DockingGranted OR Status.docked; DockingDenied reason via supplier | required | False on abort/no-range/KeyError/DockingDenied(Distance=retry, other=exhaust to human)/watchdog | max_wait_s=120 FAIL backstop; clears stale DockingDenied on arm (B1/D1 fix) |
 | **dock** (terminus) | dock_await_docked required | n/a (pure wait) | Wait for ADC to land ship on pad | Docked event OR Status.docked (bit 0); already-docked instant success | required | False on abort/watchdog | max_wait_s=300 FAIL backstop |
 | **dock** (terminus) | station_services (best-effort) | UI_Up, UI_Right×2, UI_Select per service | Auto-opened Starport Services: refuel/repair/rearm | per-service journal (RefuelAll/RepairAll/BuyAmmo, each carries Cost); missed=no-op not failure | best-effort | False only on KeyError mid-macro/abort; else True | services_settle_s=2.0 is a documented press-TIMING settle (UI grayed ~2s), NOT a gate |
@@ -270,15 +270,16 @@ Sorted: procedures (arrival → startup → sc_resume → smack_recovery → rou
 4. `sc_assist_orbit` (best-effort, EXCLUSIVE) — terminal parked end-state
 5. ~~`wait` (settle)~~ **MISSING — test expects a trailing settle wait**
 
-### dock.toml (terminus) — referenced ordering
-`parallel_tracks=[honk]`
+### dock.toml (terminus) — 6 steps (dock_approach merged on master)
+`on_required_fail: retry_from=dock_approach, max_retries=3, backoff_s=2.0` · `parallel_tracks=[honk]`
 1. `dock_target_station required` (EXCLUSIVE)
-2. `dock_sc_assist required` (EXCLUSIVE) ⚠ **MISSING dock_approach after this on master**
-3. `dock_request required` (EXCLUSIVE)
-4. `dock_await_docked required`
-5. `station_services` (best-effort, EXCLUSIVE)
+2. `dock_sc_assist required` (EXCLUSIVE)
+3. `dock_approach required` (EXCLUSIVE) — close from SC-assist dropout to <7.5km, gated on `ReceiveText $STATION_NoFireZone_entered;`
+4. `dock_request required` (EXCLUSIVE)
+5. `dock_await_docked required`
+6. `station_services` (best-effort, EXCLUSIVE)
 
-> On master, SC-assist drops the ship outside 7.5km and dock_request fires immediately → guaranteed DockingDenied(Distance) loop. The `dock_approach` closing leg exists only on branch `dock-approach-fix` (895d833, unreviewed).
+> `dock_approach` is present on master (branch `dock-approach-fix` merged). Not yet live-tested end-to-end.
 
 ### dock_resume.toml — 9 steps
 `on_required_fail: retry_from=target_next_route, max_retries=3, backoff_s=2.0` · `parallel_tracks=[honk]` · no wiring test exists
@@ -354,13 +355,13 @@ _maybe_startup
 
 ## PART D — Prioritized open defects / regressions (worst first)
 
-### 1. ⛔ DOCK LOOP BROKEN — station terminus never completes  *(fix-built, UNREVIEWED)*
-**Evidence:** master `dock.toml` has no `dock_approach` step between `dock_sc_assist` and `dock_request`. SC-assist drops the ship at a variable distance always *outside* 7.5km; `dock_request` fires immediately out of range → `DockingDenied(Distance)`. `retry_from=dock_target_station` re-runs the full SC-assist *from the star* rather than re-closing → deny→retry→deny until `max_retries` exhausts → abort to human. Every station-dock run is broken on master. Tests `test_dock_procedure_retry_from_is_dock_approach`, `test_dock_approach_*` cover the fix.
-**Status:** **fix-built on branch `dock-approach-fix`, commit `895d833`, UNREVIEWED.** The `dock_approach` step (signal-gated on `ReceiveText $STATION_NoFireZone_entered`) + stale-NFZ clear + watchdog-fail-throttle-zero live only on that branch. **Highest-priority merge candidate** — closes defects #1, #2, and #5 simultaneously.
+### 1. ✅ DOCK LOOP — dock_approach step merged on master  *(CLOSED)*
+**Evidence:** `dock.toml` now contains `dock_approach` between `dock_sc_assist` and `dock_request` (step 3 of 6); `step_dock_approach` exists in `steps.py` and is registered. `retry_from=dock_approach` so a DockingDenied(Distance) re-closes from the current position, not from the star. Tests `test_dock_procedure_retry_from_is_dock_approach`, `test_dock_approach_*` cover the fix.
+**Status:** **MERGED on master** (branch `dock-approach-fix`). The dock lane is **not yet live-tested end-to-end** — the undock, full-approach, and services sequence needs a live station run to confirm.
 
 ### 2. ⛔ SC_RESUME STAR-SMACK ROUTING — P4 sends a parked ship into throttle-100  *(fix-built, UNREVIEWED)*
 **Evidence:** Dispatcher P4 (`near_star==False AND jump_age>30s → sc_resume`) classifies "non-local-star Destination + stale jump" as a safe Robigo-style loiter. But a ship parked nose-on/near the arrival star with the *next hop already pre-loaded into Destination* (ED does this immediately post-FSDJump) is indistinguishable under this gate. P3's 30s window is the only barrier; an observed 88s-stale park blew past it (88>30) into P4. `sc_resume` has no orbit get-around → `set_throttle 100` drove the ship straight into the star → `SupercruiseExit Body=Star` smack. `_PREEMPT_ON_SMACK` then handed off to smack_recovery — **recovery, never prevention.** No proximity / row-1-distance / in-supercruise star-obstruction read gates sc_resume; it trusts the dest-class classifier alone. Test `test_sc_proximity_startup` covers a priority-3 smack guard.
-**Status:** **fix-built on `dock-approach-fix` (adds a priority-3 smack guard to the dispatcher), UNREVIEWED.** Candidate hardening also noted but not implemented: gate P4 on a positive proximity signal before the no-orbit fast path, or have sc_resume itself pitch-the-star-off-screen-first (the "pitch star first, always" invariant) rather than throttle blind.
+**Status:** **open on master.** The dock-approach-fix branch was merged but did NOT include the proximity/smack guard for P4; `FRESH_ARRIVAL_WINDOW_S` remains 30 s and sc_resume still has no orbit get-around. Candidate hardening: gate P4 on a positive proximity signal before the no-orbit fast path, or have sc_resume pitch-the-star-off-screen-first before throttling.
 
 ### 3. 🔴 SMACK_RECOVERY pitch_compass declares done without flipping the ship  *(open — #31 council redesign)*
 **Evidence (live, 2026-06-08):** `pitch_compass until=behind` (step 3, center_frac=0.35) reported done while the ship was still nose-on — the compass-read success gate fired before the 180° flip completed, so the star was never put astern. Root cause in `steps.py`: `_at_gate` fires on the FIRST `not in_front` read once `magnitude ≤ center_frac`, but there is **no `behinds` consecutive-reads counter** mirroring the `fronts` counter. A single classifier flip to `not-in_front` (front_fill in the noise band) while the dot is near-centre fires the gate prematurely. `align.py` has behind-flicker damping (2 consecutive beats, fill-gated); `pitch_compass` only protects the front→behind transition, not behind→gate. This corrupts everything downstream that assumes star-astern: `target_ahead` deselect (4.5) **re-locks** the star instead of clearing it; the escape-vector spawn (step 5) is invalid.
@@ -371,9 +372,9 @@ _maybe_startup
 **Evidence:** `step_pitch_compass` returns `False` (PitchCompassTimeout) when its closed-loop CV alignment exceeds `timeout_s=30.0`. Unlike every other wall-clock in `steps.py` (target_next_route watchdog_s=60, engage_supercruise/hold_alignment max_charge_s=60, scoop_refuel budget_s=300, dock_* 600/120/300, auto_launch/wait_masslock_clear 300 — all *documented stuck-state FAIL backstops set far above any real duration*), this one is NOT documented as a sanctioned backstop; it reads as a genuine clock deciding success/failure on a CV step, in direct tension with the `no-arbitrary-timed-waits` rule. Only used by `smack_recovery` (best-effort lane), which bounds the blast radius.
 **Status:** **open.** Companion concern: `step_orient_widget_ring timeout_s=18.0` also lets a clock decide "no convergence," but it *degrades* (returns `widget_ring_on_miss`, default True) rather than hard-failing the jump, and the compass coarse stage already gated alignment — softer, but still a clock making a convergence call with no operator alert that the fine pass was silently skipped.
 
-### 5. 🟠 ROUTE_COMPLETE_PARK nav_panel_target commented out — orbit runs with no verified star lock  *(fix-built, UNREVIEWED)*
+### 5. 🟠 ROUTE_COMPLETE_PARK nav_panel_target commented out — orbit runs with no verified star lock  *(still open on master)*
 **Evidence:** master `route_complete_park.toml` line 40 is commented: `# { action = "nav_panel_target", required = true }`. The identity-verified star lock that must precede the orbit never runs; `sc_assist_orbit` may orbit a random body or refuse, and a *wrong* lock can reach the orbit — exactly the case the lock step was meant to prevent. The settle `wait` step is also absent, so the procedure exits immediately. `retry_from=set_throttle` (test expects `nav_panel_target`) means a lock failure retries from throttle-zero, wasting steps. Three tests RED: `test_step_order_is_arrival_front_half_only`, `test_nav_panel_target_is_required_orbit_is_best_effort` (KeyError), `test_retry_anchor_is_the_lock_bounded`.
-**Status:** **fix-built on `dock-approach-fix` (corrected `route_complete_park.toml`), awaiting merge review.** Bundled with #1 / #2 in the same branch.
+**Status:** **open on master.** The dock-approach-fix branch was merged (defect #1 closed) but the route_complete_park.toml fix was NOT included — the commented-out `nav_panel_target` line remains on master.
 
 ### 6. 🟠 STARTUP wiring divergence — wrong retry anchor, double anchor, missing pip step  *(open — #31 council redesign)*
 **Evidence:** three RED tests on master `startup.toml`:

@@ -19,7 +19,7 @@ manual: setup, calibration, and the CLI.
 > exercised by a large offline unit + replay suite. But large parts are **not
 > live-tested** (the fuel-scoop pit-stop and several flows are explicitly
 > marked so), and there are **open defects that can strand or crash the ship** —
-> docking is currently broken on `master` (missing `dock_approach` step),
+> the `dock` lane now has the `dock_approach` step (defect #1 closed on master),
 > `sc_resume` can throttle a star-parked ship into the star, and
 > `smack_recovery` can mis-flip. The authoritative per-step audit, with every
 > gate and known defect, is [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md)
@@ -233,7 +233,7 @@ per-step audit, including every open defect, is
 | Nav-compass + widget-ring alignment (fail-closed) | shipped |
 | Orchestrator main loop + panic + Spansh + doctor | shipped |
 | MinEdLauncher launch + main-menu / private-group nav | shipped |
-| Docking lane (`dock` / `dock_resume`) + Starport Services | shipped — **broken on `master`** (missing `dock_approach`, defect #1) |
+| Docking lane (`dock` / `dock_resume`) + Starport Services | shipped — `dock_approach` step merged on master; **not yet live-tested end-to-end** |
 | `sc_resume` fast-resume lane | shipped — **can ram a star** (defect #2) |
 | `smack_recovery` exclusion-zone escape | shipped — **can mis-flip** (defect #3) |
 | FSS keyboard sweep / FSS CV-assisted | framework stub — not built |

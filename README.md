@@ -202,10 +202,9 @@ unattended operation today.
 **Open defects that can strand or crash the ship** (full detail in
 [`docs/ACTION_MEGASHEET.md`](./docs/ACTION_MEGASHEET.md), Part D):
 
-1. **Docking is broken on `master`.** The `dock` lane is missing a
-   `dock_approach` step, so SC-assist drops the ship *outside* the 7.5 km
-   no-fire zone and the docking request is denied forever. The fix exists only
-   on an unmerged branch.
+1. **Docking defect #1 closed on `master`.** The `dock_approach` step is now
+   present in `dock.toml` and `steps.py`; the DockingDenied(Distance) loop no
+   longer occurs. The lane is **not yet live-tested end-to-end**.
 2. **`sc_resume` can ram a star.** The dispatcher's P4 routing path can send a
    star-parked ship into a no-orbit throttle-100 fast path and drive it into the
    arrival star — there is no proximity/obstruction gate. Recovery (not
@@ -242,7 +241,7 @@ the truth, not the pitch.
 | **Flight** | A→B loop: arrive → honk → scoop → orient → jump | Hi-res near-realtime compass vision (smoother turns) |
 | **Safety** | Fail-closed jump gate (danger-class filter, status flags) | FSS keyboard sweep / FSS CV-assisted |
 | **Config** | Editable TOML procedures + step library | DSS 6-direction surface scan |
-| **Docking** | `dock` / `dock_resume` lane *(broken on master — defect #1)* | Ships *without* SC-assist / Advanced Docking Computer |
+| **Docking** | `dock` / `dock_resume` lane — `dock_approach` merged; **not yet live-tested end-to-end** | Ships *without* SC-assist / Advanced Docking Computer |
 | **Routing** | Spansh auto-plotting (`--route-plot`) | |
 | **Launch** | Game launch via MinEdLauncher, menu navigation | |
 
