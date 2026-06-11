@@ -1817,6 +1817,93 @@ def step_wait_masslock_clear(ctx: StepContext, *, poll_s: float = 0.5,
         ctx.sleeper(poll_s)
 
 
+# ===================== DOCKED-MENU DETECTOR STEPS =======================
+# Two steps over vision.station_menu.detect_menu_item (the highlighted docked-
+# menu item read off the solid orange bar). NOT yet wired to dispatch triggers
+# (when undock/service actually fire in run_live) — that's a follow-up; these
+# just exist, are registered, and are callable. Both read the live menu via
+# ctx.station_menu_grabber and fail CLOSED when it is unwired.
+
+# Spec macro keys -> the ED ACTION NAMES that map to them (the same convention
+# step_station_services / step_auto_launch use for the docked menu): the menu is
+# UI-focused, so a "W" is UI_Up, "SPACE" is UI_Select, "D" is UI_Right, "S" is
+# UI_Down. Sending action names (not raw scancodes) keeps the keys going through
+# the bound preset and lets NullSender log them in tests / the gate-walk.
+_MENU_KEY_ACTION = {
+    "W": "UI_Up",
+    "SPACE": "UI_Select",
+    "D": "UI_Right",
+    "S": "UI_Down",
+}
+
+# The docked-services pit-stop macro (operator spec — fire EVERY time on the pad
+# with the menu up; this OVERRIDES the council's verify-each-service flow). Blind
+# fixed sequence: W, SPACE, D, SPACE, D, SPACE, S with a full second between
+# EVERY keystroke (the panel's grayed-icon settle + cursor-move latency).
+_STATION_SERVICES_MACRO_KEYS = ("W", "SPACE", "D", "SPACE", "D", "SPACE", "S")
+
+
+def _read_menu_item(ctx: StepContext) -> "str | None":
+    """Grab a frame and run the docked-menu detector. Returns the item token
+    (SERVICES / AUTO_LAUNCH / DISEMBARK / NONE) or None when the grabber is
+    unwired or a read/detector error occurs (callers fail closed on None)."""
+    grab = getattr(ctx, "station_menu_grabber", None)
+    if grab is None:
+        return None
+    try:
+        from ..vision.station_menu import detect_menu_item
+        return detect_menu_item(grab())
+    except Exception as e:  # noqa: BLE001 — a bad frame must not crash the step
+        ctx.log("MenuDetectError", {"err": type(e).__name__})
+        return None
+
+
+def step_confirm_menu_item(ctx: StepContext, *, expected: str) -> bool:
+    """UNDOCK SAFETY GATE: PASS only if the live docked menu's highlighted item
+    is exactly `expected` (e.g. 'AUTO_LAUNCH' before pressing UI_Select to leave
+    the pad). FAIL CLOSED otherwise — wrong item, menu not up (NONE), or no
+    grabber wired. This never presses a key; it only reads + verifies, so a
+    caller can gate the select press on it."""
+    detected = _read_menu_item(ctx)
+    if detected is None:
+        ctx.log("ConfirmMenuItem", {"expected": expected, "detected": None,
+                                    "reason": "no_grabber"})
+        return False
+    ok = detected == expected
+    ctx.log("ConfirmMenuItem",
+            {"expected": expected, "detected": detected, "ok": ok})
+    return ok
+
+
+def step_station_services_macro(ctx: StepContext, *, keystroke_gap_s: float = 1.0) -> bool:
+    """DOCKED-SERVICES PIT STOP (operator spec, overrides the council's
+    verify-each-service flow): on the pad with the menu up, fire the services
+    macro EVERY time, BLIND.
+
+    ENTRY GATE: the docked menu must be up — detector != NONE. A NONE read (menu
+    not up) or an unwired grabber fails closed (we never blind-fire a UI macro
+    into an unknown scene). Then the fixed sequence W, SPACE, D, SPACE, D, SPACE,
+    S is sent through self.sender (so NullSender logs every keystroke in tests /
+    the gate-walk), with self.sleeper(keystroke_gap_s) between EVERY keystroke.
+    No per-key verification by design — that's the whole point of the override."""
+    from ..vision.station_menu import NONE as MENU_NONE
+    detected = _read_menu_item(ctx)
+    if detected is None or detected == MENU_NONE:
+        ctx.log("StationServicesMacroRefused",
+                {"reason": "menu_not_up", "detected": detected})
+        return False
+    ctx.log("StationServicesMacroStart", {"detected": detected})
+    for key in _STATION_SERVICES_MACRO_KEYS:
+        action = _MENU_KEY_ACTION[key]
+        if not _press(ctx, action):
+            ctx.log("StationServicesMacroDone",
+                    {"reason": "bind_missing", "key": key})
+            return False
+        ctx.sleeper(keystroke_gap_s)   # full second between EVERY keystroke
+    ctx.log("StationServicesMacroDone", {"reason": "complete"})
+    return True
+
+
 def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
     """Like _ensure_cockpit_focus, but the Starport Services panel is the
     EXPECTED scene on Docked (GuiFocus = StationServices), so a non-zero focus
@@ -2081,4 +2168,6 @@ STEP_REGISTRY.update({
     "station_services": step_station_services,
     "auto_launch": step_auto_launch,
     "wait_masslock_clear": step_wait_masslock_clear,
+    "confirm_menu_item": step_confirm_menu_item,
+    "station_services_macro": step_station_services_macro,
 })

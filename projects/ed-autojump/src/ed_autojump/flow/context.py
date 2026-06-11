@@ -180,6 +180,15 @@ class StepContext:
     nav_panel_reader: Optional[Any] = None
     nav_panel_grabber: Optional[Callable[[], Any]] = None
 
+    # DOCKED-MENU detector frame source (full-frame BGR .grab). When wired,
+    # confirm_menu_item / station_services_macro read the live docked menu via
+    # vision.station_menu.detect_menu_item to know which item is highlighted
+    # (the undock safety gate + the pad pit-stop entry gate). None -> both steps
+    # fail closed (no way to confirm what's highlighted). Wiring the dispatch
+    # TRIGGERS (when undock/service fire in run_live) is a separate follow-up;
+    # this supplier just lets the steps read the menu when they run.
+    station_menu_grabber: Optional[Callable[[], Any]] = None
+
     # cosmetic EDMCOverlay status writer (None -> no overlay). Duck-typed:
     # .step(proc, action, idx, total). Fail-soft; never blocks a step.
     overlay: Optional[Any] = None

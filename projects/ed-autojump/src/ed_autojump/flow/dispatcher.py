@@ -215,6 +215,10 @@ class FlowRunner:
         # Current system name (FSDJump/Location StarSystem, backlog AND live)
         # — feeds the star-lock identity check (2026-06-07 council).
         self._current_system: Optional[str] = None
+        # Current ship model — lowercase internal name as emitted by the journal
+        # "Ship" field of LoadGame and Loadout events (e.g. "mandalay", "type9").
+        # Feeds dock-pitch duration via ship_sizes.pitch_s_for_ship.
+        self._current_ship: Optional[str] = None
         self._ship_fuel: Optional[ShipFuel] = None
         # AWARE-UTC timestamp of the last FSDJump, parsed from the EVENT'S OWN
         # journal timestamp (NOT _event_times["jump"], which is monotonic
@@ -940,7 +944,17 @@ class FlowRunner:
             self._docked_station = (getattr(ev, "station_name", "") or "").strip() or None
         elif name == "Undocked":
             self._docked = False
+        elif name == "LoadGame":
+            # Ship field is Optional[str] on LoadGame (absent in some modes).
+            ship = getattr(ev, "ship", None)
+            if ship:
+                self._current_ship = ship.lower().strip()
         elif name == "Loadout":
+            # Loadout always carries the Ship field; prefer it over LoadGame
+            # because Loadout fires after an outfit change (ship_name updated).
+            ship = getattr(ev, "ship", None)
+            if ship:
+                self._current_ship = ship.lower().strip()
             cap = getattr(getattr(ev, "fuel_capacity", None), "main", None)
             if cap:
                 scoop_item = next(
