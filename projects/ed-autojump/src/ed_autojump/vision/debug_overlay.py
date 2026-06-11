@@ -138,6 +138,7 @@ class CvDebugSink:
         self._transform = transform
         self._ttl = max(1, int(ttl_s))        # wire ttl is a C# int
         self._last_size: Dict[str, Tuple[int, int]] = {}  # name -> (vw, vh)
+        self._last_rect: Dict[str, Region] = {}           # name -> screen rect
 
     def box(self, name: str, screen_rect: Region, verdict: Optional[str] = None,
             label: Optional[str] = None) -> None:
@@ -145,6 +146,7 @@ class CvDebugSink:
         verdict: None | "hit" | "miss" -> white / teal-green / red.
         NEVER raises into the caller (the flight loop sits above this)."""
         try:
+            self._last_rect[name] = tuple(screen_rect)
             vx, vy, vw, vh = self._transform.to_virtual(tuple(screen_rect))
             color = _COLORS.get(verdict, _COLORS[None])
             box_id = f"edafk_cvbox_{name}"
@@ -164,6 +166,22 @@ class CvDebugSink:
             })
         except Exception as e:  # noqa: BLE001 — cosmetic, never hurts a flight
             log.debug("cv debug box failed (%s)", e)
+
+    def verdict(self, name: str, verdict: Optional[str],
+                label: Optional[str] = None) -> None:
+        """Re-flash `name`'s box with a verdict color — the DETAIL layer.
+
+        Readers don't know their grabber's region (they hold only the bound
+        .grab callable), but the auto layer already told us: box() records
+        the last screen rect per name, so a reader needs only the name and
+        its outcome. No-op (silently) until that name's grabber has fired
+        at least once. Same size -> in-place color update, no flicker."""
+        try:
+            rect = self._last_rect.get(name)
+            if rect is not None:
+                self.box(name, rect, verdict=verdict, label=label)
+        except Exception as e:  # noqa: BLE001 — cosmetic, never hurts a flight
+            log.debug("cv debug verdict failed (%s)", e)
 
 
 # ---------------------------------------------------------------------------

@@ -1068,6 +1068,12 @@ def step_orient_widget_ring(
                 frames.append(frame)
             reads.append(ctx.widget_ring_reader.read(frame))
         read = median_of(reads)
+        # CV debug detail layer: recolor the widget_ring box by this
+        # measurement's outcome (no-op without a sink; sink never raises).
+        from ..vision.debug_overlay import get_debug_sink
+        _sink = get_debug_sink()
+        if _sink is not None:
+            _sink.verdict("widget_ring", "hit" if read.found else "miss")
         if frames is not None:
             for si, f in enumerate(frames):
                 ctx.frame_sink(f"widget_{t0}_i{iterations:02d}_s{si}", f)
@@ -1851,8 +1857,21 @@ def _read_menu_item(ctx: StepContext) -> "str | None":
     if grab is None:
         return None
     try:
-        from ..vision.station_menu import detect_menu_item
-        return detect_menu_item(grab())
+        from ..vision.station_menu import NONE, detect_menu_item, region_rect
+        frame = grab()
+        item = detect_menu_item(frame)
+        # CV debug detail layer: outline the menu region with the verdict.
+        # The station grabber is full-frame, so box the detector region (with
+        # the matched row token as the label) rather than the whole screen.
+        from ..vision.debug_overlay import get_debug_sink
+        sink = get_debug_sink()
+        if sink is not None:
+            h = getattr(frame, "shape", (0,))[0]
+            if h:
+                sink.box("station_menu", region_rect(h),
+                         verdict=("miss" if item == NONE else "hit"),
+                         label=f"station_menu {item}")
+        return item
     except Exception as e:  # noqa: BLE001 — a bad frame must not crash the step
         ctx.log("MenuDetectError", {"err": type(e).__name__})
         return None

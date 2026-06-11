@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from ..vision.compass import CompassRead, CompassReader
+from ..vision.debug_overlay import get_debug_sink
 
 
 @dataclass
@@ -49,6 +50,16 @@ class AlignOutcome:
 # previous one; outside, the median always re-decides (no permanent stick).
 _FILL_BAND_LO = 0.35
 _FILL_BAND_HI = 0.65
+
+
+def _notify_compass(read: CompassRead) -> CompassRead:
+    """CV debug detail layer: recolor the compass box by this measurement's
+    outcome. Pass-through so the _measure return sites stay one-liners;
+    no-op without a registered sink, and the sink itself never raises."""
+    sink = get_debug_sink()
+    if sink is not None:
+        sink.verdict("compass", "hit" if read.found else "miss")
+    return read
 
 
 def _measure(
@@ -90,7 +101,7 @@ def _measure(
         read = reader.read(frame)
         if raw_out is not None:
             raw_out.append(read)
-        return read
+        return _notify_compass(read)
 
     reads = []
     for _ in range(samples):
@@ -105,7 +116,7 @@ def _measure(
     # Require a STRICT majority to be found; ties count as not_found.
     # `<= samples // 2` rejects ties for even sample counts (e.g. 3-of-6 fails).
     if len(found_reads) <= samples // 2:
-        return CompassRead.not_found()
+        return _notify_compass(CompassRead.not_found())
 
     median_fill = statistics.median(
         (r.front_fill if r.front_fill is not None else (1.0 if r.in_front else 0.0))
@@ -116,14 +127,14 @@ def _measure(
     else:
         in_front = median_fill >= 0.5
 
-    return CompassRead(
+    return _notify_compass(CompassRead(
         found=True,
         offset_x=statistics.median(r.offset_x for r in found_reads),
         offset_y=statistics.median(r.offset_y for r in found_reads),
         in_front=in_front,
         confidence=sum(r.confidence for r in found_reads) / len(found_reads),
         front_fill=median_fill,
-    )
+    ))
 
 
 def _press_for(offset: float, gain: float, min_press: float, max_press: float) -> float:
