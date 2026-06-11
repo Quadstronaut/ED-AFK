@@ -36,9 +36,16 @@ SEE what the bot is looking at and whether it found what it wanted.
 
 **`ScreenToOverlay`** (frozen dataclass, pure math, fully unit-testable):
 `to_virtual(screen_rect) -> (x, y, w, h)` in overlay coords.
-Default factory computes from game resolution (cfg.cv.target_resolution)
-using the knowledgebase formulas; calibration file overrides.
-Persisted at `calibration/overlay_transform.json` (dir already gitignored).
+NOTE the direction: the knowledgebase §4.1 formulas describe the renderer's
+forward Scale() (virtual→physical); `to_virtual` is the INVERSE —
+`virtual_x = (screen_x - 20) * 1312 / (win_w - 20)`,
+`virtual_y = (screen_y - 40) * 1042 / (win_h - 40)` (i.e.
+`scale_x = 1312/(win_w-20)`, `scale_y = 1042/(win_h-40)`), where win_w/h
+come from cfg.cv.target_resolution by default. These computed defaults are
+approximate (DPI caveat, KB §5.7) — calibration refines scale/offset.
+Persisted at `calibration/overlay_transform.json` — VERIFIED ignored via
+root `.gitignore:70` (`projects/ed-autojump/calibration/*.json`,
+`git check-ignore` confirmed 2026-06-10).
 
 **`CvDebugSink`** — the one object everything talks to:
 
@@ -60,17 +67,30 @@ sink.box(name, screen_rect, verdict=None, label=None)
 
 - `send_once(msg: dict)` — queue a message for the I/O thread **without**
   registering it in `_slots` (so keepalive never resurrects a flash box).
-  Reuses the existing outbox/wake machinery; flight thread still never
-  touches the socket.
+  Data structure: a NEW `_oneshot_outbox: List[dict]` guarded by the
+  existing `_lock`, drained in `_flush_locked()` after `_clear_outbox` and
+  before the `_slots` re-send. Do NOT reuse `_clear_outbox` (that list is
+  ttl:0 deletes only) and do NOT register in `_slots`. One-shots do not
+  survive reconnect (acceptable: TTL would have expired them anyway).
+  Flight thread still never touches the socket.
 - Existing status/event slots unchanged.
 
 ### 3.3 Hook points (hybrid — operator decision)
 
 **Auto layer:** `ScreenGrabber.__init__` gains optional `name: str | None`.
 `grab()` calls the module-registered sink (`set_debug_sink()` at run wiring)
-with `box(name, region)` — verdictless white. Factories in `capture.py` pass
-names: `"compass"`, `"widget_ring"`, `"navpanel"`, `"sun"`. `station_menu`
-and future readers get boxes for free the moment they use a named grabber.
+with `box(name, region)` — verdictless white. **Required edits, enumerated**
+(all in `vision/capture.py`; an unnamed grabber stays silent by design):
+
+| Callsite | name passed |
+|---|---|
+| `build_vision()` → `ScreenGrabber(tuple(v.region), ...)` | `"compass"` |
+| `build_widget_vision()` → `ScreenGrabber(tuple(v.widget_crop), ...)` | `"widget_ring"` |
+| `build_navpanel_vision()` → `ScreenGrabber(region, ...)` | `"navpanel"` |
+| `build_sun_grabber()` → `ScreenGrabber(escape_region, ...)` | `"sun"` |
+
+`station_menu` and future readers get boxes for free the moment they use a
+named grabber.
 
 **Detail layer (incremental):** call sites that *know* the outcome upgrade
 the box with a verdict — e.g. the align loop re-emits `box("compass", r,
@@ -83,28 +103,40 @@ follow as touched.
 
 `OverlayConfig` additions: `cv_debug: bool = False`, `cv_debug_ttl_s: float = 2.0`.
 
-**`config.local.toml` merge:** `load_config(path)` merges, in order:
-defaults → `config.toml` → `config.local.toml` (same directory, gitignored).
+**ALL of the following is NEW WORK delivered by this spec** — none of it
+exists in `load_config()` today (config.py:369-394 reads exactly one TOML;
+the docstring's env-override claim is currently FALSE and gets fixed here):
 
-**Env overrides (implements the existing docstring promise):**
-`ED_AUTOJUMP_<SECTION>_<KEY>` for flat scalar keys (str/int/float/bool),
-applied LAST (env > local > toml > defaults). A `.env` file in the project
-dir is read at startup if present (hand-rolled ~10-line parser, no new
-dependency; `.env` added to .gitignore).
+1. **`config.local.toml` merge:** `load_config(path)` merges, in order:
+   defaults → `config.toml` → `config.local.toml` (derived from the primary
+   path's directory — no signature change, all call sites pick it up
+   automatically). The file is already ignored: root `.gitignore:53`
+   (unanchored `config.local.toml`, `git check-ignore` verified 2026-06-10).
+2. **Env overrides:** `ED_AUTOJUMP_<SECTION>_<KEY>` for flat scalar keys
+   (str/int/float/bool — tuple fields deliberately unreachable via env;
+   document that in the loader), applied LAST (env > local > toml >
+   defaults). Update the config.py docstring to match reality once built.
+3. **`.env` loading:** read from the project dir at startup if present
+   (hand-rolled ~10-line parser, no new dependency).
+4. **`.gitignore` deliverable:** add `.env` — verified NOT currently
+   ignored at either level (`git check-ignore` returned nothing for it).
 
 Operator's machine: `config.local.toml` → `[overlay] cv_debug = true`. Done.
 
 ### 3.5 `calibrate-overlay` CLI
 
 `ed-autojump calibrate-overlay` (matches calibrate-compass / calibrate-menu
-pattern). Requires ED + overlay running. Loop:
+pattern; NEW subparser + entry in cli.py's dispatch dict — not pre-wired).
+Requires ED + overlay running. Loop:
 
 1. Draws a long-TTL test box at a known screen rect — the calibrated compass
    region if present, else a centered reference rect — plus corner markers.
 2. Console hotkeys: arrows = offset ±1 (PgUp/PgDn step ×10), `WASD`-shift =
    scale nudge, `r` reset to computed defaults, `s` save, `q` quit.
    (msvcrt.getch loop — calibration runs in its own console; no global
-   hotkey hook needed.)
+   hotkey hook needed. NOTE: extended keys (arrows/PgUp/PgDn) arrive as TWO
+   bytes — a `\xe0`/`\x00` prefix then the scancode; call getch() again on
+   the prefix.)
 3. Each keypress re-sends the box (delete+recreate) through the live
    transform so the operator nudges until the outline hugs the real region.
 4. `s` writes `calibration/overlay_transform.json`; runs pick it up
@@ -149,4 +181,5 @@ runs `calibrate-overlay`, tunes transform. 3. One live run validates flash
 behavior + 20 FPS delete/recreate flicker tolerance (knowledgebase open
 question §9.8). 4. README gains a short "CV debug overlay" section for the
 GitHub tester (how to opt in WITHOUT a local file: `[overlay] cv_debug=true`
-in config.toml or `ED_AUTOJUMP_OVERLAY_CV_DEBUG=1`).
+in config.toml or `ED_AUTOJUMP_OVERLAY_CV_DEBUG=1` — the env path only
+exists once §3.4 item 2 ships; both land in the same release).
