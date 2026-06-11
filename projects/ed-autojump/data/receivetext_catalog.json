@@ -11,10 +11,10 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 1002,
+    "count": 1013,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-06-11T01:21:27Z",
+    "last_seen": "2026-06-11T06:47:20Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
@@ -83,10 +83,10 @@
   "$CruiseLiner_SCPatrol01;": {
     "category": "other",
     "channel": "npc",
-    "count": 29,
+    "count": 31,
     "first_seen": "2026-05-25T09:49:31Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-11T01:19:35Z",
+    "last_seen": "2026-06-11T06:34:30Z",
     "message_localised": "And don't forget, this Liner is in the top 1% of all Liners out there."
   },
   "$CruiseLiner_SCPatrol02;": {
@@ -101,10 +101,10 @@
   "$CruiseLiner_SCPatrol03;": {
     "category": "other",
     "channel": "npc",
-    "count": 51,
+    "count": 52,
     "first_seen": "2026-05-25T03:44:04Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-11T00:46:15Z",
+    "last_seen": "2026-06-11T06:37:07Z",
     "message_localised": "Today's cruise includes some delightful views, our flight attendants are on hand with full details."
   },
   "$CruiseLiner_SCPatrol04;": {
