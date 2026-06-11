@@ -117,6 +117,14 @@ def _scale(v: int, frame_height: int) -> int:
     return int(round(v * (frame_height / REF_HEIGHT)))
 
 
+def region_rect(frame_height: int) -> tuple[int, int, int, int]:
+    """The detector's menu-column region as a full-frame (x, y, w, h) rect,
+    scaled to this frame height — what the CV debug overlay outlines."""
+    x0, x1 = _scale(REGION_X0, frame_height), _scale(REGION_X1, frame_height)
+    y0, y1 = _scale(REGION_Y0, frame_height), _scale(REGION_Y1, frame_height)
+    return (x0, y0, x1 - x0, y1 - y0)
+
+
 def detect_menu_item(frame: Any) -> str:
     """Identify the highlighted docked-menu item in a full-frame BGR image.
 
