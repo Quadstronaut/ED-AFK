@@ -189,6 +189,12 @@ class StepContext:
     # this supplier just lets the steps read the menu when they run.
     station_menu_grabber: Optional[Callable[[], Any]] = None
 
+    # Current ship model — the lowercase journal "Ship" token from the latest
+    # LoadGame/Loadout (FlowRunner._current_ship latch). dock_blind_maneuver
+    # maps it to a pad-size class for its pitch duration (ship_sizes). None =
+    # not wired / no journal yet -> the step uses the MEDIUM default, loudly.
+    ship_supplier: Callable[[], Optional[str]] = lambda: None
+
     # cosmetic EDMCOverlay status writer (None -> no overlay). Duck-typed:
     # .step(proc, action, idx, total). Fail-soft; never blocks a step.
     overlay: Optional[Any] = None

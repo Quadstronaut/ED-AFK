@@ -121,6 +121,7 @@ class FlowRunner:
         body_tour_min_bodies: int = 0,
         nav_panel_reader: Optional[Any] = None,
         nav_panel_grabber: Optional[Callable[[], Any]] = None,
+        station_menu_grabber: Optional[Callable[[], Any]] = None,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -152,6 +153,9 @@ class FlowRunner:
         self._body_tour_min_bodies = body_tour_min_bodies
         self.nav_panel_reader = nav_panel_reader      # identity targeting (task #45)
         self.nav_panel_grabber = nav_panel_grabber
+        # Docked-menu CV (full-frame grab): auto_launch safety gate + the
+        # services-macro menu-up entry gate read the menu through this.
+        self.station_menu_grabber = station_menu_grabber
 
         self._event_times: dict[str, float] = {}
         # True while the journal's last SC transition is SupercruiseExit at a
@@ -419,6 +423,10 @@ class FlowRunner:
             body_tour_min_bodies=self._body_tour_min_bodies,
             nav_panel_reader=self.nav_panel_reader,
             nav_panel_grabber=self.nav_panel_grabber,
+            station_menu_grabber=self.station_menu_grabber,
+            # Current ship model (journal LoadGame/Loadout latch) — feeds the
+            # dock blind-maneuver's ship-size pitch duration.
+            ship_supplier=lambda: self._current_ship,
             fss_body_count_supplier=lambda: self._fss_body_count,
             fss_discovered_supplier=lambda: self._fss_discovered,
             autoscan_supplier=lambda: (self._autoscan_seq,
@@ -809,6 +817,13 @@ class FlowRunner:
             self._smacked = getattr(ev, "body_type", None) == "Star"
         elif name in ("SupercruiseEntry", "FSDJump"):
             self._smacked = False
+        elif name == "Location" and getattr(ev, "docked", False):
+            # Respawn/restart repair (GATEWALK gap #1, the Tortooga incident):
+            # a death/rebuy respawn emits Location(Docked=true) with NO
+            # Undocked/FSDJump in between, so the pre-death smack latch
+            # survived into a docked scene and startup routed wrong. A docked
+            # ship is by definition not sitting smacked at a star.
+            self._smacked = False
 
         # Witchspace latch — SET on a Hyperspace StartJump, CLEARED on FSDJump.
         # Supercruise StartJumps (JumpType=="Supercruise") must NOT set it.
@@ -843,6 +858,15 @@ class FlowRunner:
             sysname = getattr(ev, "star_system", None)
             if sysname:
                 self._current_system = sysname
+            if name == "Location" and getattr(ev, "docked", False):
+                # Respawn/restart world-state repair (GATEWALK gap #1): a
+                # rebuy respawn puts the ship ON A PAD with no Docked event —
+                # Location(Docked=true) is the only signal. Without this the
+                # docked flag stays stale-False and the pit-stop resume
+                # trigger (NavRoute-while-docked) never arms.
+                self._docked = True
+                self._docked_station = (
+                    (getattr(ev, "station_name", "") or "").strip() or None)
             if name == "FSDJump":
                 # Stale-arrival instrument (2026-06-07 council): the FSDJump's
                 # OWN ISO8601 timestamp parsed to an AWARE-UTC datetime. Works

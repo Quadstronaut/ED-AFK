@@ -21,7 +21,8 @@ session, which reproduced these to <=1px against the three real fixtures):
   - item identified by the bar's vertical CENTRE:
         STARPORT SERVICES ~822, AUTO LAUNCH ~873, DISEMBARK ~925.
     decision boundaries y~847 (SERVICES|AUTO) and y~899 (AUTO|DISEMBARK);
-    ~51px row spacing, +/-20px tolerance is clean. NO bar => menu not up.
+    ~51px row spacing; accepted within CENTRE_TOLERANCE=25px of a known row
+    (the measured slop was +/-20px). NO bar => menu not up.
   - detector region x[760..1160], y[795..955].
 
 RESOLUTION AWARENESS: the y-centres + region are calibrated for 1080p HEIGHT.
