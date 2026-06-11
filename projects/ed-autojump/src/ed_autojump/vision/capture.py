@@ -24,6 +24,8 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple
 
+from .debug_overlay import get_debug_sink  # stdlib-only; safe without [vision]
+
 log = logging.getLogger(__name__)
 
 Region = Tuple[int, int, int, int]  # (x, y, w, h)
@@ -214,9 +216,14 @@ class ScreenGrabber:
 
     backend="gdi"   — GDI BitBlt (default; works even when dxcam returns black)
     backend="dxcam" — Desktop Duplication API via the dxcam / dxcam-cpp module
+
+    `name` opts this grabber into the CV debug overlay (spec 2026-06-10):
+    every grab() flashes a labeled box over `region` in-game when a debug
+    sink is registered. Unnamed grabbers stay silent by design.
     """
 
-    def __init__(self, region: Region, *, backend: str = "gdi") -> None:
+    def __init__(self, region: Region, *, backend: str = "gdi",
+                 name: str | None = None) -> None:
         if backend == "gdi":
             self._impl: GdiGrabber | DxcamGrabber = GdiGrabber(region)
         elif backend == "dxcam":
@@ -226,9 +233,19 @@ class ScreenGrabber:
                 f"Unknown capture backend {backend!r}. Choose 'gdi' or 'dxcam'."
             )
         self.backend = backend
+        self.region = tuple(region)
+        self.name = name
 
     def grab(self) -> Any:
-        return self._impl.grab()
+        frame = self._impl.grab()
+        # Auto debug-box layer. Fires even when the backend returned None /
+        # an unchanged frame — "the bot looked here" is true either way and
+        # the re-flash is just a cheap TTL reset. Sink is fail-soft.
+        if self.name is not None:
+            sink = get_debug_sink()
+            if sink is not None:
+                sink.box(self.name, self.region)
+        return frame
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +270,8 @@ def build_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[], Any]]]:
             agree_tol=v.agree_tol,
             compass_radius=v.compass_radius,
         )
-        grabber = ScreenGrabber(tuple(v.region), backend=v.capture_backend)
+        grabber = ScreenGrabber(tuple(v.region), backend=v.capture_backend,
+                                name="compass")
         return reader, grabber.grab
     except Exception as e:  # noqa: BLE001 — degrade to blind, never crash a run.
         log.warning("vision enabled but unavailable (%s); running blind", e)
@@ -280,7 +298,8 @@ def build_widget_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[], 
         from .widget_ring import WidgetRingReader
 
         reader = WidgetRingReader()
-        grabber = ScreenGrabber(tuple(v.widget_crop), backend=v.capture_backend)
+        grabber = ScreenGrabber(tuple(v.widget_crop), backend=v.capture_backend,
+                                name="widget_ring")
         return reader, grabber.grab
     except Exception as e:  # noqa: BLE001 — degrade to off, never crash a run.
         log.warning("widget_ring_alignment on but unavailable (%s); fine pass off", e)
@@ -311,7 +330,8 @@ def build_navpanel_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[]
 
         region = tuple(getattr(expl, "nav_panel_region", (310, 145, 235, 125)))
         reader = NavPanelReader(region=region)
-        grabber = ScreenGrabber(region, backend=cfg.vision.capture_backend)
+        grabber = ScreenGrabber(region, backend=cfg.vision.capture_backend,
+                                name="navpanel")
         return reader, grabber.grab
     except Exception as e:  # noqa: BLE001 — degrade to blind row walk, never crash.
         log.warning("nav_panel_ocr on but unavailable (%s); body_tour stays blind", e)
@@ -354,7 +374,8 @@ def build_sun_grabber(cfg: Any) -> Optional[Callable[[], Any]]:
             h = int((2.0 / 3.0) * H)
             escape_region = (x, y, w, h)
         capture_backend = getattr(cfg.vision, "capture_backend", "gdi")
-        grabber = ScreenGrabber(escape_region, backend=capture_backend)
+        grabber = ScreenGrabber(escape_region, backend=capture_backend,
+                                name="sun")
         return grabber.grab
     except Exception as e:  # noqa: BLE001
         log.warning("sun grabber unavailable (%s); escape falls back to blind", e)

@@ -240,6 +240,27 @@ per-step audit, including every open defect, is
 | DSS 6-direction surface scan | framework stub — not built |
 | Ships without SC-assist / Advanced Docking Computer | unsupported |
 
+## CV debug overlay (opt-in)
+
+See what the bot is looking at, live: with [EDMCOverlay](https://github.com/inorton/EDMCOverlay)
+installed, every CV read (compass, widget-ring, nav-panel, sun probe, …)
+flashes an outlined box over the captured region in-game — white = looked,
+green = detector hit, red = looked but found nothing. Cosmetic and fail-soft;
+it can never slow or crash a flight, and it ships **off**.
+
+Turn it on (pick one):
+
+- `config.toml` / `config.local.toml` (the latter is gitignored —
+  machine-local): `[overlay]` → `cv_debug = true`
+- env var: `ED_AUTOJUMP_OVERLAY_CV_DEBUG=1` (also honored from a gitignored
+  `.env` file next to `config.toml`)
+
+Overlay coordinates aren't 1:1 with screen pixels, so first run
+`ed-autojump calibrate-overlay` (in-game, docked or in a menu): nudge the
+test outline with the arrow keys (shift+arrows scales, PgUp/PgDn changes the
+step) until it hugs the target, then press `s` to save. Keep Elite focused
+while tuning — the overlay only renders over the foreground game window.
+
 ## Attribution
 
 Patterns and constants borrowed from:

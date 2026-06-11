@@ -202,6 +202,12 @@ def _parser() -> argparse.ArgumentParser:
         help="auto-locate the nav compass and print a [vision] region block",
     )
 
+    # ed-autojump calibrate-overlay — tune the screen->overlay box transform.
+    sub.add_parser(
+        "calibrate-overlay",
+        help="interactively align the CV debug boxes (EDMCOverlay) with the screen",
+    )
+
     return p
 
 
@@ -469,6 +475,19 @@ def cmd_run(args) -> int:
         print("overlay: EDMCOverlay status ON (connecting in background)")
     if console is not None:
         print("console: live status mirror ON (stdout)")
+
+    # CV debug boxes (opt-in, spec 2026-06-10): flash what every named
+    # grabber looks at. Registered globally so vision call sites find it.
+    if edmc is not None and cfg.overlay.cv_debug:
+        import os as _os
+        from .vision.debug_overlay import (CvDebugSink, ScreenToOverlay,
+                                           set_debug_sink)
+        _w, _h = tuple(cfg.cv.target_resolution)
+        _transform = ScreenToOverlay.load(
+            Path(_os.path.expandvars(cfg.paths.calibration_dir)), _w, _h)
+        set_debug_sink(CvDebugSink(edmc, _transform,
+                                   ttl_s=cfg.overlay.cv_debug_ttl_s))
+        print("overlay: CV debug boxes ON (tune with `calibrate-overlay`)")
 
     runner = FlowRunner(
         procedures=procedures,
@@ -794,6 +813,13 @@ def cmd_calibrate_compass(args) -> int:
     return 0
 
 
+def cmd_calibrate_overlay(args) -> int:
+    """Interactive screen->overlay transform tuning for the CV debug boxes."""
+    cfg = load_config(args.config if args.config.is_file() else None)
+    from .vision.debug_overlay import run_calibration
+    return run_calibration(cfg)
+
+
 def cmd_doctor(args) -> int:
     from .doctor import format_results, overall_status, run_all_checks
 
@@ -880,6 +906,7 @@ def main(argv: list[str] | None = None) -> int:
         "setup-frontier-creds": cmd_setup_creds,
         "calibrate-menu": cmd_calibrate_menu,
         "calibrate-compass": cmd_calibrate_compass,
+        "calibrate-overlay": cmd_calibrate_overlay,
     }
     return dispatch[cmd](args)
 

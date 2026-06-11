@@ -51,6 +51,9 @@ PLUGIN_TAIL = os.path.join(
 _STATUS_ID = "ed_afk_status"
 _EVENT_ID = "ed_afk_event"
 
+# Max queued one-shot (flash-box) messages while the socket is down.
+_ONESHOT_CAP = 64
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers (no I/O) — fully unit-testable
@@ -175,6 +178,7 @@ class OverlayWriter:
         self._lock = threading.Lock()
         self._slots: Dict[str, dict] = {}
         self._clear_outbox: List[str] = []   # slot ids to expire (ttl=0)
+        self._oneshot_outbox: List[dict] = []  # fire-and-forget (flash boxes)
         self._sock: Optional[Any] = None
         self._connected = False
         self._disabled = not getattr(cfg, "enabled", True)
@@ -192,6 +196,11 @@ class OverlayWriter:
         self._thread = threading.Thread(target=self._run, name="overlay",
                                         daemon=True)
         self._thread.start()
+
+    @property
+    def connected(self) -> bool:
+        """True while the TCP session is up (calibrate-overlay's entry guard)."""
+        return self._connected
 
     def close(self) -> None:
         self._stop.set()
@@ -222,6 +231,21 @@ class OverlayWriter:
             x=getattr(self.cfg, "x", 20),
             y=getattr(self.cfg, "y", 40) + 24,
             ttl=getattr(self.cfg, "ttl", 6)))
+
+    def send_once(self, msg: dict) -> None:
+        """Queue a fire-and-forget message (CV debug flash boxes).
+
+        Deliberately NOT registered in `_slots`: keepalive must never
+        resurrect a flash box, and one-shots do NOT survive a reconnect —
+        their TTL would have expired during the outage anyway. Bounded so a
+        long disconnect can't grow the queue. Never blocks or raises."""
+        if self._disabled:
+            return
+        with self._lock:
+            if len(self._oneshot_outbox) >= _ONESHOT_CAP:
+                del self._oneshot_outbox[0]   # drop oldest; flashes are ephemeral
+            self._oneshot_outbox.append(msg)
+        self._wake.set()   # outside the lock, same ordering as _set_slot
 
     def clear(self, slot_id: str) -> None:
         """Expire a slot immediately (ttl=0) and forget it. The I/O thread sends
@@ -299,10 +323,15 @@ class OverlayWriter:
         return False
 
     def _flush_locked(self) -> None:
-        """Send pending clears + re-send every slot. Caller holds the lock."""
+        """Send pending clears + one-shots, then re-send every slot.
+        Caller holds the lock."""
         for cid in self._clear_outbox:
             self._safe_send_locked({"id": cid, "ttl": 0})
         self._clear_outbox.clear()
+        # One-shots drain exactly once (and never re-send on reconnect).
+        for msg in self._oneshot_outbox:
+            self._safe_send_locked(msg)
+        self._oneshot_outbox.clear()
         for msg in list(self._slots.values()):
             self._safe_send_locked(msg)
             if not self._connected:
