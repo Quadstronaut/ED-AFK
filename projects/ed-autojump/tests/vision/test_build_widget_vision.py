@@ -21,8 +21,9 @@ def test_on_returns_reader_and_bound_grab(monkeypatch):
     sentinel_grab = lambda: "frame"
 
     class _DummyGrabber:
-        def __init__(self, region, *, backend="gdi"):
+        def __init__(self, region, *, backend="gdi", name=None):
             self.region = region
+            self.name = name
             self.grab = sentinel_grab
 
     class _DummyReader:

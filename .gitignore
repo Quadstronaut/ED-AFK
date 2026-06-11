@@ -51,6 +51,7 @@ calibration/*.json
 calibration/*.png
 secrets.toml
 config.local.toml
+.env
 
 # Bundled journal samples
 samples/

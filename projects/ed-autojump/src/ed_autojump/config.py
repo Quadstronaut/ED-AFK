@@ -1,9 +1,17 @@
 """
 Config loader.
 
-Single dataclass-shaped config. Reads `config.toml` from the project
-directory; environment overrides `ED_AUTOJUMP_<SECTION>_<KEY>` work for the
-flat keys. Defaults match SPEC §13.
+Single dataclass-shaped config. Merge order (later wins):
+
+    defaults -> config.toml -> config.local.toml -> ED_AUTOJUMP_* env vars
+
+`config.local.toml` sits next to `config.toml` and is gitignored — the
+non-committed place for machine-local overrides (e.g. the operator's
+`[overlay] cv_debug = true`). Env overrides `ED_AUTOJUMP_<SECTION>_<KEY>`
+work for flat SCALAR keys only (str/int/float/bool); tuple/dict fields are
+deliberately env-unreachable — use a TOML layer for those. A `.env` file
+next to the config is loaded first (real environment variables win over it).
+Defaults match SPEC §13.
 """
 
 from __future__ import annotations
@@ -320,6 +328,12 @@ class OverlayConfig:
     color: str = "yellow"
     size: str = "normal"               # "normal" | "large"
     ttl: int = 6                       # seconds; > keepalive_s so it never blinks
+    # CV debug boxes (spec 2026-06-10): flash an outlined box over every
+    # region a named ScreenGrabber captures, color-coded by detector verdict
+    # (white look / green hit / red miss). OPT-IN: ships off; turn on locally
+    # via config.local.toml or ED_AUTOJUMP_OVERLAY_CV_DEBUG=1.
+    cv_debug: bool = False
+    cv_debug_ttl_s: float = 2.0        # flash duration; wire ttl = int(this)
 
 
 @dataclass
@@ -355,6 +369,18 @@ class Config:
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
 
 
+_SECTIONS = (
+    "ship", "routing", "exploration", "safety", "input",
+    "binds", "hud", "cv", "eddn", "paths", "launcher", "menu_nav",
+    "vision", "nav", "overlay",
+)
+
+# Bool env-var convention (case-insensitive). Anything else raises — a typo'd
+# flag silently picking a behavior is exactly what the loader must not do.
+_ENV_TRUE = frozenset(("1", "true", "yes", "on"))
+_ENV_FALSE = frozenset(("0", "false", "no", "off"))
+
+
 def _merge(section_obj: object, table: dict) -> None:
     """Shallow-merge TOML values into the dataclass section."""
     for key, value in table.items():
@@ -366,24 +392,95 @@ def _merge(section_obj: object, table: dict) -> None:
             setattr(section_obj, key, value)
 
 
-def load_config(path: str | Path | None = None) -> Config:
-    """Load `config.toml` if it exists; otherwise return defaults."""
-    cfg = Config()
-    if path is None:
-        return cfg
-    p = Path(path)
+def _load_dotenv(directory: Path, environ) -> None:
+    """Minimal `.env` loader: KEY=VALUE lines, `#` comments, optional
+    surrounding quotes. Real environment variables WIN over .env values.
+    No third-party dependency on purpose."""
+    p = Path(directory) / ".env"
     if not p.is_file():
-        return cfg
-    with open(p, "rb") as fh:
-        raw = tomllib.load(fh)
+        return
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key and key not in environ:
+            environ[key] = value
 
-    for section_name in (
-        "ship", "routing", "exploration", "safety", "input",
-        "binds", "hud", "cv", "eddn", "paths", "launcher", "menu_nav",
-        "vision", "nav", "overlay",
-    ):
-        if section_name in raw:
-            _merge(getattr(cfg, section_name), raw[section_name])
+
+def _coerce_env(existing, raw: str, env_name: str):
+    """Coerce an env string to the field's existing scalar type, or None for
+    non-scalar fields (tuples/dicts are deliberately env-unreachable — they
+    would bypass _merge's tuple coercion; use config.local.toml instead).
+    bool checks FIRST: bool is an int subclass."""
+    if isinstance(existing, bool):
+        v = raw.strip().lower()
+        if v in _ENV_TRUE:
+            return True
+        if v in _ENV_FALSE:
+            return False
+        raise ValueError(
+            f"{env_name}: expected a boolean "
+            f"({'/'.join(sorted(_ENV_TRUE | _ENV_FALSE))}), got {raw!r}")
+    if isinstance(existing, int):
+        return int(raw)
+    if isinstance(existing, float):
+        return float(raw)
+    if isinstance(existing, str):
+        return raw
+    return None
+
+
+def _apply_env_overrides(cfg: "Config", environ) -> None:
+    """ED_AUTOJUMP_<SECTION>_<KEY> -> cfg.<section>.<key> for scalar fields.
+
+    Names are CONSTRUCTED from the known (section, key) pairs — never parsed
+    out of the env name — so underscore-bearing sections (menu_nav) and keys
+    (key_delay_ms) are unambiguous."""
+    for section_name in _SECTIONS:
+        section = getattr(cfg, section_name)
+        for key, existing in vars(section).items():
+            env_name = f"ED_AUTOJUMP_{section_name.upper()}_{key.upper()}"
+            raw = environ.get(env_name)
+            if raw is None:
+                continue
+            coerced = _coerce_env(existing, raw, env_name)
+            if coerced is not None:
+                setattr(section, key, coerced)
+
+
+def load_config(path: str | Path | None = None, *, environ=None) -> Config:
+    """defaults -> config.toml (if `path` exists) -> config.local.toml
+    (beside it) -> .env file -> ED_AUTOJUMP_* env overrides. Later wins.
+
+    With path=None the local/.env files are looked up in the cwd — the CLI
+    runs from the project dir, so machine-local overrides still apply.
+    `environ` is injectable for tests; defaults to os.environ."""
+    environ = os.environ if environ is None else environ
+    cfg = Config()
+
+    base_dir = Path(".")
+    files: list[Path] = []
+    if path is not None:
+        p = Path(path)
+        base_dir = p.parent if str(p.parent) else Path(".")
+        if p.is_file():
+            files.append(p)
+    local = base_dir / "config.local.toml"
+    if local.is_file():
+        files.append(local)
+
+    for f in files:
+        with open(f, "rb") as fh:
+            raw = tomllib.load(fh)
+        for section_name in _SECTIONS:
+            if section_name in raw:
+                _merge(getattr(cfg, section_name), raw[section_name])
+
+    _load_dotenv(base_dir, environ)
+    _apply_env_overrides(cfg, environ)
 
     if cfg.vision.widget_ring_on_miss not in ("degrade", "fail_closed"):
         # A typo here would silently pick one behavior — refuse to launch.
