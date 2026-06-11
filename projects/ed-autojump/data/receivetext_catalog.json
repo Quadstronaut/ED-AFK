@@ -11,10 +11,10 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 971,
+    "count": 1002,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-06-09T23:24:15Z",
+    "last_seen": "2026-06-11T01:21:27Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
@@ -83,46 +83,46 @@
   "$CruiseLiner_SCPatrol01;": {
     "category": "other",
     "channel": "npc",
-    "count": 28,
+    "count": 29,
     "first_seen": "2026-05-25T09:49:31Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-10T00:52:09Z",
+    "last_seen": "2026-06-11T01:19:35Z",
     "message_localised": "And don't forget, this Liner is in the top 1% of all Liners out there."
   },
   "$CruiseLiner_SCPatrol02;": {
     "category": "other",
     "channel": "npc",
-    "count": 24,
+    "count": 28,
     "first_seen": "2026-05-25T09:46:41Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-09T10:14:50Z",
+    "last_seen": "2026-06-11T01:18:53Z",
     "message_localised": "We will be cruising in-system for a while, please feel free to take advantage of our in-flight entertainment."
   },
   "$CruiseLiner_SCPatrol03;": {
     "category": "other",
     "channel": "npc",
-    "count": 48,
+    "count": 51,
     "first_seen": "2026-05-25T03:44:04Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-10T00:45:25Z",
+    "last_seen": "2026-06-11T00:46:15Z",
     "message_localised": "Today's cruise includes some delightful views, our flight attendants are on hand with full details."
   },
   "$CruiseLiner_SCPatrol04;": {
     "category": "other",
     "channel": "npc",
-    "count": 27,
+    "count": 29,
     "first_seen": "2026-05-25T09:42:02Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-10T00:51:36Z",
+    "last_seen": "2026-06-11T00:45:13Z",
     "message_localised": "I'd like to direct your attention to our flight attendants for a brief safety demonstration."
   },
   "$CruiseLiner_SCPatrol05;": {
     "category": "other",
     "channel": "npc",
-    "count": 27,
+    "count": 30,
     "first_seen": "2026-05-25T09:42:32Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-10T00:40:56Z",
+    "last_seen": "2026-06-11T00:46:49Z",
     "message_localised": "This is your captain. Due to some unforeseen delays, we will be arriving at our next destination later than scheduled."
   },
   "$DockingChatter_Allied;": {
@@ -197,6 +197,15 @@
     "last_seen": "2026-01-10T04:29:22Z",
     "message_localised": "All I was doing was mining!"
   },
+  "$Pirate_OnNoCargoFound02;": {
+    "category": "piracy",
+    "channel": "npc",
+    "count": 1,
+    "first_seen": "2026-06-10T23:52:50Z",
+    "from_example": "Chris Hesketh",
+    "last_seen": "2026-06-10T23:52:50Z",
+    "message_localised": "Bah, nothing."
+  },
   "$Pirate_OnNoCargoFound07;": {
     "category": "piracy",
     "channel": "npc",
@@ -206,6 +215,15 @@
     "last_seen": "2026-01-10T03:52:52Z",
     "message_localised": "Nothing for me here."
   },
+  "$Pirate_OnStartScanCargo08;": {
+    "category": "piracy",
+    "channel": "npc",
+    "count": 1,
+    "first_seen": "2026-06-10T23:53:04Z",
+    "from_example": "Malte Titze",
+    "last_seen": "2026-06-10T23:53:04Z",
+    "message_localised": "What do you have in your cargo hold?"
+  },
   "$Pirate_OnStartScanCargo09;": {
     "category": "piracy",
     "channel": "npc",
@@ -214,6 +232,15 @@
     "from_example": "Akira Brahe",
     "last_seen": "2026-01-10T03:52:42Z",
     "message_localised": "The scan will soon be over."
+  },
+  "$Pirate_OnStartScanCargo11;": {
+    "category": "piracy",
+    "channel": "npc",
+    "count": 1,
+    "first_seen": "2026-06-10T23:52:40Z",
+    "from_example": "Chris Hesketh",
+    "last_seen": "2026-06-10T23:52:40Z",
+    "message_localised": "I hope you have something good in your hold."
   },
   "$Pirate_StartInterdiction07;": {
     "category": "piracy",
@@ -322,6 +349,15 @@
     "from_example": "Mark Parsons",
     "last_seen": "2026-06-06T16:53:26Z",
     "message_localised": "Show them what we're made of! Support our pilots!"
+  },
+  "$Propagandist_Patrol04;": {
+    "category": "other",
+    "channel": "npc",
+    "count": 1,
+    "first_seen": "2026-06-11T00:37:15Z",
+    "from_example": "Talibur Tasslehoff",
+    "last_seen": "2026-06-11T00:37:15Z",
+    "message_localised": "Our enemies would have us flee, don't let them win. Fight for our freedom!"
   },
   "$Propagandist_Patrol05;": {
     "category": "other",
