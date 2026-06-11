@@ -60,6 +60,34 @@ def test_size_for_ship_none_returns_none():
     assert size_for_ship(None) is None
 
 
+def test_fdevids_token_corrections_2026_06_11():
+    """Tokens source-verified against EDCD FDevIDs shipyard.csv (the journal
+    Ship symbols). The 06-09 draft guessed display-style names for ~10 ships —
+    every one would have silently fallen to the MEDIUM default."""
+    assert size_for_ship('type7') == 'L'                 # large pad (anchor typo fixed)
+    assert size_for_ship('empire_eagle') == 'S'          # Imperial Eagle
+    assert size_for_ship('empire_courier') == 'S'
+    assert size_for_ship('empire_trader') == 'L'         # Imperial Clipper
+    assert size_for_ship('independant_trader') == 'M'    # Keelback (FDev's typo)
+    assert size_for_ship('belugaliner') == 'L'
+    assert size_for_ship('typex') == 'M'                 # Alliance Chieftain
+    assert size_for_ship('typex_2') == 'M'               # Crusader
+    assert size_for_ship('typex_3') == 'M'               # Challenger
+    assert size_for_ship('federation_dropship') == 'M'
+    assert size_for_ship('federation_dropship_mkii') == 'M'
+    assert size_for_ship('federation_gunship') == 'M'
+    assert size_for_ship('panthermkii') == 'L'
+
+
+def test_old_guessed_tokens_removed():
+    """The wrong keys must be GONE — keeping them would mask a lookup miss
+    behind a key the journal never emits."""
+    for wrong in ('keelback', 'imperial_eagle', 'imperial_courier',
+                  'imperial_clipper', 'alliance_chieftain', 'beluga',
+                  'federal_dropship', 'type11', 'kestrel_mkii'):
+        assert size_for_ship(wrong) is None, wrong
+
+
 # ---------------------------------------------------------------------------
 # FlowRunner._current_ship latch
 # ---------------------------------------------------------------------------
