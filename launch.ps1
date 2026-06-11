@@ -85,7 +85,19 @@ PASS-THROUGH (advanced; skips the review + focus)
 }
 
 # The Python project lives in a subfolder; this script sits at the repo root.
-$ProjectRoot = Join-Path $PSScriptRoot "projects\ed-autojump"
+# Resolve the root no matter how we were invoked: $PSScriptRoot is empty when
+# the body is dot-sourced/pasted, so fall back to the invocation path, then to
+# the current directory (sanity-checked so a wrong cwd fails loudly, early).
+$RepoRoot = $PSScriptRoot
+if (-not $RepoRoot -and $MyInvocation.MyCommand.Path) {
+    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if (-not $RepoRoot) { $RepoRoot = (Get-Location).Path }
+if (-not (Test-Path (Join-Path $RepoRoot "projects\ed-autojump"))) {
+    Write-Error "Cannot find projects\ed-autojump under '$RepoRoot' -- run launch.ps1 from the repo root."
+    exit 2
+}
+$ProjectRoot = Join-Path $RepoRoot "projects\ed-autojump"
 $venvDir = Join-Path $ProjectRoot ".venv"
 $venvPython = Join-Path $venvDir "Scripts\python.exe"
 $configPath = Join-Path $ProjectRoot "config.toml"
@@ -104,7 +116,7 @@ if (-not (Test-Path $venvPython)) {
     Write-Host "[launch] no .venv found -- creating one..."
     if (Get-Command py -ErrorAction SilentlyContinue) {
         & py -3.11 -m venv $venvDir
-        if (-not $?) { & py -3 -m venv $venvDir }
+        if (-not (Test-Path $venvPython)) { & py -3 -m venv $venvDir }
     } else {
         & python -m venv $venvDir
     }
@@ -114,12 +126,18 @@ if (-not (Test-Path $venvPython)) {
     }
 }
 
-& $venvPython -c "import ed_autojump" 2>$null
-if (-not $?) {
-    Write-Host "[launch] installing ed-autojump (editable) into the venv..."
+# Probe the install via exit code only. Deliberately NO stderr redirect and NO
+# bare `import`: under $ErrorActionPreference='Stop', PowerShell 5.1 wraps a
+# redirected native-stderr line (e.g. python's traceback) in a terminating
+# NativeCommandError -- which used to kill this script whenever the repo folder
+# moved and the venv's editable path went stale. find_spec prints nothing and
+# the reinstall below re-writes the editable path, so a moved repo self-heals.
+& $venvPython -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ed_autojump') else 1)"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[launch] ed_autojump not importable (fresh venv, or the repo moved) -- (re)installing editable..."
     $pkgSpec = $ProjectRoot + "[dev,hotkey,vision]"
     & $venvPython -m pip install -e $pkgSpec
-    if (-not $?) {
+    if ($LASTEXITCODE -ne 0) {
         Write-Error "pip install failed"
         exit 2
     }
