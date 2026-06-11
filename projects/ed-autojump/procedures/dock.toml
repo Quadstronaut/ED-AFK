@@ -41,10 +41,11 @@ parallel_tracks = ["honk"]   # honk fires on the arrival jump like any other
 #     from the SC-assist dropout — the ship is already nearby.
 #   - dock_approach watchdog (failed to see the in-range signal in time):
 #     re-approach from current position.
-# dock_target_station and dock_sc_assist are NOT in the retry loop — they
-# only re-run when the first ATTEMPT fails (the interpreter starts at step 1
-# only on the first run; subsequent retries start at retry_from). A station
-# that keeps denying exhausts max_retries and aborts to human.
+# dock_target_station / dock_blind_maneuver / orient_compass / dock_sc_assist
+# are NOT in the retry loop — they only re-run when the first ATTEMPT fails
+# (the interpreter starts at step 1 only on the first run; subsequent retries
+# start at retry_from). A station that keeps denying exhausts max_retries and
+# aborts to human.
 retry_from = "dock_approach"
 max_retries = 3
 backoff_s = 2.0
@@ -54,30 +55,42 @@ steps = [
   # didn't lock it) — verified against Status.Destination. Required: a wrong
   # or missing lock must never reach the SC-assist approach.
   { action = "dock_target_station", required = true },        # macro  | 1 EXCLUSIVE — verified station target
+  # BLIND star get-away (operator spec 2026-06-09, GATEWALK_TRIGGERS "DOCK
+  # BLIND-MANEUVER"): the ship sits parked nose-on at the arrival star; pitch
+  # away (duration scales with ship pad-size class: L7/M4/S3 via the journal
+  # Ship latch) then burn 100% for 7s before pointing back at the station.
+  # Both durations are TRAJECTORY PACING per spec, not gates.
+  { action = "dock_blind_maneuver", required = true },        # macro  | 2 EXCLUSIVE — pitch away + burn
+  # Point the nose back at the locked station (compass CV on the locked
+  # target — operator flow: "orient towards station/carrier" before assist).
+  { action = "orient_compass", required = true },             # vision | 3 align to the locked station
   # SC-assist flies + decelerates and DROPS the ship at the station.
   # Gate on SupercruiseExit (BodyType=Station) / in_supercruise->False.
   # DROP IS VARIABLE: operator-confirmed ~10km, "not always the same";
   # always OUTSIDE the 7.5km request range.
-  { action = "dock_sc_assist", required = true },             # macro  | 2 EXCLUSIVE — SC approach + drop
+  { action = "dock_sc_assist", required = true },             # macro  | 4 EXCLUSIVE — SC approach + drop
   # Close from the SC-assist dropout distance (VARIABLE, always >7.5km) to
   # inside the 7.5km no-fire zone. Throttles at 25% toward the station
   # (SC-assist drops the ship pointed at it), gated on the journal signal
   # ReceiveText "$STATION_NoFireZone_entered;" — the live-verified in-range
   # trigger. Zeroes throttle before returning. Edge case: already inside 7.5km
   # on a bot restart -> no_fire_zone_supplier True on entry -> immediate pass.
-  { action = "dock_approach", required = true },              # macro  | 3 EXCLUSIVE — close to <7.5km
+  { action = "dock_approach", required = true },              # macro  | 5 EXCLUSIVE — close to <7.5km
   # Request docking now that we are inside the 7.5km no-fire zone.
   # DockingGranted -> proceed; DockingDenied Distance -> required-fail ->
   # retry dock_approach (re-close); any other denial -> required-fail ->
   # abort-to-human on exhaustion.
-  { action = "dock_request", required = true },               # macro  | 4 EXCLUSIVE — request + grant gate
+  { action = "dock_request", required = true },               # macro  | 6 EXCLUSIVE — request + grant gate
   # Wait for the Advanced Docking Computer to land on the pad. Gate on the
   # Docked event / status.docked.
-  { action = "dock_await_docked", required = true },          # wait   | 5 ADC -> pad -> Docked
-  # Starport Services auto-opens on Docked; the icon row is grayed ~2s
-  # (press-timing settle, NOT a gate). Refuel / repair / rearm, each verified
-  # by its own Cost event. BEST-EFFORT: a no-op service (full tank / pristine
-  # hull) is not a failure, so this is NOT required — a clean dock is the
-  # deliverable with or without a paid service.
-  { action = "station_services" },                            # macro  | 6 EXCLUSIVE — refuel/repair/rearm
+  { action = "dock_await_docked", required = true },          # wait   | 7 ADC -> pad -> Docked
+  # OPERATOR PIT-STOP MACRO (2026-06-09 spec, GATEWALK_TRIGGERS "DOCKED
+  # SERVICES" — explicitly OVERRIDES the council's verify-each-service flow):
+  # wait 2s for the menu to materialize, CV-confirm the menu is up (the
+  # station_menu detector — never blind-fire into an unknown scene), then the
+  # blind sequence W,SPACE,D,SPACE,D,SPACE,S with 1s between every keystroke
+  # = refuel, repair, rearm, cursor reset. Grayed/no-op services are success
+  # by design (full tank emits no RefuelAll). BEST-EFFORT: not required — a
+  # clean dock is the deliverable with or without a paid service.
+  { action = "station_services_macro" },                      # macro  | 8 EXCLUSIVE — refuel/repair/rearm/reset
 ]

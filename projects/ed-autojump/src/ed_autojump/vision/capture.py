@@ -339,6 +339,33 @@ def build_navpanel_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[]
 
 
 # ---------------------------------------------------------------------------
+# Docked-menu grabber factory (station_menu detector)
+# ---------------------------------------------------------------------------
+
+def build_station_menu_grabber(cfg: Any) -> Optional[Callable[[], Any]]:
+    """Return a FULL-FRAME .grab callable for the docked-menu detector
+    (vision.station_menu.detect_menu_item), or None if capture is unavailable.
+
+    Full frame because the detector is a pure function over a full-frame BGR
+    image — it slices its own calibrated region and height-scales it, so the
+    grabber must not pre-crop. Deliberately UNNAMED (no auto debug box): a
+    named full-screen grabber would flash a box over the entire screen;
+    _read_menu_item draws the region-accurate verdict box itself instead.
+
+    Always built when capture works — the steps that consume it
+    (confirm_menu_item / station_services_macro / the auto_launch CV gate)
+    only read the screen while they run, so there is nothing to gate on.
+    NEVER raises; on failure the consumers fail closed (grabber=None)."""
+    try:
+        capture_backend = getattr(cfg.vision, "capture_backend", "gdi")
+        grabber = ScreenGrabber((0, 0, 0, 0), backend=capture_backend)
+        return grabber.grab
+    except Exception as e:  # noqa: BLE001 — consumers fail closed on None.
+        log.warning("station-menu grabber unavailable (%s); menu CV off", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Sun-region grabber factory
 # ---------------------------------------------------------------------------
 

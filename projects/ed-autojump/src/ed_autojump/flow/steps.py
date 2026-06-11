@@ -1513,6 +1513,17 @@ def step_dock_approach(ctx: StepContext, *, approach_pct: int = 25,
     `max_approach_s` is a FAIL backstop only (house rule: never a success gate).
     Without event/status wiring (unit tests) the approach returns True (no-op).
     """
+    # SCENE GUARD (2026-06-11 adversarial review): this is a NORMAL-SPACE
+    # closing leg — the no-fire-zone broadcast can only ever arrive in normal
+    # space, so running it in supercruise would burn 25% at nothing until the
+    # watchdog. Reachable via the retry lane: a required fail BEFORE
+    # dock_sc_assist (target/blind-maneuver/orient) retries from THIS step
+    # while the ship is still in SC. Refuse, fail closed, no keys.
+    st = ctx.status_supplier()
+    if st is not None and getattr(st, "in_supercruise", False):
+        ctx.log("DockApproachRefused", {"reason": "in_supercruise"})
+        return False
+
     # Arm: clear any stale no-fire-zone flag from a prior run so the gate
     # only acts on an entry earned by THIS approach leg.
     clear_nfz = getattr(ctx, "clear_no_fire_zone", None)
@@ -1750,33 +1761,75 @@ def step_station_services(ctx: StepContext, *, settle_s: float = 0.4,
 
 
 def step_auto_launch(ctx: StepContext, *, settle_s: float = 0.4,
-                     poll_s: float = 0.8, max_wait_s: float = 300.0) -> bool:
+                     poll_s: float = 0.8, max_wait_s: float = 300.0,
+                     max_seek: int = 4) -> bool:
     """PIT-STOP leave: AUTO LAUNCH off the pad, gate on Undocked.
 
-    Operator-walked from the auto-opened Services panel: **S, S** (UI_Down x2,
-    to AUTO LAUNCH) -> **Space** (UI_Select). Undocked fires immediately; the
-    docking computer then flies the ship out. Completion (clear of the station)
-    is QUEUE-VARIABLE — NEVER gated on a timer; the FsdMassLocked-clear gate in
-    the next step owns 'clear to jump'.
+    CV-GUIDED when ctx.station_menu_grabber is wired (the UNDOCK SAFETY GATE,
+    operator spec 2026-06-09): read which docked-menu item is highlighted,
+    SEEK the cursor onto AUTO LAUNCH (UI_Down from SERVICES above it, UI_Up
+    from DISEMBARK below it), re-read to CONFIRM, and only then UI_Select.
+    FAIL CLOSED — without a confirmed AUTO_LAUNCH highlight the select is
+    never pressed (a NONE read means the menu is not up / an unknown row; a
+    blind select there is an unknown UI action). This exists because the
+    cursor's home position is NOT guaranteed: the operator's live walk found
+    AUTO LAUNCH one S from home, the post-services scene leaves it elsewhere,
+    and GuiFocus stays 0 throughout (the menu is invisible to Status) — the
+    detector is the only confirmation possible.
 
-    Gate on the Undocked journal event, with status.docked going False as the
-    state fallback (event-gates-need-state-check: already undocked on entry, or
-    a missed event). `max_wait_s` is a FAIL backstop only. Without event/status
-    wiring the presses are the step."""
+    BLIND legacy path when the grabber is unwired (unit tests / CV
+    unavailable): **S, S** (UI_Down x2) -> **Space**, the original
+    operator-walked macro, unchanged.
+
+    Undocked fires immediately on a good select; the docking computer then
+    flies the ship out. Completion (clear of the station) is QUEUE-VARIABLE —
+    NEVER gated on a timer; the FsdMassLocked-clear gate in the next step owns
+    'clear to jump'. Gate on the Undocked journal event, with status.docked
+    going False as the state fallback (event-gates-need-state-check).
+    `max_wait_s` is a FAIL backstop only. Without event/status wiring the
+    presses are the step."""
     # State-check first: already undocked on entry -> nothing to launch.
     st = ctx.status_supplier()
     if st is not None and not getattr(st, "docked", False):
         ctx.log("AutoLaunchDone", {"reason": "already_undocked"})
         return True
-    # S, S -> AUTO LAUNCH; Space -> activate.
-    if not _press(ctx, "UI_Down"):
-        return False
-    ctx.sleeper(settle_s)
-    if not _press(ctx, "UI_Down"):
-        return False
-    ctx.sleeper(settle_s)
-    if not _press(ctx, "UI_Select"):
-        return False
+    if getattr(ctx, "station_menu_grabber", None) is not None:
+        # CV-guided seek-and-confirm. Detector rows top->bottom:
+        # SERVICES / AUTO_LAUNCH / DISEMBARK.
+        from ..vision.station_menu import AUTO_LAUNCH, DISEMBARK, SERVICES
+        for _ in range(max(1, max_seek)):
+            item = _read_menu_item(ctx)
+            if item == AUTO_LAUNCH:
+                break
+            if item == SERVICES:
+                move = "UI_Down"            # AUTO LAUNCH is one below
+            elif item == DISEMBARK:
+                move = "UI_Up"              # one above
+            else:
+                # NONE (menu not up / unknown row) or None (grabber error):
+                # nothing trustworthy under the cursor -> never select.
+                ctx.log("AutoLaunchRefused",
+                        {"reason": "menu_not_confirmed", "detected": item})
+                return False
+            if not _press(ctx, move):
+                return False
+            ctx.sleeper(settle_s)
+        else:
+            ctx.log("AutoLaunchRefused", {"reason": "seek_exhausted"})
+            return False
+        ctx.log("AutoLaunchConfirmed", {"via": "cv"})
+        if not _press(ctx, "UI_Select"):
+            return False
+    else:
+        # Blind legacy macro: S, S -> AUTO LAUNCH; Space -> activate.
+        if not _press(ctx, "UI_Down"):
+            return False
+        ctx.sleeper(settle_s)
+        if not _press(ctx, "UI_Down"):
+            return False
+        ctx.sleeper(settle_s)
+        if not _press(ctx, "UI_Select"):
+            return False
     if ctx.event_waiter is None:
         return True                        # no journal wiring -> presses are the step
     start = ctx.clock()
@@ -1821,6 +1874,58 @@ def step_wait_masslock_clear(ctx: StepContext, *, poll_s: float = 0.5,
             ctx.log("WaitMassLockDone", {"reason": "clear"})
             return True
         ctx.sleeper(poll_s)
+
+
+def step_dock_blind_maneuver(ctx: StepContext, *, burn_s: float = 7.0,
+                             pitch_override_s: float = 0.0) -> bool:
+    """BLIND star get-away before the station approach (operator spec
+    2026-06-09, GATEWALK_TRIGGERS 'DOCK BLIND-MANEUVER' + REFERENCE_LOGIC
+    '# destination reached'): at a station/carrier terminus the ship sits
+    parked nose-on at the arrival star; before SC-assisting to the station,
+    pitch AWAY from the star (down — the spec says 'any random direction',
+    down is the fixed pick) then burn at 100% to put distance between hull
+    and star. The same maneuver doubles as the SC-assist-disengaged recovery.
+
+    PITCH DURATION scales with ship agility via the pad-size class
+    (ship_sizes: L=7s / M=4s / S=3s, unknown -> 4s MEDIUM default, logged
+    loudly so the operator sees the table miss). `pitch_override_s` > 0
+    bypasses the table (procedure-file knob for live tuning). `burn_s` is the
+    operator's fixed 7s throttle leg. Both are TRAJECTORY-PACING durations —
+    blind by design, per spec — not success gates; the gates around this step
+    are dock_target_station (lock verified) before and dock_sc_assist
+    (SupercruiseExit at the station) after.
+
+    Refuses (fail closed) when status is wired and the ship is NOT in
+    supercruise — this maneuver only makes sense in the SC arrival scene.
+    Leaves throttle at 100: orient_compass runs next while the ship coasts
+    away (the arrival flow orients at full throttle the same way), and
+    SC-assist takes speed control when engaged."""
+    st = ctx.status_supplier()
+    if st is not None and not getattr(st, "in_supercruise", False):
+        ctx.log("DockBlindManeuverRefused", {"reason": "not_in_supercruise"})
+        return False
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    from ..ship_sizes import pitch_s_for_ship, size_for_ship
+    ship = ctx.ship_supplier()
+    if pitch_override_s > 0:
+        pitch_s = float(pitch_override_s)
+    else:
+        pitch_s = pitch_s_for_ship(ship)
+        if ship is None or size_for_ship(ship) is None:
+            ctx.log("ShipSizeUnknown", {"ship": ship, "default_pitch_s": pitch_s})
+    ctx.log("DockBlindManeuverStart",
+            {"ship": ship, "pitch_s": pitch_s, "burn_s": burn_s})
+    if not _press(ctx, "PitchDownButton", hold_s=pitch_s):
+        return False
+    if ctx.should_abort():
+        ctx.log("DockBlindManeuverDone", {"reason": "abort"})
+        return False
+    if not _press(ctx, "SetSpeed100"):
+        return False
+    ctx.sleeper(burn_s)
+    ctx.log("DockBlindManeuverDone", {"reason": "complete"})
+    return True
 
 
 # ===================== DOCKED-MENU DETECTOR STEPS =======================
@@ -1894,19 +1999,36 @@ def step_confirm_menu_item(ctx: StepContext, *, expected: str) -> bool:
     return ok
 
 
-def step_station_services_macro(ctx: StepContext, *, keystroke_gap_s: float = 1.0) -> bool:
+def step_station_services_macro(ctx: StepContext, *, keystroke_gap_s: float = 1.0,
+                                menu_settle_s: float = 2.0,
+                                menu_reads: int = 3) -> bool:
     """DOCKED-SERVICES PIT STOP (operator spec, overrides the council's
     verify-each-service flow): on the pad with the menu up, fire the services
     macro EVERY time, BLIND.
 
-    ENTRY GATE: the docked menu must be up — detector != NONE. A NONE read (menu
-    not up) or an unwired grabber fails closed (we never blind-fire a UI macro
-    into an unknown scene). Then the fixed sequence W, SPACE, D, SPACE, D, SPACE,
-    S is sent through self.sender (so NullSender logs every keystroke in tests /
-    the gate-walk), with self.sleeper(keystroke_gap_s) between EVERY keystroke.
-    No per-key verification by design — that's the whole point of the override."""
+    `menu_settle_s` is the operator-specced post-Docked UI-materialize wait
+    ("WAIT 2 s for the services menu to fully materialize" — a press-timing
+    DURATION, not a success gate; the gate is DOCKED + the detector below).
+
+    ENTRY GATE: the docked menu must be up — detector != NONE, re-read up to
+    `menu_reads` times `keystroke_gap_s` apart (absorbs a slow menu fade-in;
+    the DECISION input is the detector, never the clock). A NONE on every read
+    (menu not up) or an unwired grabber fails closed (we never blind-fire a UI
+    macro into an unknown scene). Then the fixed sequence W, SPACE, D, SPACE,
+    D, SPACE, S is sent through self.sender (so NullSender logs every
+    keystroke in tests / the gate-walk), with self.sleeper(keystroke_gap_s)
+    between EVERY keystroke. No per-key verification by design — that's the
+    whole point of the override."""
     from ..vision.station_menu import NONE as MENU_NONE
-    detected = _read_menu_item(ctx)
+    ctx.sleeper(menu_settle_s)
+    detected = None
+    for attempt in range(max(1, menu_reads)):
+        detected = _read_menu_item(ctx)
+        if detected is not None and detected != MENU_NONE:
+            break
+        if detected is None:
+            break                          # grabber unwired/error: no point re-reading
+        ctx.sleeper(keystroke_gap_s)
     if detected is None or detected == MENU_NONE:
         ctx.log("StationServicesMacroRefused",
                 {"reason": "menu_not_up", "detected": detected})
@@ -1950,10 +2072,18 @@ def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
 # watchdog for the entire tour. step_body_tour instead self-guards each
 # per-body lock + each station-drop re-engage and RELEASES the guard during
 # the AutoScan wait + dwell, so the watchdog runs BETWEEN bodies (D6).
+# station_services_macro is the operator's blind W/SPACE/D/... pit-stop
+# sequence — a stray heatsink keypress mid-sequence would desync the panel
+# cursor exactly like the other UI macros (2026-06-09 reviewer must-fix).
+# dock_blind_maneuver holds a multi-second pitch + burn — a concurrent
+# DeployHeatSink press mid-hold is harmless to the UI but the exclusive wrap
+# keeps the watchdog from interleaving with a deliberate blind trajectory.
+# confirm_menu_item stays OUT: it reads the screen and presses nothing.
 INPUT_EXCLUSIVE_ACTIONS = frozenset({
     "sc_assist_orbit", "nav_panel_target",
     "dock_target_station", "dock_sc_assist", "dock_approach", "dock_request",
     "station_services", "auto_launch",
+    "station_services_macro", "dock_blind_maneuver",
 })
 
 def _body_tour_identity_target(ctx: StepContext, tried: set):
@@ -2189,4 +2319,5 @@ STEP_REGISTRY.update({
     "wait_masslock_clear": step_wait_masslock_clear,
     "confirm_menu_item": step_confirm_menu_item,
     "station_services_macro": step_station_services_macro,
+    "dock_blind_maneuver": step_dock_blind_maneuver,
 })

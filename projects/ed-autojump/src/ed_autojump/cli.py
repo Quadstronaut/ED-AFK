@@ -373,11 +373,18 @@ def cmd_run(args) -> int:
     # falls back to the blind row walk otherwise. Outer scope like the widget
     # names so the FlowRunner call always sees them.
     nav_panel_reader = nav_panel_grabber = None
+    station_menu_grabber = None
     if args.engage_keys:
         from .vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
         from .vision.capture import build_navpanel_vision
         nav_panel_reader, nav_panel_grabber = build_navpanel_vision(cfg)
+        # Docked-menu CV (station_menu detector): feeds the auto_launch
+        # undock safety gate + the services-macro menu-up entry gate.
+        from .vision.capture import build_station_menu_grabber
+        station_menu_grabber = build_station_menu_grabber(cfg)
+        if station_menu_grabber is not None:
+            print("vision: docked-menu detector ON (full-frame grab)")
         if nav_panel_reader is not None:
             print(f"exploration: nav-panel identity targeting ON "
                   f"(region={tuple(cfg.exploration.nav_panel_region)}) "
@@ -510,6 +517,7 @@ def cmd_run(args) -> int:
         body_tour_min_bodies=cfg.exploration.body_tour_min_bodies,
         nav_panel_reader=nav_panel_reader,
         nav_panel_grabber=nav_panel_grabber,
+        station_menu_grabber=station_menu_grabber,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
         frame_sink=frame_sink,
