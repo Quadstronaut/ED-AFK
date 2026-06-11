@@ -2,7 +2,7 @@ name: ed-autojump tests
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'projects/ed-autojump/**'
       - '.github/workflows/test.yml'
