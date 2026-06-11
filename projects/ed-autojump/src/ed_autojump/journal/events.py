@@ -234,6 +234,28 @@ class Undocked(Event):
     market_id: Optional[int] = Field(default=None, alias="MarketID")
 
 
+class Location(Event):
+    """Written at startup, respawn, and on some scene reloads — the ship's
+    current whereabouts. Docked=true with NO preceding Docked event is the
+    death/rebuy-respawn signature (the respawn puts the ship straight on a
+    pad), which is why the dispatcher repairs _docked/_smacked off this.
+
+    LATENT-BUG NOTE (2026-06-11): until this model existed, Location lines
+    parsed to the generic Event envelope, whose pydantic extras keep the RAW
+    alias keys ("StarSystem", "Docked") — so getattr(ev, "star_system") was
+    None on every real journal line and the dispatcher's Location handling
+    was silently dead. Typed fields restore it."""
+
+    event: Literal["Location"]
+    star_system: Optional[str] = Field(default=None, alias="StarSystem")
+    system_address: Optional[int] = Field(default=None, alias="SystemAddress")
+    docked: bool = Field(default=False, alias="Docked")
+    station_name: Optional[str] = Field(default=None, alias="StationName")
+    station_type: Optional[str] = Field(default=None, alias="StationType")
+    body: Optional[str] = Field(default=None, alias="Body")
+    body_type: Optional[str] = Field(default=None, alias="BodyType")
+
+
 class ReceiveText(Event):
     """In-game comms / station-traffic text received. For docking, the
     critical message is "$STATION_NoFireZone_entered;" — the station broadcasts
@@ -310,6 +332,7 @@ AnyEvent = Union[
     Docked,
     Undocked,
     NavRouteClear,
+    Location,
     ReceiveText,
     Music,
     LoadGame,
@@ -338,6 +361,7 @@ _EVENT_MODELS: dict[str, type[Event]] = {
     "Docked": Docked,
     "Undocked": Undocked,
     "NavRouteClear": NavRouteClear,
+    "Location": Location,
     "ReceiveText": ReceiveText,
     "Music": Music,
     "LoadGame": LoadGame,
