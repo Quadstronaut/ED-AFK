@@ -122,6 +122,7 @@ class FlowRunner:
         nav_panel_reader: Optional[Any] = None,
         nav_panel_grabber: Optional[Callable[[], Any]] = None,
         station_menu_grabber: Optional[Callable[[], Any]] = None,
+        visited_logger: Optional[Any] = None,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -156,6 +157,10 @@ class FlowRunner:
         # Docked-menu CV (full-frame grab): auto_launch safety gate + the
         # services-macro menu-up entry gate read the menu through this.
         self.station_menu_grabber = station_menu_grabber
+        # Append-only log of systems visited on live FSDJump arrivals. Pure
+        # observability: never touches a condition/action and is fail-soft on
+        # write, so it can't disturb the flight loop. None == disabled.
+        self._visited_logger = visited_logger
 
         self._event_times: dict[str, float] = {}
         # True while the journal's last SC transition is SupercruiseExit at a
@@ -1291,6 +1296,13 @@ class FlowRunner:
                     continue
                 for ev in events:
                     if self._caught_up:
+                        if (self._visited_logger is not None
+                                and getattr(ev, "event", None) == "FSDJump"):
+                            # Passive side-effect: record the live arrival, then
+                            # dispatch exactly as before (logging never gates it).
+                            self._visited_logger.record(
+                                getattr(ev, "star_system", None),
+                                getattr(ev, "timestamp", None))
                         self.dispatch(ev)
         except Exception as exc:  # noqa: BLE001 — never die silently mid-flight
             # PARK, don't crash (council 2026-06-09). An unhandled exception

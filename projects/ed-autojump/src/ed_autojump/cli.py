@@ -124,6 +124,14 @@ def _parser() -> argparse.ArgumentParser:
         help="enable Spansh route auto-plotting when NavRoute is empty",
     )
     sub_run.add_argument(
+        "--visited-log", dest="visited_log", action="store_true", default=True,
+        help="append each visited system to ~/Documents/ed-afk-systems-visited.log (default: on)",
+    )
+    sub_run.add_argument(
+        "--no-visited-log", dest="visited_log", action="store_false",
+        help="disable the visited-systems log",
+    )
+    sub_run.add_argument(
         "--destination", dest="destination", default=None,
         help="override config.routing.destination (e.g. 'Beagle Point')",
     )
@@ -496,6 +504,13 @@ def cmd_run(args) -> int:
                                    ttl_s=cfg.overlay.cv_debug_ttl_s))
         print("overlay: CV debug boxes ON (tune with `calibrate-overlay`)")
 
+    # Visited-systems log (default on; --no-visited-log disables). Passive
+    # observer: appends each live FSDJump arrival to ~/Documents, never deleted.
+    from .visited import VisitedSystemsLogger
+    visited_logger = VisitedSystemsLogger() if args.visited_log else None
+    if visited_logger is not None:
+        print(f"visited-log: ON -> {visited_logger.path}")
+
     runner = FlowRunner(
         procedures=procedures,
         sender=sender,
@@ -518,6 +533,7 @@ def cmd_run(args) -> int:
         nav_panel_reader=nav_panel_reader,
         nav_panel_grabber=nav_panel_grabber,
         station_menu_grabber=station_menu_grabber,
+        visited_logger=visited_logger,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
         frame_sink=frame_sink,

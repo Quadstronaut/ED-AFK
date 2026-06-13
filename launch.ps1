@@ -18,7 +18,7 @@ param(
     [switch]$Infinite,              # start with Duration = Infinite (~1yr stand-in until a real unbounded loop)
     [switch]$Monitor,               # start with Monitor-Only ON (log only -- no key presses)
     [switch]$NoRecord,              # start with Record OFF
-    [switch]$RoutePlot,             # start with Auto-plot ON
+    [switch]$NoVisitedLog,          # start with the visited-systems log OFF
     [switch]$Yes,                   # skip the menu entirely; go straight to Jump from the flags
     [switch]$NoFocus,               # do NOT focus the Elite window before starting (debugging only)
     [switch]$PrintCmd,              # resolve settings, PRINT the cli command, and exit (no focus, no run)
@@ -69,7 +69,7 @@ SETTINGS  (RUN group -- all live today)
   Monitor-Only    log only; the bot reports what it WOULD do, sends no keys.
                   OFF by default == the bot actually flies.
   Record session  save a JSONL log of the run (ON by default).
-  Auto-plot route plot a route if none is set (OFF by default).
+  Log systems     append every visited system to ~/Documents (ON by default).
   Duration        1h / 6h / 12h / Infinite. Infinite is a ~1-year stand-in;
                   ED will not last that long -- a real unbounded loop comes later.
   Calibrate       run calibrate-compass so the bot can orient via the nav-compass.
@@ -79,7 +79,7 @@ DO THIS FIRST  (or the ship will not move!)
      preset to Elite. Then in ED > Controls, pick "ED-AFK".
   2. Calibrate compass (Settings > Calibrate, or .\launch.ps1 calibrate-compass)
      and set [vision].enabled = true in config.toml -- else the bot jumps BLIND.
-  3. Be IN THE GAME, in your ship, with a route plotted (or turn Auto-plot ON).
+  3. Be IN THE GAME, in your ship, with a route plotted in the Galaxy Map.
 
 HOW TO RUN
   .\launch.ps1            the menu
@@ -92,7 +92,7 @@ THE SEED FLAGS  (just set the menu's starting values)
   -Infinite          start on "Infinite".
   -Monitor           start with Monitor-Only ON (log only).
   -NoRecord          start with Record OFF.
-  -RoutePlot         start with Auto-plot ON.
+  -NoVisitedLog      start with the visited-systems log OFF.
   -Yes               skip the menu + confirm; Jump straight from the flags.
   -NoFocus           do not grab the Elite window (debugging only).
 
@@ -192,9 +192,9 @@ $script:MainItems = @(
 $script:SettingsRows = @(
     @{ Kind = 'header'; Label = 'RUN' },
     @{ Kind = 'toggle'; Key = 'Monitor';   Label = 'Monitor-Only   (log only, no key presses)' },
-    @{ Kind = 'toggle'; Key = 'Record';    Label = 'Record session' },
-    @{ Kind = 'toggle'; Key = 'RoutePlot'; Label = 'Auto-plot route (plot when none)' },
-    @{ Kind = 'cycle';  Key = 'Duration';  Label = 'Duration' },
+    @{ Kind = 'toggle'; Key = 'Record';     Label = 'Record session' },
+    @{ Kind = 'toggle'; Key = 'LogVisited'; Label = 'Log systems visited (~/Documents)' },
+    @{ Kind = 'cycle';  Key = 'Duration';   Label = 'Duration' },
     @{ Kind = 'action'; Key = 'Calibrate'; Label = 'Calibrate compass (steering vision)' },
     @{ Kind = 'blank' },
     @{ Kind = 'header'; Label = 'FEATURES' },
@@ -272,7 +272,7 @@ function Get-CliArgs([hashtable]$s) {
     $a = @("-m", "ed_autojump.cli", "run", "--duration", $secs)
     if ([bool]$s.Monitor) { $a += "--no-engage-keys" } else { $a += "--engage-keys" }
     if ([bool]$s.Record) { $a += "--record" }
-    if ([bool]$s.RoutePlot) { $a += "--route-plot" }
+    if ([bool]$s.LogVisited) { $a += "--visited-log" } else { $a += "--no-visited-log" }
     return , $a
 }
 
@@ -484,7 +484,7 @@ if ($Extra -and $Extra.Count -gt 0) {
 $s = @{
     Monitor       = $Monitor.IsPresent           # default OFF -> steering ON (the bot flies)
     Record        = (-not $NoRecord)             # default ON
-    RoutePlot     = $RoutePlot.IsPresent         # default OFF
+    LogVisited    = (-not $NoVisitedLog)         # default ON
     DurationIndex = (Resolve-DurationIndex $DurationHours $Infinite.IsPresent)
 }
 $visionOn = Test-VisionEnabled $configPath
@@ -494,8 +494,8 @@ $visionOn = Test-VisionEnabled $configPath
 if ($PrintCmd) {
     $cli = Get-CliArgs $s
     Write-Host ("[launch] would run: {0} {1}" -f $venvPython, ($cli -join ' '))
-    Write-Host ("[launch] duration={0}  monitor-only={1}  record={2}  route-plot={3}  steering(vision)={4}" -f `
-        $script:DurationPresets[$s.DurationIndex].Label, $s.Monitor, $s.Record, $s.RoutePlot, $(if ($visionOn) { 'ON' } else { 'OFF' }))
+    Write-Host ("[launch] duration={0}  monitor-only={1}  record={2}  visited-log={3}  steering(vision)={4}" -f `
+        $script:DurationPresets[$s.DurationIndex].Label, $s.Monitor, $s.Record, $s.LogVisited, $(if ($visionOn) { 'ON' } else { 'OFF' }))
     exit 0
 }
 
@@ -503,8 +503,8 @@ if ($PrintCmd) {
 
 if ($Yes) {
     # Unattended: only Jump is live, so go straight to it from the seeded flags.
-    Write-Host ("[launch] Jump (unattended): duration={0}, monitor-only={1}, record={2}, route-plot={3}, steering={4}" -f `
-        $script:DurationPresets[$s.DurationIndex].Label, $s.Monitor, $s.Record, $s.RoutePlot, $(if ($visionOn) { 'ON' } else { 'OFF' }))
+    Write-Host ("[launch] Jump (unattended): duration={0}, monitor-only={1}, record={2}, visited-log={3}, steering={4}" -f `
+        $script:DurationPresets[$s.DurationIndex].Label, $s.Monitor, $s.Record, $s.LogVisited, $(if ($visionOn) { 'ON' } else { 'OFF' }))
 } else {
     $launch = $false
     while (-not $launch) {
