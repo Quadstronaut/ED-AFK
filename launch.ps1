@@ -1,30 +1,43 @@
 <#
 .SYNOPSIS
-    Interactive launcher for the ed-autojump jump loop.
-    Reviews your settings, FOCUSES the Elite window, then starts the bot so
-    its keypresses land in the game instead of wherever your mouse last was.
+    Game-like launcher for ED-AFK.
+
+    A main menu (Jump / Combat / Explore / Trade / Settings / Quit) declares your
+    INTENT on entry. Only "Jump" is live today -- it runs the ed-autojump loop we
+    have been building. Combat / Explore / Trade are Soon(TM) placeholders.
+
+    Picking Jump focuses the Elite window, counts down, and starts the bot so its
+    keypresses land in the game instead of wherever your mouse last was.
+
     Run  .\launch.ps1 -Help  for a plain-English guide.
 #>
 
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [double]$DurationHours = 6.0,
-    [switch]$NoRecord,
-    [switch]$RoutePlot,
-    [switch]$Yes,         # skip the menu entirely; launch straight from the flags
-    [switch]$NoFocus,     # do NOT focus the Elite window before starting
+    [double]$DurationHours = 6.0,   # seeds the Duration selector (mapped to the nearest preset)
+    [switch]$Infinite,              # start with Duration = Infinite (~1yr stand-in until a real unbounded loop)
+    [switch]$Monitor,               # start with Monitor-Only ON (log only -- no key presses)
+    [switch]$NoRecord,              # start with Record OFF
+    [switch]$RoutePlot,             # start with Auto-plot ON
+    [switch]$Yes,                   # skip the menu entirely; go straight to Jump from the flags
+    [switch]$NoFocus,               # do NOT focus the Elite window before starting (debugging only)
+    [switch]$PrintCmd,              # resolve settings, PRINT the cli command, and exit (no focus, no run)
     [switch]$Help,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Extra
 )
 
-# TODO (revisit once the core bot function is solid -- Operator 2026-06-09):
-#   Expose every optional BOT FEATURE as a toggle here, as -Switch params that
-#   flow through Get-CliArgs into the CLI -- e.g. discovery / body-tour mode
-#   (fly to all the bodies), scoop-refuel, dock servicing, smack-recovery, etc.
-#   Decide the -Yes (unattended) defaults at that point; do NOT wire defaults yet.
+# TODO (next pass -- Operator 2026-06-13): wire the FEATURES section in Settings.
+#   Ship features (scoop-refuel...) and Script features (dock-servicing, smack-
+#   recovery, interdiction, body-tour...) get checkbox toggles grouped by kind.
+#   Several map to config.local.toml rather than CLI flags -- map each honestly
+#   before exposing it. Shown today as a dim "Soon(TM)" placeholder so the
+#   structure is visible without faking a toggle that connects to nothing.
 
 $ErrorActionPreference = "Stop"
+$env:PYTHONUTF8 = "1"
+# Render the (TM) joke + box glyphs correctly in a modern console. Harmless if it fails.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 function Show-FriendlyHelp {
     Write-Host @'
@@ -32,49 +45,58 @@ function Show-FriendlyHelp {
 ================  ED-AFK  ---  plain-English guide  ================
 
 WHAT THIS DOES
-  You fly Elite Dangerous into a system and plot a route. Then this runs
-  the robot that presses the keys to dodge the star, honk, scoop fuel, and
-  jump -- over and over -- so you do not have to sit there.
+  You fly Elite Dangerous into a system and plot a route. Then this runs the
+  robot that presses the keys to dodge the star, honk, scoop fuel, and jump --
+  over and over -- so you do not have to sit there.
 
   IT DOES NOT launch the game or click menus. YOU start ED and get in the
   cockpit yourself. This only does the jumping.
 
-HOW IT NOW WORKS (interactive)
-  1. A MENU shows every setting. Use the arrow keys:
-       Up / Down  -- pick a row
-       Left/Right -- change it (toggle on/off, or +/- the hours)
-       Enter      -- done editing
-  2. Then: [y] launch   [n] go back and change settings   [q] quit.
-  3. On launch it FOCUSES the Elite window and counts down, so the keys land
-     in the game -- not in your browser. KEEP ELITE IN FRONT after that; if
-     you click away, the next keypress misses.
+THE MENU
+  E D - A F K
+    Jump        <- the only live action today: runs the jump loop
+    Combat      Soon(TM)
+    Explore     Soon(TM)
+    Trade       Soon(TM)
+    Settings    <- knobs (see below)
+    Quit
+
+  Arrow keys move; Enter selects; Q quits. Picking Jump focuses Elite, counts
+  down 5..1, and starts the bot. KEEP ELITE IN FRONT after that -- if you click
+  away, the next keypress misses. Ctrl+C in this terminal stops a run.
+
+SETTINGS  (RUN group -- all live today)
+  Monitor-Only    log only; the bot reports what it WOULD do, sends no keys.
+                  OFF by default == the bot actually flies.
+  Record session  save a JSONL log of the run (ON by default).
+  Auto-plot route plot a route if none is set (OFF by default).
+  Duration        1h / 6h / 12h / Infinite. Infinite is a ~1-year stand-in;
+                  ED will not last that long -- a real unbounded loop comes later.
+  Calibrate       run calibrate-compass so the bot can orient via the nav-compass.
 
 DO THIS FIRST  (or the ship will not move!)
   1. ONE TIME:  .\launch.ps1 install-binds   -- adds the "ED-AFK" keyboard
-     preset to Elite. Then in ED > Controls, pick "ED-AFK". If another
-     preset is active the keys do not match and the ship will not respond.
-  2. STEERING (optional but recommended):  .\launch.ps1 calibrate-compass
-     while in the cockpit with the nav-compass visible, then set
-     [vision].enabled = true in config.toml. Without this the bot jumps
-     BLIND -- it will not orient the ship toward the target.
-  3. Be IN THE GAME, in your ship, with a route plotted (or use -RoutePlot).
+     preset to Elite. Then in ED > Controls, pick "ED-AFK".
+  2. Calibrate compass (Settings > Calibrate, or .\launch.ps1 calibrate-compass)
+     and set [vision].enabled = true in config.toml -- else the bot jumps BLIND.
+  3. Be IN THE GAME, in your ship, with a route plotted (or turn Auto-plot ON).
 
 HOW TO RUN
-  .\launch.ps1           arrow-key menu, then y/n/q, focus ED, run
-  .\launch.ps1 -Yes      skip the menu entirely (uses the flags below)
-  .\launch.ps1 -Help     show this
+  .\launch.ps1            the menu
+  .\launch.ps1 -Yes       skip the menu, go straight to Jump (uses the flags)
+  .\launch.ps1 -PrintCmd  print the exact cli command the flags resolve to, exit
+  .\launch.ps1 -Help      show this
 
-  The flags below just seed the menu's starting values -- you can still
-  change everything in the menu before launching.
+THE SEED FLAGS  (just set the menu's starting values)
+  -DurationHours N   nearest preset (default 6 -> "6h").
+  -Infinite          start on "Infinite".
+  -Monitor           start with Monitor-Only ON (log only).
+  -NoRecord          start with Record OFF.
+  -RoutePlot         start with Auto-plot ON.
+  -Yes               skip the menu + confirm; Jump straight from the flags.
+  -NoFocus           do not grab the Elite window (debugging only).
 
-THE KNOBS
-  -DurationHours N   Starting hours. Default 6. Ctrl+C stops a run early.
-  -NoRecord          Start with logging OFF. (Default: it DOES save one.)
-  -RoutePlot         Start with auto-plot ON (plots to config.toml's dest).
-  -Yes               Skip the menu + confirm; launch straight from the flags.
-  -NoFocus           Do not grab the Elite window (debugging only).
-
-PASS-THROUGH (advanced; skips the review + focus)
+PASS-THROUGH (advanced; skips the menu + focus)
     .\launch.ps1 doctor
     .\launch.ps1 calibrate-compass
     .\launch.ps1 install-binds
@@ -85,9 +107,8 @@ PASS-THROUGH (advanced; skips the review + focus)
 }
 
 # The Python project lives in a subfolder; this script sits at the repo root.
-# Resolve the root no matter how we were invoked: $PSScriptRoot is empty when
-# the body is dot-sourced/pasted, so fall back to the invocation path, then to
-# the current directory (sanity-checked so a wrong cwd fails loudly, early).
+# Resolve the root no matter how we were invoked: $PSScriptRoot is empty when the
+# body is dot-sourced/pasted, so fall back to the invocation path, then cwd.
 $RepoRoot = $PSScriptRoot
 if (-not $RepoRoot -and $MyInvocation.MyCommand.Path) {
     $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -128,10 +149,10 @@ if (-not (Test-Path $venvPython)) {
 
 # Probe the install via exit code only. Deliberately NO stderr redirect and NO
 # bare `import`: under $ErrorActionPreference='Stop', PowerShell 5.1 wraps a
-# redirected native-stderr line (e.g. python's traceback) in a terminating
-# NativeCommandError -- which used to kill this script whenever the repo folder
-# moved and the venv's editable path went stale. find_spec prints nothing and
-# the reinstall below re-writes the editable path, so a moved repo self-heals.
+# redirected native-stderr line in a terminating NativeCommandError -- which used
+# to kill this script whenever the repo folder moved and the venv's editable path
+# went stale. find_spec prints nothing and the reinstall re-writes the editable
+# path, so a moved repo self-heals.
 & $venvPython -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ed_autojump') else 1)"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[launch] ed_autojump not importable (fresh venv, or the repo moved) -- (re)installing editable..."
@@ -142,6 +163,45 @@ if ($LASTEXITCODE -ne 0) {
         exit 2
     }
 }
+
+# --- static menu data ------------------------------------------------------
+
+# Duration presets. "Infinite" is a ~1-year stand-in: the launcher just passes a
+# big --duration so the loop runs until ED dies or you Ctrl+C. A real unbounded
+# loop is a later job (Operator: "Elite won't last infinitely, we'll fix that later").
+$script:DurationPresets = @(
+    @{ Label = '1h';       Seconds = 3600 },
+    @{ Label = '6h';       Seconds = 21600 },
+    @{ Label = '12h';      Seconds = 43200 },
+    @{ Label = 'Infinite'; Seconds = 31536000 }
+)
+
+# Main-menu rows. Live=$false rows are navigable + show their tag but Enter is a
+# no-op (Soon(TM)). Only Jump runs the bot today.
+$script:MainItems = @(
+    @{ Key = 'jump';     Label = 'Jump';     Tag = 'ready';    Live = $true },
+    @{ Key = 'combat';   Label = 'Combat';   Tag = ("Soon" + [char]0x2122); Live = $false },
+    @{ Key = 'explore';  Label = 'Explore';  Tag = ("Soon" + [char]0x2122); Live = $false },
+    @{ Key = 'trade';    Label = 'Trade';    Tag = ("Soon" + [char]0x2122); Live = $false },
+    @{ Key = 'settings'; Label = 'Settings'; Tag = '';         Live = $true },
+    @{ Key = 'quit';     Label = 'Quit';     Tag = '';         Live = $true }
+)
+
+# Settings rows. Only toggle/cycle/action/back are navigable; header/blank/soon
+# are decoration. RUN group is fully wired today; FEATURES is a placeholder.
+$script:SettingsRows = @(
+    @{ Kind = 'header'; Label = 'RUN' },
+    @{ Kind = 'toggle'; Key = 'Monitor';   Label = 'Monitor-Only   (log only, no key presses)' },
+    @{ Kind = 'toggle'; Key = 'Record';    Label = 'Record session' },
+    @{ Kind = 'toggle'; Key = 'RoutePlot'; Label = 'Auto-plot route (plot when none)' },
+    @{ Kind = 'cycle';  Key = 'Duration';  Label = 'Duration' },
+    @{ Kind = 'action'; Key = 'Calibrate'; Label = 'Calibrate compass (steering vision)' },
+    @{ Kind = 'blank' },
+    @{ Kind = 'header'; Label = 'FEATURES' },
+    @{ Kind = 'soon';   Label = 'Ship / Script / Vision toggles' },
+    @{ Kind = 'blank' },
+    @{ Kind = 'back';   Label = 'Back to menu' }
+)
 
 # --- helpers ---------------------------------------------------------------
 
@@ -169,8 +229,8 @@ function Test-VisionEnabled([string]$path) {
 }
 
 function Set-EliteForeground {
-    # Bring the Elite Dangerous window to the foreground so SendInput lands
-    # in the game. Returns $true if we found + focused a window.
+    # Bring the Elite Dangerous window to the foreground so SendInput lands in the
+    # game. Returns $true if we found + focused a window.
     if (-not ([System.Management.Automation.PSTypeName]'EDAFK.Win32').Type) {
         Add-Type -Namespace EDAFK -Name Win32 -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -190,161 +250,222 @@ public static extern bool BringWindowToTop(System.IntPtr hWnd);
     return [EDAFK.Win32]::SetForegroundWindow($h)
 }
 
+function Resolve-DurationIndex([double]$hours, [bool]$infinite) {
+    # Map the -DurationHours seed to the nearest non-Infinite preset, or pick
+    # Infinite outright if -Infinite was passed.
+    if ($infinite) { return ($script:DurationPresets.Count - 1) }
+    $bestI = 1; $bestD = [double]::MaxValue
+    for ($i = 0; $i -lt $script:DurationPresets.Count; $i++) {
+        $p = $script:DurationPresets[$i]
+        if ($p.Label -eq 'Infinite') { continue }
+        $ph = $p.Seconds / 3600.0
+        $d = [Math]::Abs($ph - $hours)
+        if ($d -lt $bestD) { $bestD = $d; $bestI = $i }
+    }
+    return $bestI
+}
+
 function Get-CliArgs([hashtable]$s) {
-    # Single source of truth for the CLI invocation, shared by the live menu
-    # preview and the actual launch.
-    $durationSeconds = [int]($s.DurationHours * 3600.0)
-    $a = @("-m", "ed_autojump.cli", "run", "--duration", $durationSeconds)
-    if ($s.Engage) { $a += "--engage-keys" } else { $a += "--no-engage-keys" }
-    if ($s.Record) { $a += "--record" }
-    if ($s.RoutePlot) { $a += "--route-plot" }
+    # Single source of truth for the cli invocation, shared by -PrintCmd and Jump.
+    # Monitor-Only inverts engage-keys: checked == --no-engage-keys (NullSender).
+    $secs = $script:DurationPresets[$s.DurationIndex].Seconds
+    $a = @("-m", "ed_autojump.cli", "run", "--duration", $secs)
+    if ([bool]$s.Monitor) { $a += "--no-engage-keys" } else { $a += "--engage-keys" }
+    if ([bool]$s.Record) { $a += "--record" }
+    if ([bool]$s.RoutePlot) { $a += "--route-plot" }
     return , $a
 }
 
-function Set-RowValue([hashtable]$s, [string]$row, [int]$dir) {
-    # Left/Right on a row. Duration steps by 0.5h (clamped); the rest toggle.
-    switch ($row) {
-        'Duration' {
-            $v = [double]$s.DurationHours + (0.5 * $dir)
-            if ($v -lt 0.5) { $v = 0.5 }
-            if ($v -gt 24.0) { $v = 24.0 }
-            $s.DurationHours = $v
-        }
-        default { $s[$row] = -not [bool]$s[$row] }   # on/off, direction ignored
+function Draw-Lines($lines, [int]$top, [int]$W) {
+    # Redraw a frame in place. Each line is {Text; Selected; Dim}.
+    if ($top -lt 0) { $top = 0 }
+    [Console]::SetCursorPosition(0, $top)
+    foreach ($ln in $lines) {
+        $text = [string]$ln.Text
+        if ($text.Length -gt $W) { $text = $text.Substring(0, $W - 1) + '~' }
+        else { $text = $text.PadRight($W) }
+        if ($ln.Selected) { Write-Host $text -ForegroundColor Black -BackgroundColor Cyan }
+        elseif ($ln.Dim) { Write-Host $text -ForegroundColor DarkGray }
+        else { Write-Host $text -ForegroundColor Gray }
     }
 }
 
-function Invoke-SettingsMenu {
-    # Interactive arrow-key editor. Mutates $s in place (hashtables are by ref).
-    # Up/Down move the cursor, Left/Right change the selected row, Enter = done.
-    # Falls back to plain prompts where ReadKey isn't available (e.g. ISE).
-    param([hashtable]$s, [bool]$visionOn, [string]$configPath, [string]$venvPython)
+function Test-Interactive {
+    $ok = $true
+    try { $null = [Console]::CursorTop } catch { $ok = $false }
+    if ($Host.Name -eq 'Windows PowerShell ISE Host') { $ok = $false }
+    return $ok
+}
 
-    $interactive = $true
-    try { $null = [Console]::CursorTop } catch { $interactive = $false }
-    if ($Host.Name -eq 'Windows PowerShell ISE Host') { $interactive = $false }
+# --- main menu -------------------------------------------------------------
 
-    if (-not $interactive) {
-        Write-Host "`n=== ED-AFK setup (Enter keeps the current value) ==="
-        $hrs = Read-Host ("Hours to jump? [{0}]" -f $s.DurationHours)
-        if ($hrs) { $s.DurationHours = [double]$hrs }
-        $s.Engage    = Read-YesNo "Press keys / fly the ship?" ([bool]$s.Engage)
-        $s.Record    = Read-YesNo "Save a log of the run?"      ([bool]$s.Record)
-        $s.RoutePlot = Read-YesNo "Auto-plot a route if none?"  ([bool]$s.RoutePlot)
+function Build-MainLines([int]$sel) {
+    $L = New-Object System.Collections.Generic.List[object]
+    $add = { param($t, $seld, $dim) $L.Add([pscustomobject]@{ Text = $t; Selected = $seld; Dim = $dim }) }
+    & $add "" $false $false
+    & $add "        E D - A F K" $false $false
+    & $add "        ===========" $false $false
+    & $add "" $false $false
+    for ($i = 0; $i -lt $script:MainItems.Count; $i++) {
+        $it = $script:MainItems[$i]
+        if ($it.Key -eq 'settings') { & $add "" $false $false }   # spacer before Settings
+        $isSel = ($i -eq $sel)
+        $marker = if ($isSel) { '> ' } else { '  ' }
+        $text = "    {0}{1}{2}" -f $marker, $it.Label.PadRight(12), $it.Tag
+        & $add $text $isSel (-not $it.Live)
+    }
+    & $add "" $false $false
+    & $add "    Up/Down move | Enter select | Q quit" $false $true
+    & $add "" $false $false
+    return , $L
+}
+
+function Invoke-MainMenu {
+    # Returns 'jump' | 'settings' | 'quit'. Soon(TM) rows are navigable no-ops.
+    if (-not (Test-Interactive)) {
+        Write-Host "`n=== ED-AFK ===   1) Jump   2) Settings   3) Quit"
+        $a = Read-Host "choose"
+        switch ($a) { '2' { return 'settings' } '3' { return 'quit' } default { return 'jump' } }
+    }
+    Clear-Host
+    $W = [Math]::Min(60, [Console]::BufferWidth - 1)
+    $count = $script:MainItems.Count
+    $sel = 0
+    $height = (Build-MainLines $sel).Count
+    1..$height | ForEach-Object { Write-Host "" }
+    $top = [Console]::CursorTop - $height
+    while ($true) {
+        Draw-Lines (Build-MainLines $sel) $top $W
+        $key = [Console]::ReadKey($true)
+        switch ($key.Key) {
+            'UpArrow'   { $sel = ($sel - 1 + $count) % $count }
+            'DownArrow' { $sel = ($sel + 1) % $count }
+            'Q'         { return 'quit' }
+            'Escape'    { return 'quit' }
+            { $_ -eq 'Enter' -or $_ -eq 'Spacebar' } {
+                $it = $script:MainItems[$sel]
+                if ($it.Key -eq 'jump')     { return 'jump' }
+                if ($it.Key -eq 'settings') { return 'settings' }
+                if ($it.Key -eq 'quit')     { return 'quit' }
+                # Soon(TM): no-op, fall through and keep drawing.
+            }
+        }
+    }
+}
+
+# --- settings menu ---------------------------------------------------------
+
+function Build-SettingsLines([int]$sel, [hashtable]$s, [bool]$vis, $nav) {
+    $curRow = $nav[$sel]
+    $L = New-Object System.Collections.Generic.List[object]
+    $add = { param($t, $seld, $dim) $L.Add([pscustomobject]@{ Text = $t; Selected = $seld; Dim = $dim }) }
+    & $add "" $false $false
+    & $add "    S E T T I N G S" $false $false
+    & $add "    ---------------" $false $false
+    & $add "" $false $false
+    for ($i = 0; $i -lt $script:SettingsRows.Count; $i++) {
+        $r = $script:SettingsRows[$i]
+        $sl = ($i -eq $curRow)
+        switch ($r.Kind) {
+            'header' { & $add ("  {0}" -f $r.Label) $false $true }
+            'blank'  { & $add "" $false $false }
+            'toggle' {
+                $box = if ([bool]$s[$r.Key]) { '[x]' } else { '[ ]' }
+                & $add ("    {0} {1}" -f $box, $r.Label) $sl $false
+            }
+            'cycle' {
+                $lab = $script:DurationPresets[$s.DurationIndex].Label
+                & $add ("    {0,-14} < {1} >" -f $r.Label, $lab) $sl $false
+            }
+            'action' {
+                $st = if ($vis) { 'ON (compass)' } else { 'OFF - blind' }
+                & $add ("    {0}  : {1}" -f $r.Label, $st) $sl $false
+            }
+            'soon' { & $add ("    {0}    Soon{1} (next pass)" -f $r.Label, [char]0x2122) $false $true }
+            'back' { & $add ("    {0}" -f $r.Label) $sl $false }
+        }
+    }
+    & $add "" $false $false
+    & $add "    Up/Down move | Left/Right or Enter change | Esc back" $false $true
+    & $add "" $false $false
+    return , $L
+}
+
+function Invoke-SettingsMenu([hashtable]$s, [bool]$visionOn) {
+    # Mutates $s in place (hashtables are by ref). Returns when Back/Esc is hit.
+    if (-not (Test-Interactive)) {
+        Write-Host "`n=== ED-AFK settings (Enter keeps current) ==="
+        $s.Monitor   = Read-YesNo "Monitor-Only (log only, no keys)?" ([bool]$s.Monitor)
+        $s.Record    = Read-YesNo "Record session log?"               ([bool]$s.Record)
+        $s.RoutePlot = Read-YesNo "Auto-plot a route if none?"        ([bool]$s.RoutePlot)
+        $inf = Read-YesNo "Run infinitely (until ED dies / Ctrl+C)?"  ($script:DurationPresets[$s.DurationIndex].Label -eq 'Infinite')
+        if ($inf) { $s.DurationIndex = $script:DurationPresets.Count - 1 }
+        else {
+            $hrs = Read-Host ("Hours? [{0}]" -f ($script:DurationPresets[$s.DurationIndex].Seconds / 3600.0))
+            if ($hrs) { $s.DurationIndex = Resolve-DurationIndex ([double]$hrs) $false }
+        }
         return
     }
 
-    # Steering is row 4: it's not a setting you toggle here -- selecting it and
-    # pressing Enter/Space/Left/Right runs calibrate-compass.
-    $rowKeys = @('Duration', 'Engage', 'Record', 'RoutePlot', 'Steering')
-    $sel = 0
-    $vis = $visionOn   # mutable: recomputed after an in-menu calibration
-    $W = [Math]::Min(78, [Console]::BufferWidth - 1)
-
-    function Build-Lines([hashtable]$s, [int]$sel, [bool]$visionOn, [string]$cfg, [string]$py) {
-        $dur    = "{0:0.0}" -f [double]$s.DurationHours
-        $durSec = [int]($s.DurationHours * 3600.0)
-        $tog    = { param($b) if ($b) { '[ ON  ]' } else { '[ off ]' } }
-        $steer  = if (-not $s.Engage) { 'n/a (keys disabled)' }
-                  elseif ($visionOn) { 'ON (vision/compass)' }
-                  else { 'OFF -- BLIND (Enter to calibrate)' }
-        $steerHint = if ($sel -eq 4) { '   <- Enter/Space = calibrate compass' } else { '' }
-        $cmd    = "$py " + ((Get-CliArgs $s) -join ' ')
-        $warn   = if ($s.Engage -and -not $visionOn) {
-                      'NOTE: steering OFF -- bot will NOT orient toward target.'
-                  } else { '' }
-
-        $L = New-Object System.Collections.Generic.List[object]
-        $add = { param($t, $r) $L.Add([pscustomobject]@{ Text = $t; Row = $r }) }
-
-        & $add '=============== ED-AFK setup =================' $null
-        & $add ' Up/Down pick   Left/Right change   Enter done' $null
-        & $add '' $null
-        & $add ("Duration (hours) :  < {0} >   ({1} s)" -f $dur, $durSec) 0
-        & $add ("Press keys       :  {0}   {1}" -f (& $tog $s.Engage), $(if ($s.Engage) { 'fly the ship' } else { 'dry run' })) 1
-        & $add ("Record log       :  {0}" -f (& $tog $s.Record)) 2
-        & $add ("Auto-plot route  :  {0}   {1}" -f (& $tog $s.RoutePlot), $(if ($s.RoutePlot) { 'auto-plot' } else { 'use YOUR route' })) 3
-        & $add ("Steering         :  {0}{1}" -f $steer, $steerHint) 4
-        & $add '' $null
-        & $add ("Config   : {0}" -f $cfg) $null
-        & $add ("Command  : {0}" -f $cmd) $null
-        & $add '' $null
-        & $add $warn $null
-        & $add '==============================================' $null
-        return $L
+    $vis = $visionOn
+    $nav = @()
+    for ($i = 0; $i -lt $script:SettingsRows.Count; $i++) {
+        if ($script:SettingsRows[$i].Kind -in 'toggle', 'cycle', 'action', 'back') { $nav += $i }
     }
-
-    # Allocate the menu's screen rows, then redraw in place each keypress.
-    $height = (Build-Lines $s $sel $vis $configPath $venvPython).Count
+    $sel = 0
+    $W = [Math]::Min(70, [Console]::BufferWidth - 1)
+    Clear-Host
+    $height = (Build-SettingsLines $sel $s $vis $nav).Count
     1..$height | ForEach-Object { Write-Host "" }
     $top = [Console]::CursorTop - $height
 
     while ($true) {
-        [Console]::SetCursorPosition(0, $top)
-        foreach ($ln in (Build-Lines $s $sel $vis $configPath $venvPython)) {
-            $selected = ($ln.Row -ne $null -and $ln.Row -eq $sel)
-            $prefix = if ($selected) { '> ' } else { '  ' }
-            $text = $prefix + $ln.Text
-            if ($text.Length -gt $W) { $text = $text.Substring(0, $W - 1) + '~' }
-            else { $text = $text.PadRight($W) }
-            if ($selected) { Write-Host $text -ForegroundColor Black -BackgroundColor Cyan }
-            else { Write-Host $text }
-        }
+        Draw-Lines (Build-SettingsLines $sel $s $vis $nav) $top $W
         $key = [Console]::ReadKey($true)
-        $row = $rowKeys[$sel]
-        $onSteering = ($row -eq 'Steering')
-        $action = 'none'
+        $row = $script:SettingsRows[$nav[$sel]]
+        $do = 'none'
         switch ($key.Key) {
-            'UpArrow'    { $sel = ($sel - 1 + $rowKeys.Count) % $rowKeys.Count }
-            'DownArrow'  { $sel = ($sel + 1) % $rowKeys.Count }
-            'LeftArrow'  { if ($onSteering) { $action = 'calibrate' } else { Set-RowValue $s $row -1 } }
-            'RightArrow' { if ($onSteering) { $action = 'calibrate' } else { Set-RowValue $s $row 1 } }
-            'Spacebar'   { if ($onSteering) { $action = 'calibrate' } else { Set-RowValue $s $row 1 } }
-            'Enter'      { if ($onSteering) { $action = 'calibrate' } else { $action = 'done' } }
-            'Escape'     { $action = 'done' }
+            'UpArrow'    { $sel = ($sel - 1 + $nav.Count) % $nav.Count }
+            'DownArrow'  { $sel = ($sel + 1) % $nav.Count }
+            'LeftArrow'  { $do = 'dec' }
+            'RightArrow' { $do = 'inc' }
+            'Spacebar'   { $do = 'activate' }
+            'Enter'      { $do = 'activate' }
+            'Escape'     { return }
         }
+        if ($do -eq 'none') { continue }
 
-        if ($action -eq 'done') {
-            [Console]::SetCursorPosition(0, $top + $height)
-            return
-        }
-        if ($action -eq 'calibrate') {
-            # Drop below the menu, run calibrate-compass with its own output,
-            # then re-read [vision].enabled and re-allocate the menu beneath it.
-            [Console]::SetCursorPosition(0, $top + $height)
-            Write-Host ""
-            Write-Host "[launch] calibrate-compass -- get in the cockpit, nav-compass visible..."
-            Push-Location $ProjectRoot
-            try { & $venvPython -m ed_autojump.cli calibrate-compass } finally { Pop-Location }
-            Write-Host ""
-            Write-Host "  (paste the [vision] block above into config.toml, then re-pick Steering)"
-            Write-Host ""
-            $vis = Test-VisionEnabled $configPath
-            $height = (Build-Lines $s $sel $vis $configPath $venvPython).Count
-            1..$height | ForEach-Object { Write-Host "" }
-            $top = [Console]::CursorTop - $height
-        }
-    }
-}
-
-function Read-Proceed {
-    # y = launch, n = back to the menu to change settings, q = quit the script.
-    while ($true) {
-        $a = Read-Host "Proceed?  [y] launch   [n] change settings   [q] quit"
-        switch -regex ($a) {
-            '^[Yy]' { return 'y' }
-            '^[Nn]' { return 'n' }
-            '^[Qq]' { return 'q' }
-            default { Write-Host "  type y, n, or q." }
+        switch ($row.Kind) {
+            'toggle' { $s[$row.Key] = -not [bool]$s[$row.Key] }
+            'cycle' {
+                $n = $script:DurationPresets.Count
+                if ($do -eq 'dec') { $s.DurationIndex = ($s.DurationIndex - 1 + $n) % $n }
+                else { $s.DurationIndex = ($s.DurationIndex + 1) % $n }
+            }
+            'action' {
+                if ($do -eq 'activate') {
+                    [Console]::SetCursorPosition(0, $top + $height)
+                    Write-Host ""
+                    Write-Host "[launch] calibrate-compass -- get in the cockpit, nav-compass visible..."
+                    Push-Location $ProjectRoot
+                    try { & $venvPython -m ed_autojump.cli calibrate-compass } finally { Pop-Location }
+                    Write-Host ""
+                    Write-Host "  (paste the [vision] block above into config.toml, then re-pick)"
+                    $vis = Test-VisionEnabled $configPath
+                    Clear-Host
+                    $height = (Build-SettingsLines $sel $s $vis $nav).Count
+                    1..$height | ForEach-Object { Write-Host "" }
+                    $top = [Console]::CursorTop - $height
+                }
+            }
+            'back' { if ($do -eq 'activate') { return } }
         }
     }
 }
 
 # --- passthrough mode (advanced) -------------------------------------------
 # Anything that isn't the standard run (doctor, calibrate-compass, etc.) goes
-# straight to the CLI with no review/focus.
-
-$env:PYTHONUTF8 = "1"
+# straight to the CLI with no menu / focus.
 
 if ($Extra -and $Extra.Count -gt 0) {
     Write-Host "[launch] passthrough: $($Extra -join ' ')"
@@ -361,26 +482,39 @@ if ($Extra -and $Extra.Count -gt 0) {
 # --- gather settings (starting state from the flags) -----------------------
 
 $s = @{
-    DurationHours = $DurationHours
-    Engage        = $true
-    Record        = (-not $NoRecord)
-    RoutePlot     = $RoutePlot.IsPresent
+    Monitor       = $Monitor.IsPresent           # default OFF -> steering ON (the bot flies)
+    Record        = (-not $NoRecord)             # default ON
+    RoutePlot     = $RoutePlot.IsPresent         # default OFF
+    DurationIndex = (Resolve-DurationIndex $DurationHours $Infinite.IsPresent)
 }
 $visionOn = Test-VisionEnabled $configPath
 
-# --- interactive review: menu, then y / n / q ------------------------------
+# --- -PrintCmd: resolve + print the cli command, then exit (no focus/run) ---
+
+if ($PrintCmd) {
+    $cli = Get-CliArgs $s
+    Write-Host ("[launch] would run: {0} {1}" -f $venvPython, ($cli -join ' '))
+    Write-Host ("[launch] duration={0}  monitor-only={1}  record={2}  route-plot={3}  steering(vision)={4}" -f `
+        $script:DurationPresets[$s.DurationIndex].Label, $s.Monitor, $s.Record, $s.RoutePlot, $(if ($visionOn) { 'ON' } else { 'OFF' }))
+    exit 0
+}
+
+# --- menu: pick an action --------------------------------------------------
 
 if ($Yes) {
-    # Unattended: keep the flags, print a one-line summary, go.
-    Write-Host ("[launch] {0}h, engage={1}, record={2}, route-plot={3}, steering={4}" -f `
-        $s.DurationHours, $s.Engage, $s.Record, $s.RoutePlot, $(if ($visionOn) { 'ON' } else { 'OFF' }))
+    # Unattended: only Jump is live, so go straight to it from the seeded flags.
+    Write-Host ("[launch] Jump (unattended): duration={0}, monitor-only={1}, record={2}, route-plot={3}, steering={4}" -f `
+        $script:DurationPresets[$s.DurationIndex].Label, $s.Monitor, $s.Record, $s.RoutePlot, $(if ($visionOn) { 'ON' } else { 'OFF' }))
 } else {
-    while ($true) {
-        Invoke-SettingsMenu $s $visionOn $configPath $venvPython
-        $choice = Read-Proceed
-        if ($choice -eq 'y') { break }
-        if ($choice -eq 'q') { Write-Host "[launch] quit."; exit 0 }
-        # 'n' -> loop, re-show the menu with the current settings
+    $launch = $false
+    while (-not $launch) {
+        $action = Invoke-MainMenu
+        switch ($action) {
+            'jump'     { $launch = $true }
+            'settings' { Invoke-SettingsMenu $s $visionOn; $visionOn = Test-VisionEnabled $configPath }
+            'quit'     { Write-Host "`n[launch] quit."; exit 0 }
+            default    { }   # Soon(TM) no-op
+        }
     }
 }
 
@@ -421,8 +555,8 @@ if (-not $NoFocus) {
 
 Write-Host "[launch] $venvPython $($cliArgs -join ' ')"
 
-# Run FROM the project dir so the CLI finds config.toml (its --config default
-# is cwd-relative) and resolves log/calibration/sessions dirs as documented.
+# Run FROM the project dir so the CLI finds config.toml (its --config default is
+# cwd-relative) and resolves log/calibration/sessions dirs as documented.
 Push-Location $ProjectRoot
 try {
     & $venvPython @cliArgs
