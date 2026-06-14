@@ -145,29 +145,37 @@ def _canonical_star() -> Optional[Any]:
     return _STAR_MASK
 
 
-def classify_icon(cell: Any) -> str:
-    """STAR / NON_STAR / NONE for a single icon cell (BGR ndarray).
+def classify_icon_scored(cell: Any) -> tuple[str, float]:
+    """(verdict, confidence) for one icon cell (BGR ndarray).
 
-    NONE = no readable glyph (blank / closed-panel / too small). NON_STAR = a
-    glyph that is not the star shape. Fails closed: only a confident star is STAR.
+    confidence is the TM_CCOEFF_NORMED correlation with the canonical star —
+    0.0 whenever there is no readable glyph (blank / closed-panel / too small).
+    Fails closed: only a confident star is STAR. The live overlay diagnostic
+    shows this score so sizing/location/confidence are all visible at a glance.
     """
     import cv2
     import numpy as np
 
     arr = np.asarray(cell)
     if arr.ndim != 3 or arr.shape[2] < 3 or arr.shape[0] < 4 or arr.shape[1] < 4:
-        return NONE
+        return (NONE, 0.0)
     gm = _glyph_mask(arr)
     if float(gm.mean()) < GLYPH_MIN_FRAC:
-        return NONE
+        return (NONE, 0.0)
     norm = _normalize_mask(gm)
     star = _canonical_star()
     if norm is None or star is None:
-        return NONE
+        return (NONE, 0.0)
     score = float(cv2.matchTemplate(norm.astype(np.float32),
                                     star.astype(np.float32),
                                     cv2.TM_CCOEFF_NORMED)[0, 0])
-    return STAR if score >= STAR_CC_MIN else NON_STAR
+    return (STAR if score >= STAR_CC_MIN else NON_STAR, score)
+
+
+def classify_icon(cell: Any) -> str:
+    """STAR / NON_STAR / NONE for one icon cell. Thin wrapper over the scored
+    form for callers that don't need the confidence."""
+    return classify_icon_scored(cell)[0]
 
 
 def row_cell_rect(frame_height: int, row: int) -> tuple[int, int, int, int]:
@@ -198,3 +206,29 @@ def detect_row_icon(frame: Any, row: int) -> str:
     if x1 - x0 < 4 or y1 - y0 < 4:
         return NONE
     return classify_icon(arr[y0:y1, x0:x1])
+
+
+def scan_navpanel_rows(frame: Any, n_rows: int = 10) -> list:
+    """Classify the leading icon of nav-list rows 0..n_rows-1 in a full-frame BGR
+    grab. PURE — returns one dict per row {row, rect, verdict, score}; the live
+    overlay diagnostic draws each rect GREEN (STAR) / RED (else) with its score so
+    sizing, location and confidence are all verifiable at a glance. The panel must
+    be OPEN in this frame (see module docstring)."""
+    import numpy as np
+
+    out: list = []
+    arr = np.asarray(frame)
+    if arr.ndim != 3 or arr.shape[2] < 3:
+        return out
+    h, w = arr.shape[:2]
+    for row in range(max(0, n_rows)):
+        rect = row_cell_rect(h, row)
+        x, y, cw, ch = rect
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(w, x + cw), min(h, y + ch)
+        if x1 - x0 < 4 or y1 - y0 < 4:
+            out.append({"row": row, "rect": rect, "verdict": NONE, "score": 0.0})
+            continue
+        verdict, score = classify_icon_scored(arr[y0:y1, x0:x1])
+        out.append({"row": row, "rect": rect, "verdict": verdict, "score": score})
+    return out

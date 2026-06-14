@@ -30,7 +30,7 @@ def test_local_toml_applies_even_without_primary(tmp_path):
 
 def test_defaults_when_nothing_present(tmp_path):
     cfg = load_config(tmp_path / "config.toml", environ={})
-    assert cfg.overlay.cv_debug is False           # ships OFF (opt-in)
+    assert cfg.overlay.cv_debug is True            # ships ON, opt-out (2026-06-13)
     assert cfg.overlay.cv_debug_ttl_s == 2.0
 
 
