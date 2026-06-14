@@ -491,8 +491,9 @@ def cmd_run(args) -> int:
     if console is not None:
         print("console: live status mirror ON (stdout)")
 
-    # CV debug boxes (opt-in, spec 2026-06-10): flash what every named
-    # grabber looks at. Registered globally so vision call sites find it.
+    # CV debug boxes (DEFAULT ON, opt-out — operator directive 2026-06-13):
+    # always draw what every named grabber looks at, green hit / red miss.
+    # Registered globally so vision call sites find it. Fail-soft: needs EDMC.
     if edmc is not None and cfg.overlay.cv_debug:
         import os as _os
         from .vision.debug_overlay import (CvDebugSink, ScreenToOverlay,

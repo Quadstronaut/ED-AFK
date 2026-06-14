@@ -55,3 +55,28 @@ def test_detect_row_icon_full_frame_star_then_system():
 def test_detect_row_icon_clamps_small_frame_to_none():
     tiny = np.zeros((100, 100, 3), dtype=np.uint8)
     assert ni.detect_row_icon(tiny, 0) == ni.NONE
+
+
+def test_classify_scored_returns_verdict_and_confidence():
+    img = cv2.imread(str(REGION))
+    verdict, score = ni.classify_icon_scored(_region_cell(img, 1))
+    assert verdict == ni.STAR
+    assert score >= ni.STAR_CC_MIN
+
+
+def test_classify_scored_blank_is_zero():
+    cell = np.full((41, 50, 3), 8, dtype=np.uint8)
+    assert ni.classify_icon_scored(cell) == (ni.NONE, 0.0)
+
+
+def test_scan_navpanel_rows_labels_and_boxes():
+    frame = cv2.imread(str(FULL))
+    rows = ni.scan_navpanel_rows(frame, n_rows=5)
+    assert len(rows) == 5
+    for r in rows:                       # every row carries a full-frame box
+        x, y, w, h = r["rect"]
+        assert w > 0 and h > 0
+        assert r["verdict"] in (ni.STAR, ni.NON_STAR, ni.NONE)
+    assert rows[0]["verdict"] == ni.STAR          # row A = star
+    assert rows[0]["score"] >= ni.STAR_CC_MIN
+    assert rows[2]["verdict"] == ni.NON_STAR      # row 2 = system bullseye
