@@ -216,6 +216,15 @@ def _parser() -> argparse.ArgumentParser:
         help="interactively align the CV debug boxes (EDMCOverlay) with the screen",
     )
 
+    # ed-autojump navpanel-overlay — LIVE per-row nav-icon vision diagnostic.
+    sub_navov = sub.add_parser(
+        "navpanel-overlay",
+        help="live: draw the nav-panel icon detector's per-row box "
+             "(green star / red non-star) + confidence on the EDMCOverlay",
+    )
+    sub_navov.add_argument("--rows", type=int, default=12,
+                           help="nav-list rows to scan/label (default 12)")
+
     return p
 
 
@@ -845,6 +854,13 @@ def cmd_calibrate_overlay(args) -> int:
     return run_calibration(cfg)
 
 
+def cmd_navpanel_overlay(args) -> int:
+    """Live per-row nav-icon vision diagnostic on the EDMCOverlay."""
+    cfg = load_config(args.config if args.config.is_file() else None)
+    from .vision.debug_overlay import run_navpanel_overlay
+    return run_navpanel_overlay(cfg, n_rows=args.rows)
+
+
 def cmd_doctor(args) -> int:
     from .doctor import format_results, overall_status, run_all_checks
 
@@ -932,6 +948,7 @@ def main(argv: list[str] | None = None) -> int:
         "calibrate-menu": cmd_calibrate_menu,
         "calibrate-compass": cmd_calibrate_compass,
         "calibrate-overlay": cmd_calibrate_overlay,
+        "navpanel-overlay": cmd_navpanel_overlay,
     }
     return dispatch[cmd](args)
 

@@ -325,3 +325,80 @@ def run_calibration(cfg: Any) -> int:
     finally:
         # Disconnect wipes our slots server-side (KB §5.3) — clean exit.
         writer.close()
+
+
+# ---------------------------------------------------------------------------
+# navpanel-overlay — LIVE per-row vision diagnostic
+# ---------------------------------------------------------------------------
+
+def run_navpanel_overlay(cfg: Any, *, n_rows: int = 12,
+                         refresh_s: float = 0.3) -> int:
+    """LIVE diagnostic: draw the nav-panel icon detector's per-row verdict on the
+    EDMCOverlay in realtime — GREEN star / RED non-star / white none, each with
+    its confidence score — so box SIZING, LOCATION and detector CONFIDENCE are all
+    eyeball-verifiable against the real panel. This is the reusable pattern for
+    proving any region detector (the operator wants it in many places).
+
+    Open the NAVIGATION panel (left HUD) in-game and keep ELITE FOCUSED — the
+    overlay only renders while ED is foreground (KB §5.2). Press q to quit.
+    Fail-soft + read-only: grabs the screen and draws boxes, never sends a key.
+    """
+    ov = getattr(cfg, "overlay", None)
+    if ov is None or not getattr(ov, "enabled", False):
+        print("[overlay].enabled is false — enable the overlay first.")
+        return 1
+    try:
+        import keyboard
+    except Exception as e:  # noqa: BLE001
+        print(f"`keyboard` package unavailable ({e}) — install project deps.")
+        return 1
+
+    import os
+    from ..overlay import OverlayWriter
+    from ..vision import navpanel_icons as ni
+    from ..vision.capture import ScreenGrabber
+
+    calib_dir = Path(os.path.expandvars(cfg.paths.calibration_dir))
+    win_w, win_h = tuple(cfg.cv.target_resolution)
+    transform = ScreenToOverlay.load(calib_dir, win_w, win_h)
+
+    backend = getattr(cfg.vision, "capture_backend", "gdi")
+    try:
+        grab = ScreenGrabber((0, 0, 0, 0), backend=backend).grab   # full frame
+    except Exception as e:  # noqa: BLE001
+        print(f"screen capture unavailable ({e}).")
+        return 1
+
+    writer = OverlayWriter(ov)
+    writer.start()
+    print("connecting to EDMCOverlay...")
+    deadline = time.monotonic() + max(5.0, float(ov.connect_timeout_s))
+    while time.monotonic() < deadline and not writer.connected:
+        time.sleep(0.25)
+    if not writer.connected:
+        print("EDMCOverlay unreachable — is ED running (windowed/borderless)")
+        print("and EDMCOverlay installed? (it exits without the game)")
+        writer.close()
+        return 1
+
+    sink = CvDebugSink(writer, transform, ttl_s=max(2.0, refresh_s * 5))
+    verdict_color = {ni.STAR: "hit", ni.NON_STAR: "miss", ni.NONE: None}
+    print(f"LIVE nav-panel overlay — scanning {n_rows} rows.")
+    print("Open the NAVIGATION panel; KEEP ELITE FOCUSED. Press q to quit.")
+    try:
+        while True:
+            if keyboard.is_pressed("q"):
+                break
+            frame = grab()
+            if frame is not None:
+                for r in ni.scan_navpanel_rows(frame, n_rows=n_rows):
+                    label = f"r{r['row']} {r['verdict']} {r['score']:.2f}"
+                    sink.box(f"navrow{r['row']}", r["rect"],
+                             verdict=verdict_color.get(r["verdict"]), label=label)
+            time.sleep(refresh_s)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        writer.close()
+    print("done.")
+    return 0
