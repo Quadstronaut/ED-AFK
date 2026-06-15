@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """A2 -- behavior-preservation lens for the Phase-1 ED-AFK FlowRunner split.
 
 READ-ONLY. Parses SOURCE; does NOT import the package, run flight logic, or
@@ -81,8 +81,8 @@ def module_constant(src: str, name: str):
 # --------------------------------------------------------------------------
 # B4 -- ladder order recovery
 # --------------------------------------------------------------------------
-def recover_ladder(src: str) -> list[str]:
-    """Walk _maybe_startup in source order and emit a token per decision branch.
+def recover_ladder(src: str, fn_name: str = "_maybe_startup") -> list[str]:
+    """Walk fn_name in source order and emit a token per decision branch.
 
     We key off the distinctive guards/markers so the recovered list is the
     SAME ORDER the live classifier evaluates. Reordering any branch in a future
@@ -91,7 +91,7 @@ def recover_ladder(src: str) -> list[str]:
     tree = ast.parse(src)
     fn = None
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_maybe_startup":
+        if isinstance(node, ast.FunctionDef) and node.name == fn_name:
             fn = node
             break
     if fn is None:
@@ -100,15 +100,15 @@ def recover_ladder(src: str) -> list[str]:
     markers = [
         ("docked", re.compile(r'getattr\(st,\s*"docked"')),
         ("in_supercruise", re.compile(r'getattr\(st,\s*"in_supercruise"')),
-        ("parked_terminal", re.compile(r"_is_parked_terminal\(st\)")),
+        ("parked_terminal", re.compile(r"_is_parked_terminal\((?:runner,\s*)?st\)")),
         ("p1_indeterminate", re.compile(r"near_star is None or dest is None")),
         ("p2_local_star", re.compile(r"near_star is True")),
         ("p3_fresh_arrival",
          re.compile(r"jump_age is None or jump_age <= FRESH_ARRIVAL_WINDOW_S")),
         ("smacked_cooldown",
-         re.compile(r'self\._smacked and getattr\(st,\s*"fsd_cooldown"')),
+         re.compile(r'(?:self|runner)\._smacked and getattr\(st,\s*"fsd_cooldown"')),
         ("empty_route_guard", re.compile(r"if not route:")),
-        ("startup", re.compile(r'self\._run\("startup"\)')),
+        ("startup", re.compile(r'(?:self|runner)\._run\("startup"\)')),
     ]
     found: list[tuple[int, str]] = []
     for tok, pat in markers:
@@ -174,18 +174,28 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", type=Path, default=None)
     ap.add_argument("--proc", type=Path, default=None)
+    ap.add_argument("--boot", type=Path, default=None,
+                    help="Path to boot_routes.py (post-split); enables classify_startup checks")
+    ap.add_argument("--engine", type=Path, default=None,
+                    help="Path to ed-core dispatcher.py (post-split); B3 reads from here")
     args = ap.parse_args()
     src_root = args.src or default_src()
     proc_dir = args.proc or default_proc()
 
     dispatcher = (src_root / "flow" / "dispatcher.py").read_text(encoding="utf-8")
     steps = (src_root / "flow" / "steps.py").read_text(encoding="utf-8")
+    boot_src = args.boot.read_text(encoding="utf-8") if args.boot else None
+    engine_src = args.engine.read_text(encoding="utf-8") if args.engine else None
 
     results: list[tuple[str, bool, str]] = []
 
     # B1
-    b1 = assign_value_in_function(dispatcher, "_maybe_startup",
-                                  "FRESH_ARRIVAL_WINDOW_S")
+    if boot_src is not None:
+        b1 = assign_value_in_function(boot_src, "classify_startup",
+                                      "FRESH_ARRIVAL_WINDOW_S")
+    else:
+        b1 = assign_value_in_function(dispatcher, "_maybe_startup",
+                                      "FRESH_ARRIVAL_WINDOW_S")
     results.append(("B1 classifier FRESH_ARRIVAL_WINDOW_S == 30.0",
                     b1 == 30.0, f"got {b1!r}"))
 
@@ -195,11 +205,15 @@ def main() -> int:
                     b2 == 120.0 and b2 != b1, f"got {b2!r}"))
 
     # B3
-    b3 = module_constant(dispatcher, "_CLEAR_JOIN_WINDOW_S")
+    b3 = module_constant(engine_src if engine_src is not None else dispatcher,
+                         "_CLEAR_JOIN_WINDOW_S")
     results.append(("B3 _CLEAR_JOIN_WINDOW_S == 60.0", b3 == 60.0, f"got {b3!r}"))
 
     # B4
-    ladder = recover_ladder(dispatcher)
+    if boot_src is not None:
+        ladder = recover_ladder(boot_src, "classify_startup")
+    else:
+        ladder = recover_ladder(dispatcher)
     results.append(("B4 _maybe_startup ladder order",
                     ladder == EXPECTED_LADDER,
                     f"got {ladder}"))
@@ -221,6 +235,15 @@ def main() -> int:
 
     # B7
     have = defined_funcs(steps)
+    if boot_src is not None:
+        # Post-split: shared steps are in ed-core steps_shared.py
+        # Compute path: boot_routes.py -> ed-autojump/src/ed_autojump/flow/
+        # ed-core/src/ed_core/flow/steps_shared.py is 3 dirs up then down to ed-core
+        ed_autojump_proj = args.boot.parent.parent.parent.parent  # .../ed-autojump
+        steps_shared_p = (ed_autojump_proj.parent / "ed-core" / "src"
+                          / "ed_core" / "flow" / "steps_shared.py")
+        if steps_shared_p.exists():
+            have |= defined_funcs(steps_shared_p.read_text(encoding="utf-8"))
     missing_steps = [s for s in REQUIRED_STEPS if s not in have]
     results.append(("B7 shared/honk/body step impls present",
                     not missing_steps, f"missing: {missing_steps}"))

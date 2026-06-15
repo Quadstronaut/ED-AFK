@@ -1,0 +1,988 @@
+"""Map live journal events to procedures, run them through the interpreter,
+launch the parallel honk track, and own the live tail/status loop.
+
+ENGINE ONLY -- the jump classifier, event routes, and domain-specific routing
+live in ed_autojump.flow.boot_routes (registered into this engine via the
+surface #1 and #2 registry in ed_core.flow.registry).
+
+Replaces the orchestrator's escape/engage handlers. Replay (catch-up) events
+only update state; actions fire only once caught up to LIVE."""
+
+from __future__ import annotations
+
+import threading
+import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Any, Callable, Optional
+
+from ed_core.flow.context import ShipFuel, StepContext
+from ed_core.flow.registry import run_classifiers, run_event_routes
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.model import Procedure
+
+# Procedures whose whole premise is a live supercruise/fresh-load scene: a
+# star smack (SupercruiseExit Body=Star) yanks that scene away mid-run, so
+# they are PREEMPTED at the next abort poll instead of grinding retry cycles
+# against normal-space glare (the 2026-06-06 13:26 pattern: arrival kept
+# macro-pressing for 3 retries before the queued smack could dispatch).
+# smack_recovery is deliberately absent: a RE-smack is exactly the scene its
+# own retry path expects.
+# dock joins arrival/startup: its approach leg flies a live supercruise scene
+# toward the station, so a star smack (SupercruiseExit Body=Star) mid-approach
+# yanks that scene away and must hand off to smack_recovery instead of grinding
+# the dock retry loop against normal-space glare.
+_PREEMPT_ON_SMACK = frozenset({"arrival", "startup", "dock", "sc_resume"})
+
+# Route-complete correlation join window. NavRouteClear fires in witchspace
+# ~10s before the destination FSDJump; this is the max gap (in JOURNAL
+# timestamps, not wall clock) we accept between that clear and the arriving
+# FSDJump before treating the clear as belonging to a different event (e.g. a
+# manual re-plot minutes earlier). This is a CORRELATION window between two
+# journal events â€” NOT a wall-clock success/failure gate (house rule).
+_CLEAR_JOIN_WINDOW_S = 60.0
+
+
+class _TailHub:
+    """Single consumer of JournalTail; fans every event out to ALL subscribers.
+
+    Why: the honk track and the main procedure used to call tail.step()
+    concurrently, and each journal event was consumed by exactly ONE of them
+    at random. A StartJump eaten by the honk's waiter was invisible to
+    hold_alignment; an FSSDiscoveryScan eaten by the main waiter blinded the
+    honk. JournalTail.step() also isn't thread-safe. The hub serialises the
+    tail behind a lock and gives every waiter its own queue, so every
+    subscriber sees every event exactly once.
+    """
+
+    def __init__(self, tail: Any, on_event: Optional[Callable[[Any], None]] = None):
+        self._tail = tail
+        self._on_event = on_event   # state tracking â€” called ONCE per event
+        self._lock = threading.Lock()
+        self._queues: dict[int, list] = {}
+        self._next_handle = 0
+
+    def subscribe(self) -> int:
+        with self._lock:
+            h = self._next_handle
+            self._next_handle += 1
+            self._queues[h] = []
+            return h
+
+    def unsubscribe(self, handle: int) -> None:
+        with self._lock:
+            self._queues.pop(handle, None)
+
+    def poll(self, handle: int) -> list:
+        """Pump the tail once, broadcast, and return this subscriber's
+        pending events. An unsubscribed handle returns [] (a parallel track
+        that outlived its join window polls into silence and exits on its
+        own key-release backstop rather than KeyError-ing)."""
+        with self._lock:
+            for ev in self._tail.step():
+                if self._on_event is not None:
+                    self._on_event(ev)
+                for q in self._queues.values():
+                    q.append(ev)
+            pending = self._queues.get(handle)
+            if pending is None:
+                return []
+            self._queues[handle] = []
+            return pending
+
+
+class FlowRunner:
+    def __init__(
+        self,
+        *,
+        procedures: dict[str, Procedure],
+        sender: Any,
+        clock: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], None] = time.sleep,
+        now_utc: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        status_supplier: Callable[[], Optional[Any]] = lambda: None,
+        compass_reader: Optional[Any] = None,
+        frame_grabber: Optional[Callable[[], Any]] = None,
+        align_kwargs: Optional[dict] = None,
+        compass_samples: int = 7,
+        widget_ring_enabled: bool = False,
+        widget_ring_reader: Optional[Any] = None,
+        widget_frame_grabber: Optional[Callable[[], Any]] = None,
+        widget_ring_on_miss: str = "degrade",
+        overlay: Optional[Any] = None,
+        record: Optional[Callable[[str, Any], None]] = None,
+        frame_sink: Optional[Callable[[str, Any], None]] = None,
+        tail: Optional[Any] = None,
+        status_reader: Optional[Any] = None,
+        navroute_reader: Optional[Any] = None,
+        panic_switch: Optional[Any] = None,
+        heat_eject_cooldown_s: float = 10.0,
+        body_tour_enabled: bool = False,
+        body_tour_dwell_s: float = 2.0,
+        body_tour_max_bodies: int = 5,
+        body_tour_max_rows: int = 8,
+        body_tour_orbit_timeout_s: float = 120.0,
+        body_tour_min_bodies: int = 0,
+        nav_panel_reader: Optional[Any] = None,
+        nav_panel_grabber: Optional[Callable[[], Any]] = None,
+        station_menu_grabber: Optional[Callable[[], Any]] = None,
+        visited_logger: Optional[Any] = None,
+        scoop_rate_fn: Optional[Callable[[str], Optional[float]]] = None,
+        dest_is_named_station_fn: Optional[Callable[[Any], bool]] = None,
+    ):
+        self.procedures = procedures
+        self.sender = sender
+        self.clock = clock
+        self.sleeper = sleeper
+        self.now_utc = now_utc
+        self.status_supplier = status_supplier
+        self.compass_reader = compass_reader
+        self.frame_grabber = frame_grabber
+        self.align_kwargs = align_kwargs or {}
+        self.compass_samples = compass_samples
+        self.widget_ring_enabled = widget_ring_enabled
+        self.widget_ring_reader = widget_ring_reader
+        self.widget_frame_grabber = widget_frame_grabber
+        self.widget_ring_on_miss = widget_ring_on_miss
+        self.overlay = overlay
+        self.record = record
+        self.frame_sink = frame_sink
+        self.tail = tail
+        self.status_reader = status_reader
+        self.navroute_reader = navroute_reader
+        self.panic_switch = panic_switch
+        self.heat_eject_cooldown_s = heat_eject_cooldown_s
+        self._body_tour_enabled = body_tour_enabled
+        self._body_tour_dwell_s = body_tour_dwell_s
+        self._body_tour_max_bodies = body_tour_max_bodies
+        self._body_tour_max_rows = body_tour_max_rows
+        self._body_tour_orbit_timeout_s = body_tour_orbit_timeout_s
+        self._body_tour_min_bodies = body_tour_min_bodies
+        self.nav_panel_reader = nav_panel_reader      # identity targeting (task #45)
+        self.nav_panel_grabber = nav_panel_grabber
+        # Docked-menu CV (full-frame grab): auto_launch safety gate + the
+        # services-macro menu-up entry gate read the menu through this.
+        self.station_menu_grabber = station_menu_grabber
+        # Append-only log of systems visited on live FSDJump arrivals. Pure
+        # observability: never touches a condition/action and is fail-soft on
+        # write, so it can't disturb the flight loop. None == disabled.
+        self._visited_logger = visited_logger
+        # Optional domain-provided scoop rate lookup fn.
+        # Injected by activate() so the engine never imports a domain module.
+        self._scoop_rate_fn = scoop_rate_fn
+        # Optional domain-provided station predicate (captures at plot time).
+        # Same injection pattern as scoop_rate_fn -- no core->domain import.
+        self._dest_is_named_station_fn = dest_is_named_station_fn
+
+        self._event_times: dict[str, float] = {}
+        # True while the journal's last SC transition is SupercruiseExit at a
+        # Star (see _record_event_time) â€” restart-while-smacked routing.
+        self._smacked = False
+        # Witchspace latch (hyperspace loading screen). SET on a Hyperspace
+        # StartJump (JumpType=="Hyperspace"), CLEARED on FSDJump (~18s window,
+        # journal-confirmed). While set the interpreter PAUSES every step â€”
+        # the nav panel / orient scene is invalid and input is harmful.
+        # Belt-and-suspenders: also cleared on SupercruiseEntry / Docked so a
+        # missed FSDJump line can never permanently wedge the bot. Event-gated
+        # only â€” NO clock/timer (no-arbitrary-timed-waits rule).
+        self._in_witchspace = False
+        self._latest_status: Optional[Any] = status_supplier()
+        self._caught_up = False
+        self._startup_done = False
+        self._last_eject_t: float = 0.0
+        self._jumps = 0
+        self.stop_requested = False
+        # Mid-procedure preemption (2026-06-06): _on_tail_event fires DURING
+        # procedures (in-step waiters pump the hub), so a scene-invalidating
+        # event can flag the CURRENT run to abort at its next poll. Strings,
+        # not Events: set/read across the main + track threads, worst case a
+        # beat late, never torn.
+        self._running_proc: Optional[str] = None
+        self._preempt: Optional[str] = None
+        # Single tail consumer + fan-out (see _TailHub). None without a tail.
+        self._hub: Optional[_TailHub] = (
+            _TailHub(tail, on_event=self._on_tail_event) if tail is not None else None)
+        # Status.json is read from the main loop, honk waiters, and the heat
+        # watchdog thread â€” serialise the reader.
+        self._status_lock = threading.Lock()
+        # >0 while a UI macro owns input (heat watchdog pauses). Counter, not
+        # a bool, so a parallel track can't clear the main track's hold.
+        self._exclusive_lock = threading.Lock()
+        self._exclusive_count = 0
+        # Latest FSDTarget + monotone seq â€” target_next_route's danger gate
+        # reads these to tell a NEW target from a stale one.
+        self._fsd_target_seq = 0
+        self._latest_fsd_target: Optional[Any] = None
+        # body_tour latches (set in _apply_state, exposed via _make_context).
+        # _autoscan_bodies / _autoscan_seq / _fss_discovered are SYSTEM-SCOPED
+        # (reset on FSDJump). _drop_seq / _scex_seq are monotone SESSION
+        # counters compared only against a same-loop snapshot â€” resetting them
+        # is unnecessary and a mid-arrival reset cannot occur during a SC-only
+        # tour (matches _fsd_target_seq, which also never resets).
+        self._autoscan_bodies: set[str] = set()
+        self._autoscan_seq = 0          # monotone, mirrors _fsd_target_seq (D5)
+        self._fss_discovered = False    # D4
+        self._fss_body_count = 0        # FSSDiscoveryScan BodyCount (min-bodies gate)
+        self._drop_seq = 0              # SupercruiseDestinationDrop counter (PD1)
+        self._scex_seq = 0              # SupercruiseExit counter (PD7)
+        # scoop_refuel inputs (spec 2026-06-06-scoop-refuel-design Â§4.3),
+        # fed by backlog AND live events like _smacked:
+        # - the CURRENT system's arrival-star class = the last HYPERSPACE
+        #   StartJump's StarClass (FSDTarget at arrival time is the NEXT hop;
+        #   supercruise StartJumps carry null and must not clobber).
+        # - tank size + equipped scoop max rate from the latest Loadout
+        #   (written at every LoadGame, so backlog always provides one).
+        self._arrival_star_class: Optional[str] = None
+        # Current system name (FSDJump/Location StarSystem, backlog AND live)
+        # â€” feeds the star-lock identity check (2026-06-07 council).
+        self._current_system: Optional[str] = None
+        # Current ship model â€” lowercase internal name as emitted by the journal
+        # "Ship" field of LoadGame and Loadout events (e.g. "mandalay", "type9").
+        # Feeds dock-pitch duration via ship_sizes.pitch_s_for_ship.
+        self._current_ship: Optional[str] = None
+        self._ship_fuel: Optional[ShipFuel] = None
+        # AWARE-UTC timestamp of the last FSDJump, parsed from the EVENT'S OWN
+        # journal timestamp (NOT _event_times["jump"], which is monotonic
+        # clock() stamped at backlog REPLAY time and reads a 25-min-stale
+        # restart as a fresh arrival â€” the 11:57Z incident). scoop_refuel's
+        # stale-arrival skip derives its age from this.
+        self._last_fsdjump_utc: Optional[datetime] = None
+        # Route-complete detection (council-ratified 2026-06-07). The final hop
+        # emits FSDTarget RemainingJumpsInRoute:1 -> StartJump Hyperspace ->
+        # NavRouteClear (in witchspace, ~10s pre-arrival) -> FSDJump to the
+        # destination. NavRouteClear ALSO fires on a manual re-plot, so it is
+        # NOT the trigger by itself: we cache the LAST waypoint while the route
+        # still exists, latch the clear + its timestamp, and at the next FSDJump
+        # confirm completion by matching SystemAddress (int, never name) AND a
+        # tight journal-timestamp correlation window. The _navroute_cleared latch
+        # is single-shot (consumed at completion), which by itself blocks a
+        # re-fire on a second jump into the same system without a fresh plot.
+        #
+        # _final_waypoint is cached from the NavRoute EVENT when present, but is
+        # ALSO resolved at decision time from the DURABLE NavRoute.json reader
+        # (_navroute_state) â€” the event is missing across a journal rotation /
+        # game restart mid-route, while the FILE persists (FIX 2026-06-07: the
+        # missed-fire bug where a rotation dropped the cache and the final hop
+        # fell into the 5m40s false-abort grind).
+        self._final_waypoint: Optional[tuple[int, str]] = None
+        self._navroute_cleared: bool = False
+        self._navroute_cleared_utc: Optional[datetime] = None
+        # Station docking (station-dock feature). Reason of the last
+        # DockingDenied (step_dock_request reads it via docking_denied_supplier
+        # to tell a retryable Distance denial from an abort-to-human one);
+        # whether the ship is currently docked at a station (the pit-stop
+        # resume trigger arms only while docked); and the station name for the
+        # terminus overlay/record.
+        self._docking_denied_reason: Optional[str] = None
+        self._docked: bool = False
+        self._docked_station: Optional[str] = None
+        # True once the station has broadcast "$STATION_NoFireZone_entered;"
+        # via ReceiveText â€” the live-verified (2026-06-07 operator journal)
+        # signal that the ship is inside the 7.5km docking request range.
+        # Cleared by _clear_no_fire_zone at the start of each dock_approach
+        # run so the flag only holds for THE CURRENT approach leg.
+        self._no_fire_zone_entered: bool = False
+        # CAPTURE-AT-PLOT (station-dock): when the operator plots a route to a
+        # STATION (galaxy map -> station), the game may set Status.Destination
+        # to the station body (Body != 0) at the NavRoute event â€” BEFORE the
+        # bot's first TargetNextRouteSystem overwrites it to the route's first
+        # hop system star (Body 0). We snapshot it here and use it as the dock
+        # trigger at route-complete instead of the (by-then-overwritten) live
+        # Destination. Stored as (system_address, body, name).
+        #
+        # LIVE-TEST-GATED: the game mechanic "plot-to-station sets
+        # Status.Destination.Body != 0 at NavRoute" is UNCONFIRMED from
+        # journals (Status.json is a live snapshot with no history; the journals
+        # for this session show a system-level plot, not a station-level one).
+        # If the mechanic does NOT hold, _dest_is_named_station() returns False
+        # at the NavRoute event -> _dock_target stays None -> is_station stays
+        # False -> today's park path. Fail-safe: absent or wrong capture ==
+        # current behavior, never worse.
+        #
+        # Operator confirmation test (do before relying on this in production):
+        # 1. Undock, route cleared.
+        # 2. Galaxy map -> plot to a STATION (e.g. "Robigo Mines"), confirm.
+        #    Do NOT press Target-Next or move.
+        # 3. Read Status.json Destination. If Body != 0 and Name == station ->
+        #    this capture works. If Body == 0 -> capture-at-plot is dead;
+        #    a different signal is needed before this helps.
+        self._dock_target: Optional[tuple[int, int, str]] = None
+        # ROUTE-COMPLETE SETTLE re-poll (live-proven 2026-06-09): at a real
+        # station terminus the game auto-targets the terminus station into
+        # Status.Destination ~1.09s AFTER the FSDJump (measured: TRC Holding
+        # Inc., Body=29, appeared 1.09s post-jump and stayed through docking).
+        # The legacy one-shot read at the FSDJump instant therefore sees only
+        # the arrival STAR (Body=0) and wrongly parks. These bound a short
+        # re-poll of Destination so the station flag can resolve. The CAP is a
+        # ceiling on the wait, NEVER the success signal (the Destination flag
+        # decides success); on cap-exhaust we fall back to today's park path.
+        self._route_complete_settle_s = 2.0       # ceiling (live flip <=1.09s)
+        self._route_complete_settle_poll_s = 0.25  # re-read cadence
+
+    # ---- public state accessors ------------------------------------------
+    def event_time(self, name: str) -> Optional[float]:
+        return self._event_times.get(name)
+
+    def _jump_age(self) -> Optional[float]:
+        """Seconds since the last FSDJump, per the EVENT'S OWN journal
+        timestamp. None when no FSDJump has been seen. Evaluated at call time
+        (now_utc()) so a context wires the live age, not a build-time snapshot.
+        Both sides are AWARE-UTC datetimes â€” subtraction is well-defined."""
+        if self._last_fsdjump_utc is None:
+            return None
+        return (self.now_utc() - self._last_fsdjump_utc).total_seconds()
+
+    @staticmethod
+    def _parse_journal_ts(ts: str) -> Optional[datetime]:
+        """Parse an ED journal ISO8601 timestamp ("...Z") into an AWARE-UTC
+        datetime. The trailing Z (Zulu/UTC) is normalised to +00:00 for
+        fromisoformat on older Pythons. Returns None on a malformed stamp so a
+        garbled line degrades to 'no jump seen' rather than crashing the tail."""
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
+
+    def _fresh_status(self) -> Optional[Any]:
+        """Re-poll Status.json on every read. The previous wiring handed steps
+        a snapshot frozen at procedure start â€” `_poll_status` only ran in the
+        outer live loop, so engage_jump's fsd_charging gate and any in-step
+        state machine were reading STALE flags for the procedure's whole life.
+        Event-driven steps need live state; a stat() per read is cheap.
+
+        Without a status_reader (tests), fall back to the injected supplier
+        so scripted fakes stay live too."""
+        if self.status_reader is not None:
+            self._poll_status()
+        else:
+            st = self.status_supplier()
+            if st is not None:
+                self._latest_status = st
+        return self._latest_status
+
+    def _should_abort(self) -> bool:
+        """Operator abort signal: panic hotkey or stop request. OPERATOR-ONLY
+        by design â€” the preempt flag must not flow through here (the heat
+        watchdog exits PERMANENTLY on this signal; a transient preemption
+        would kill heat protection for the rest of the session). Per-run
+        contexts get the combined signal via _run_abort instead."""
+        if self.stop_requested:
+            return True
+        return self.panic_switch is not None and getattr(
+            self.panic_switch, "tripped", False)
+
+    def _run_abort(self) -> bool:
+        """Abort signal for the CURRENT procedure's contexts: operator abort
+        OR scene preemption. run_procedure polls this before every step and
+        every in-step loop consults it, so a preempt lands at the next poll
+        â€” cooperative, key-release-safe, no thread killing."""
+        return self._should_abort() or self._preempt is not None
+
+    # ---- exclusive-input guard (heat watchdog pauses) ----------------------
+    @contextmanager
+    def _exclusive_input(self):
+        """Mark 'a UI macro owns input' for the body's duration. The heat
+        watchdog skips ticks while any holder is active (spec
+        2026-06-06-heat-watchdog-design)."""
+        with self._exclusive_lock:
+            self._exclusive_count += 1
+        try:
+            yield
+        finally:
+            with self._exclusive_lock:
+                self._exclusive_count -= 1
+
+    def input_exclusive(self) -> bool:
+        with self._exclusive_lock:
+            return self._exclusive_count > 0
+
+    # ---- context construction --------------------------------------------
+    def _clear_docking_denied(self) -> None:
+        """Reset the stashed DockingDenied reason. step_dock_request calls this
+        when it arms so it acts only on a denial earned by its own request,
+        never a stale one left by an earlier out-of-range probe."""
+        self._docking_denied_reason = None
+
+    def _clear_no_fire_zone(self) -> None:
+        """Reset the no-fire-zone entry flag. step_dock_approach calls this on
+        entry so a stale True from a prior approach (the ship was already in
+        range when the step ran on a restart) cannot skip the closing leg."""
+        self._no_fire_zone_entered = False
+
+    def _make_context(self) -> StepContext:
+        # Each context gets its OWN hub subscription so concurrent waiters
+        # (honk track + main procedure) all see every event. _run owns the
+        # unsubscribe via the handle stashed on the context.
+        # No hub (no tail) -> event_waiter=None, TRUTHFULLY "no journal
+        # wiring": steps take their unit-test fallbacks instead of spinning
+        # on a waiter that always says True against suppliers that never
+        # advance.
+        handle = self._hub.subscribe() if self._hub is not None else None
+        waiter = (None if self._hub is None else
+                  (lambda name, t, _h=handle: self._wait_for_event(_h, name, t)))
+        ctx = StepContext(
+            sender=self.sender,
+            clock=self.clock,
+            sleeper=self.sleeper,
+            compass_reader=self.compass_reader,
+            frame_grabber=self.frame_grabber,
+            align_kwargs=self.align_kwargs,
+            compass_samples=self.compass_samples,
+            widget_ring_enabled=self.widget_ring_enabled,
+            widget_ring_reader=self.widget_ring_reader,
+            widget_frame_grabber=self.widget_frame_grabber,
+            widget_ring_on_miss=self.widget_ring_on_miss,
+            body_tour_enabled=self._body_tour_enabled,
+            body_tour_dwell_s=self._body_tour_dwell_s,
+            body_tour_max_bodies=self._body_tour_max_bodies,
+            body_tour_max_rows=self._body_tour_max_rows,
+            body_tour_orbit_timeout_s=self._body_tour_orbit_timeout_s,
+            body_tour_min_bodies=self._body_tour_min_bodies,
+            nav_panel_reader=self.nav_panel_reader,
+            nav_panel_grabber=self.nav_panel_grabber,
+            station_menu_grabber=self.station_menu_grabber,
+            # Current ship model (journal LoadGame/Loadout latch) â€” feeds the
+            # dock blind-maneuver's ship-size pitch duration.
+            ship_supplier=lambda: self._current_ship,
+            fss_body_count_supplier=lambda: self._fss_body_count,
+            fss_discovered_supplier=lambda: self._fss_discovered,
+            autoscan_supplier=lambda: (self._autoscan_seq,
+                                       frozenset(self._autoscan_bodies)),
+            drop_seq_supplier=lambda: self._drop_seq,
+            scex_seq_supplier=lambda: self._scex_seq,
+            overlay=self.overlay,
+            status_supplier=self._fresh_status,
+            event_time=self.event_time,
+            event_waiter=waiter,
+            should_abort=self._run_abort,
+            exclusive_guard=self._exclusive_input,
+            fsd_target_supplier=self._fsd_target_state,
+            navroute_supplier=self._navroute_state,
+            arrival_star_class_supplier=lambda: self._arrival_star_class,
+            current_system_supplier=lambda: self._current_system,
+            ship_fuel_supplier=lambda: self._ship_fuel,
+            # Bound method, NOT a lambda capturing a value: jump age must be
+            # evaluated at call time (now_utc() advances) â€” a build-time
+            # snapshot would freeze the age at context construction.
+            jump_age_supplier=self._jump_age,
+            docking_denied_supplier=lambda: self._docking_denied_reason,
+            clear_docking_denied=self._clear_docking_denied,
+            no_fire_zone_supplier=lambda: self._no_fire_zone_entered,
+            clear_no_fire_zone=self._clear_no_fire_zone,
+            in_witchspace=lambda: self._in_witchspace,
+            record=self.record,
+            frame_sink=self.frame_sink,
+        )
+        ctx._tail_handle = handle   # for _run's unsubscribe; None without a tail
+        return ctx
+
+    # ---- running procedures ----------------------------------------------
+    def _run(self, name: str) -> None:
+        proc = self.procedures.get(name)
+        if proc is None:
+            return
+        # Fresh run owns a fresh preempt slate; the previous run's flag must
+        # not abort this one (smack_recovery dispatches right after the
+        # arrival it preempted).
+        self._preempt = None
+        self._running_proc = name
+        ctxs: list[StepContext] = []
+        ctx = self._make_context()
+        ctxs.append(ctx)
+        threads: list[threading.Thread] = []
+        try:
+            for track_name in proc.parallel_tracks:
+                track = self.procedures.get(track_name)
+                if track is None:
+                    continue
+                track_ctx = self._make_context()
+                ctxs.append(track_ctx)
+                th = threading.Thread(
+                    target=run_procedure, args=(track, track_ctx), daemon=True
+                )
+                th.start()
+                threads.append(th)
+            result = run_procedure(proc, ctx)
+            for th in threads:
+                th.join(timeout=15.0)
+            if result.aborted and self._preempt is not None:
+                # PREEMPTED, not aborted (2026-06-07 14:24:09Z: arrival's
+                # star-smack preempt printed "[ABORTED] ... manual intervention
+                # needed" then smack_recovery auto-dispatched 61ms later â€” the
+                # message lied). A preempt is a scene handoff, NOT a terminal
+                # abort: no "manual intervention", no failed-at clause, and the
+                # successor name is NOT hardcoded (run_live's queued event owns
+                # the dispatch). Transient EVENT slot only â€” never status():
+                # the persistent status line belongs to true terminal aborts
+                # (council intersection: event-slot + status-stays-empty).
+                msg = f"[PREEMPTED] {name} â€” {self._preempt}"
+                print(msg, flush=True)
+                if self.overlay is not None:
+                    try:
+                        self.overlay.event(msg)
+                    except Exception:  # noqa: BLE001
+                        pass
+            elif result.aborted:
+                # ABORTED = human eyes required (notification-only: NO
+                # auto-restart, NO retry). Name the failing step when there is
+                # one, but guard the operator-abort case where the last step
+                # may not be the failer (or there are no steps at all) so the
+                # message stays sensible either way.
+                msg = f"[ABORTED] {name} â€” manual intervention needed"
+                if result.steps:
+                    msg += f" (failed at {result.steps[-1].action})"
+                print(msg, flush=True)
+                if self.overlay is not None:
+                    # Persistent STATUS slot (the keepalive line that stays
+                    # up), NOT event() â€” an abort must remain visible. Fail-soft
+                    # like every other overlay call here.
+                    try:
+                        self.overlay.status(msg)
+                    except Exception:  # noqa: BLE001
+                        pass
+        finally:
+            self._running_proc = None
+            if self._preempt is not None and self.record is not None:
+                self.record("Preempted", {"procedure": name,
+                                          "reason": self._preempt})
+            # Drop every subscription, even for a track that outlived its
+            # join window â€” a leaked queue grows for the rest of the session.
+            # A late track polling an unsubscribed handle just gets [] and
+            # exits on its own backstop (see _TailHub.poll).
+            if self._hub is not None:
+                for c in ctxs:
+                    h = getattr(c, "_tail_handle", None)
+                    if h is not None:
+                        self._hub.unsubscribe(h)
+
+    def _wait_for_event(self, handle: Optional[int], event_name: str,
+                        timeout_s: float) -> bool:
+        """Poll this subscriber's event queue until `event_name` arrives or
+        the window closes. `timeout_s` is the caller's poll cadence (steps
+        pass their poll_s) â€” never a success/failure gate by itself."""
+        if self._hub is None or handle is None:
+            return True  # no tail wired (unit tests) -> proceed
+        deadline = self.clock() + timeout_s
+        while True:
+            for ev in self._hub.poll(handle):
+                if getattr(ev, "event", None) == event_name:
+                    return True
+            if self.clock() >= deadline:
+                return False
+            self.sleeper(0.2)
+
+    def _on_tail_event(self, ev: Any) -> None:
+        """Hub callback â€” exactly once per journal event, whichever
+        subscriber's poll pumped it."""
+        self._record_event_time(ev)
+        self._apply_state(ev)
+
+    def _record_event_time(self, ev: Any) -> None:
+        name = getattr(ev, "event", None)
+        if name == "FSDJump":
+            # Staleness instrument (2026-06-07 council): lets routing and
+            # diagnostics tell a fresh hyperspace arrival from an N-minute
+            # loiter â€” both scenes read in_supercruise=true.
+            self._event_times["jump"] = self.clock()
+        if name == "SupercruiseExit" and getattr(ev, "body_type", None) == "Star":
+            self._event_times["drop"] = self.clock()
+            # Mid-procedure preemption: a star smack invalidates the scene
+            # arrival/startup are flying â€” flag the CURRENT run to abort at
+            # its next poll. The smack event itself is already queued for
+            # run_live, which dispatches smack_recovery right after the
+            # preempted procedure returns. (Backlog replay can't trip this:
+            # no procedure runs before catch-up, so _running_proc is None.)
+            if self._running_proc in _PREEMPT_ON_SMACK:
+                self._preempt = "star_smack"
+                if self.record is not None:
+                    self.record("PreemptRequested",
+                                {"procedure": self._running_proc,
+                                 "reason": "star_smack"})
+        # Flight-scene tracker (2026-06-06 13:41): smacked = the journal's
+        # LAST supercruise transition is a star drop. Fed by backlog AND live
+        # events (the tail replays from the top on attach), so a bot
+        # restarted while the ship sits smacked in normal space knows it â€”
+        # the live SupercruiseExit dispatch never fires for backlog events.
+        if name == "SupercruiseExit":
+            self._smacked = getattr(ev, "body_type", None) == "Star"
+        elif name in ("SupercruiseEntry", "FSDJump"):
+            self._smacked = False
+        elif name == "Location" and getattr(ev, "docked", False):
+            # Respawn/restart repair (GATEWALK gap #1, the Tortooga incident):
+            # a death/rebuy respawn emits Location(Docked=true) with NO
+            # Undocked/FSDJump in between, so the pre-death smack latch
+            # survived into a docked scene and startup routed wrong. A docked
+            # ship is by definition not sitting smacked at a star.
+            self._smacked = False
+
+        # Witchspace latch â€” SET on a Hyperspace StartJump, CLEARED on FSDJump.
+        # Supercruise StartJumps (JumpType=="Supercruise") must NOT set it.
+        # Belt-and-suspenders releases on SupercruiseEntry / Docked ensure a
+        # missed FSDJump can never permanently wedge the interpreter pause.
+        if name == "StartJump" and getattr(ev, "jump_type", None) == "Hyperspace":
+            self._in_witchspace = True
+        elif name in ("FSDJump", "SupercruiseEntry", "Docked"):
+            self._in_witchspace = False
+
+    def _apply_state(self, ev: Any) -> None:
+        """Track per-event state for steps. Called exactly once per event via
+        the hub's on_event (backlog AND live, so restarts repopulate it)."""
+        name = getattr(ev, "event", None)
+        if name == "FSDTarget":
+            # Latest FSDTarget (+ a monotone seq) so the target_next_route
+            # danger gate can verify the NEW target's StarClass.
+            self._fsd_target_seq += 1
+            self._latest_fsd_target = ev
+        elif name == "StartJump":
+            # Hyperspace-only: this StartJump's StarClass is the star the
+            # ship arrives AT, i.e. the current system once FSDJump lands.
+            # A supercruise StartJump carries star_class=None â€” ignoring it
+            # (rather than clobbering) is council must-fix #3, pinned by test.
+            if (getattr(ev, "jump_type", None) == "Hyperspace"
+                    and getattr(ev, "star_class", None)):
+                self._arrival_star_class = ev.star_class
+        elif name in ("FSDJump", "Location"):
+            # Current system name for the star-lock identity check
+            # (2026-06-07 council: row-0 locked the Nav Beacon; the only
+            # discriminator is Destination.Name vs the system name).
+            sysname = getattr(ev, "star_system", None)
+            if sysname:
+                self._current_system = sysname
+            if name == "Location" and getattr(ev, "docked", False):
+                # Respawn/restart world-state repair (GATEWALK gap #1): a
+                # rebuy respawn puts the ship ON A PAD with no Docked event â€”
+                # Location(Docked=true) is the only signal. Without this the
+                # docked flag stays stale-False and the pit-stop resume
+                # trigger (NavRoute-while-docked) never arms.
+                self._docked = True
+                self._docked_station = (
+                    (getattr(ev, "station_name", "") or "").strip() or None)
+            if name == "FSDJump":
+                # Stale-arrival instrument (2026-06-07 council): the FSDJump's
+                # OWN ISO8601 timestamp parsed to an AWARE-UTC datetime. Works
+                # for backlog AND live events because it's the event's own
+                # stamp, not a replay-time clock(). _event_times["jump"] is
+                # left untouched for its other consumers.
+                ts = getattr(ev, "timestamp", None)
+                if ts:
+                    self._last_fsdjump_utc = self._parse_journal_ts(ts)
+                # body_tour per-system reset (D5): a new system has its own
+                # body list + its own honk. _drop_seq / _scex_seq are NOT
+                # reset (monotone session counters, see __init__).
+                self._autoscan_bodies = set()
+                self._autoscan_seq = 0
+                self._fss_discovered = False
+                self._fss_body_count = 0
+        elif name == "NavRoute":
+            # A (re-)plotted route. Cache the LAST waypoint as the final
+            # destination WHILE the route still exists (it's gone after the
+            # NavRouteClear that precedes the final FSDJump). Re-arm: a fresh
+            # plot clears any prior clear latch so a NEW route can complete.
+            # (_is_route_complete also re-resolves from the durable file reader
+            # when this event is missed across a rotation â€” see
+            # _resolve_final_waypoint.)
+            nr = self._navroute_state()
+            route = getattr(nr, "route", None) if nr is not None else None
+            if route:
+                last = route[-1]
+                addr = getattr(last, "system_address", None)
+                sysname = getattr(last, "star_system", None)
+                if addr is not None:
+                    self._final_waypoint = (addr, sysname or "")
+            self._navroute_cleared = False
+            self._navroute_cleared_utc = None
+            # CAPTURE-AT-PLOT: if Status.Destination is a named non-star body
+            # right now, the operator plotted to a STATION and the game locked
+            # it before we could overwrite it with TargetNextRouteSystem.
+            # Reuse _dest_is_named_station (same predicate the dock decision
+            # uses) to guard the capture.  A non-station (Body 0) or absent
+            # status leaves _dock_target None -> park path at terminus.
+            # LIVE-TEST-GATED: see __init__ comment above.
+            st_cap = self._fresh_status()
+            _dns = self._dest_is_named_station_fn
+            if _dns is None:
+                # Deferred fallback: import at call-time so the engine never
+                # has a module-level domain import.
+                try:
+                    from ed_autojump.flow.steps import (  # type: ignore[import]
+                        _dest_is_named_station as _dns)
+                except ImportError:
+                    pass
+            if st_cap is not None and _dns is not None and _dns(st_cap):
+                d = getattr(st_cap, "destination", None)
+                self._dock_target = (
+                    getattr(d, "system", None),
+                    getattr(d, "body", 0),
+                    (getattr(d, "name", "") or "").strip(),
+                )
+                # TRACE (gate-walk): make capture-at-plot observable â€” did the
+                # station actually win the read at the NavRoute instant?
+                if self.record is not None:
+                    self.record("DockTargetCaptured", {
+                        "name": self._dock_target[2],
+                        "body": self._dock_target[1],
+                        "system": self._dock_target[0]})
+            else:
+                # A new plot that is NOT to a station CLEARS any prior capture
+                # (skeptic seat): FlowRunner is long-lived, so a stale station
+                # latch would otherwise survive into a later same-system
+                # system-route and wrongly trigger the dock flow. Every NavRoute
+                # resets the latch to the CURRENT plot's intent.
+                self._dock_target = None
+                # TRACE (gate-walk): log WHAT the live Destination was so we can
+                # see WHY the capture missed (expecting star Body=0 at plot time).
+                if self.record is not None:
+                    _dm = getattr(st_cap, "destination", None) if st_cap is not None else None
+                    self.record("DockTargetMissed", {
+                        "dest_name": getattr(_dm, "name", None),
+                        "dest_body": getattr(_dm, "body", None)})
+        elif name == "NavRouteClear":
+            # Route cleared. Latch it + its journal timestamp. This fires on the
+            # final hop (in witchspace) AND on a manual re-plot â€” the FSDJump
+            # branch in dispatch() correlates by SystemAddress + the join window
+            # to tell the two apart, so we never act on the clear alone.
+            self._navroute_cleared = True
+            ts = getattr(ev, "timestamp", None)
+            self._navroute_cleared_utc = self._parse_journal_ts(ts) if ts else None
+        elif name == "ReceiveText":
+            # "$STATION_NoFireZone_entered;" = the ship just crossed inside the
+            # 7.5km docking request range (live-verified 2026-06-07). Set the
+            # flag; cleared by _clear_no_fire_zone at the start of each
+            # dock_approach run so the gate only reflects THIS approach leg.
+            msg = getattr(ev, "message", "") or ""
+            if "$STATION_NoFireZone_entered;" in msg:
+                self._no_fire_zone_entered = True
+        elif name == "DockingDenied":
+            # Stash the Reason so step_dock_request (which gates via a name-only
+            # event_waiter that can't read fields) can tell Distance (retry)
+            # from an abort-to-human denial.
+            self._docking_denied_reason = getattr(ev, "reason", None) or None
+        elif name == "DockingGranted":
+            # A fresh grant supersedes any stale denial reason.
+            self._docking_denied_reason = None
+        elif name == "Docked":
+            self._docked = True
+            self._docking_denied_reason = None
+            self._docked_station = (getattr(ev, "station_name", "") or "").strip() or None
+        elif name == "Undocked":
+            self._docked = False
+        elif name == "LoadGame":
+            # Ship field is Optional[str] on LoadGame (absent in some modes).
+            ship = getattr(ev, "ship", None)
+            if ship:
+                self._current_ship = ship.lower().strip()
+        elif name == "Loadout":
+            # Loadout always carries the Ship field; prefer it over LoadGame
+            # because Loadout fires after an outfit change (ship_name updated).
+            ship = getattr(ev, "ship", None)
+            if ship:
+                self._current_ship = ship.lower().strip()
+            cap = getattr(getattr(ev, "fuel_capacity", None), "main", None)
+            if cap:
+                scoop_item = next(
+                    (m.item for m in getattr(ev, "modules", ())
+                     if m.item.startswith("int_fuelscoop_")), None)
+                rate = None
+                if scoop_item is not None:
+                    if self._scoop_rate_fn is not None:
+                        rate = self._scoop_rate_fn(scoop_item)
+                    else:
+                        # Deferred fallback: import at call-time so the
+                        # engine never has a module-level domain import.
+                        try:
+                            from ed_autojump.fsd.scoops import (  # type: ignore[import]
+                                scoop_max_rate_t_s as _smr)
+                            rate = _smr(scoop_item)
+                        except ImportError:
+                            pass
+                self._ship_fuel = ShipFuel(capacity_t=float(cap),
+                                           scoop_max_rate_t_s=rate)
+        elif name == "Scan":
+            # body_tour per-body ARRIVAL+DATA gate (M5/D5): the proximity
+            # AutoScan that fires when the ship flies up to / orbits a body.
+            # Detailed/NavBeacon scans do NOT count toward the tour gate.
+            if getattr(ev, "scan_type", None) == "AutoScan":
+                bn = getattr(ev, "body_name", None)
+                if bn:
+                    self._autoscan_bodies.add(bn)
+                    self._autoscan_seq += 1
+        elif name == "FSSDiscoveryScan":
+            # body_tour honk latch (D4): durable "this system honked" record,
+            # independent of the tour's own waiter timing. Reset on FSDJump.
+            self._fss_discovered = True
+            # BodyCount feeds the min-bodies gate (operator 2026-06-08).
+            self._fss_body_count = getattr(ev, "body_count", 0) or 0
+        elif name == "SupercruiseDestinationDrop":
+            # body_tour station/POI hint (D2): a toured row that DROPS is a
+            # station/POI. Monotone session counter; the tour snapshots it.
+            self._drop_seq += 1
+        elif name == "SupercruiseExit":
+            # body_tour re-engage trigger (PD7): the drop's matching exit is
+            # what actually puts the ship in real space. Monotone session
+            # counter; the station-drop recovery re-engages on this bump.
+            self._scex_seq += 1
+
+    def _fsd_target_state(self) -> tuple:
+        return (self._fsd_target_seq, self._latest_fsd_target)
+
+    def _navroute_state(self) -> Optional[Any]:
+        """Latest parsed NavRoute.json. poll() refreshes on mtime change and
+        returns None when unchanged â€” fall through to .current so steps
+        always see the last good parse. WIRED 2026-06-06: the reader had
+        been constructed and stored since v1 with no consumer."""
+        r = self.navroute_reader
+        if r is None:
+            return None
+        nr = r.poll()
+        return nr if nr is not None else r.current
+
+    def _poll_status(self) -> None:
+        with self._status_lock:
+            if self.status_reader is not None:
+                st = self.status_reader.poll()
+                if st is not None:
+                    self._latest_status = st
+
+    # ---- heat watchdog -----------------------------------------------------
+    def _heat_tick(self) -> None:
+        """One watchdog tick: skip while a UI macro owns input, else poll
+        status and run the reactive heatsink check."""
+        if self.input_exclusive():
+            return
+        self._poll_status()
+        self.heat_guard()
+
+    def _heat_watchdog_loop(self, stop: threading.Event, tick_s: float = 1.0) -> None:
+        """Flight-only heat protection (spec 2026-06-06): a daemon thread so
+        OverHeating during long steps (alignment holds, star escapes,
+        fly-outs, scooping) gets a heatsink WITHOUT waiting for the procedure
+        to end. EDAPGui runs its heat/SCO monitor the same way. Exits on
+        stop, panic, or stop_requested â€” after a panic the operator owns the
+        ship, no input from us."""
+        while not stop.is_set():
+            if self._should_abort():
+                return
+            self._heat_tick()
+            self.sleeper(tick_s)
+
+    def heat_guard(self) -> None:
+        """Reactive heatsink eject. Fires DeployHeatSink the moment the
+        OverHeating status flag (bit 20, Heat >= 1.0) is observed, debounced
+        by `heat_eject_cooldown_s` so a stuck flag can't spam the launcher.
+
+        Caveat: OverHeating means damage has *already started* (>=1.0). A
+        threshold-on-Status.Heat trigger would be cleaner, but Frontier only
+        writes the Heat field above some internal cutoff so it's unreliable
+        as a continuous signal. Flag-driven is good-enough for the alpha."""
+        st = self._latest_status
+        if st is None or not getattr(st, "overheating", False):
+            return
+        if (self.clock() - self._last_eject_t) < self.heat_eject_cooldown_s:
+            return
+        try:
+            self.sender.press("DeployHeatSink")
+        except KeyError:
+            # Bind missing -> log once, still debounce so we don't spam-fail.
+            if self.record is not None:
+                self.record("HeatEjectBindMissing", {})
+            self._last_eject_t = self.clock()
+            return
+        self._last_eject_t = self.clock()
+        if self.record is not None:
+            self.record("HeatEject", {"t": self._last_eject_t})
+
+    def request_stop(self) -> None:
+        self.stop_requested = True
+
+    def run_live(self, *, duration_s: float, poll_interval_s: float = 0.5) -> None:
+        if self.tail is None or self._hub is None:
+            raise RuntimeError("run_live requires a journal tail")
+        main_handle = self._hub.subscribe()
+        # Heat protection lives on its own thread (covers long steps too);
+        # the inline heat_guard call is gone â€” single owner, no double-fire.
+        watchdog_stop = threading.Event()
+        watchdog = threading.Thread(
+            target=self._heat_watchdog_loop, args=(watchdog_stop,), daemon=True)
+        watchdog.start()
+        deadline = self.clock() + duration_s
+        try:
+            while not self.stop_requested and self.clock() < deadline:
+                if self.panic_switch is not None and getattr(self.panic_switch, "tripped", False):
+                    break
+                self._poll_status()
+                # Events pumped by in-procedure waiters land in this queue
+                # too, so an FSDJump arriving DURING a procedure dispatches
+                # right after it returns (previously a waiter swallowed it
+                # and the arrival flow never ran).
+                events = self._hub.poll(main_handle)
+                if not events:
+                    self._caught_up = True
+                    run_classifiers(self)
+                    self.sleeper(poll_interval_s)
+                    continue
+                for ev in events:
+                    if self._caught_up:
+                        if (self._visited_logger is not None
+                                and getattr(ev, "event", None) == "FSDJump"):
+                            # Passive side-effect: record the live arrival, then
+                            # dispatch exactly as before (logging never gates it).
+                            self._visited_logger.record(
+                                getattr(ev, "star_system", None),
+                                getattr(ev, "timestamp", None))
+                        run_event_routes(self, ev)
+        except Exception as exc:  # noqa: BLE001 â€” never die silently mid-flight
+            # PARK, don't crash (council 2026-06-09). An unhandled exception
+            # anywhere in the live loop (a step raise the interpreter didn't
+            # catch, a dispatch/_maybe_startup fault, a library error) used to
+            # propagate out, kill the process, and leave the overlay FROZEN on
+            # its last line â€” the 2026-06-09 NE-Y b34-0 "stuck on hold_alignment
+            # forever" report. Park instead: record the reason, release keys,
+            # label the overlay, trip panic, and stop the loop cleanly via the
+            # finally below. KeyboardInterrupt/BaseException are NOT caught here,
+            # so Ctrl+C / panic still propagate to cmd_run.
+            if self.record is not None:
+                self.record("CrashParked", {"reason": repr(exc)})
+            try:
+                self.sender.release_all()
+            except Exception:  # noqa: BLE001
+                pass
+            if self.overlay is not None:
+                try:
+                    self.overlay.status(
+                        f"[CRASH-PARKED] {type(exc).__name__}: {exc}")
+                except Exception:  # noqa: BLE001
+                    pass
+            if self.panic_switch is not None:
+                try:
+                    self.panic_switch.trip()
+                except Exception:  # noqa: BLE001
+                    pass
+            self.stop_requested = True
+        finally:
+            watchdog_stop.set()
+            self._hub.unsubscribe(main_handle)
+
+    # ------------------------------------------------------------------
+    # Backward-compatibility delegates (tests + callers use these names)
+    # ------------------------------------------------------------------
+
+    def _maybe_startup(self) -> None:
+        """Backward-compat delegate -> classify_startup(runner) from boot_routes."""
+        from ed_autojump.flow.boot_routes import classify_startup  # type: ignore[import]
+        classify_startup(self)
+
+    def dispatch(self, ev: Any) -> None:
+        """Backward-compat dispatch by event name -> boot_routes route handlers."""
+        name = getattr(ev, 'event', None)
+        from ed_autojump.flow import boot_routes as _br  # type: ignore[import]
+        if name == 'FSDJump':
+            _br._route_fsd_jump(self, ev)
+        elif name == 'SupercruiseExit':
+            _br._route_sc_exit(self, ev)
+        elif name == 'NavRoute':
+            _br._route_nav_route(self, ev)
+
+    def dispatch_route_complete(self, ev: Any) -> None:
+        """Backward-compat delegate -> dispatch_route_complete(runner, ev)."""
+        from ed_autojump.flow.boot_routes import dispatch_route_complete as _drc  # type: ignore[import]
+        _drc(self, ev)
