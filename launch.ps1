@@ -123,6 +123,54 @@ $venvDir = Join-Path $ProjectRoot ".venv"
 $venvPython = Join-Path $venvDir "Scripts\python.exe"
 $configPath = Join-Path $ProjectRoot "config.toml"
 
+# Layer 1/2 child-lifetime ownership (kill-on-close job object + taskkill /T
+# fallback). Dot-source the helper so the long-running child (run / passthrough)
+# can never outlive this launcher. See launch_job.ps1 for the full rationale.
+. (Join-Path $RepoRoot "launch_job.ps1")
+
+function Invoke-OwnedChild {
+    # Shared spawn-and-own wrapper for the two long-running child sites
+    # (main run + passthrough). Spawns under a kill-on-close job (Layer 1),
+    # captures the child PID, and on ANY graceful exit of this launcher tears
+    # the child down via taskkill /T as a belt-and-suspenders fallback
+    # (Layer 2). Returns the child's exact exit code for re-propagation.
+    param(
+        [Parameter(Mandatory)][string[]]$ChildArgs
+    )
+    $spawn = Start-ChildInJob -FilePath $venvPython -Arguments $ChildArgs `
+        -WorkingDirectory $ProjectRoot
+    Write-Host ("[launch] child PID {0} (job={1})" -f `
+        $spawn.ChildPid, $(if ($spawn.JobUsed) { 'on' } else { 'OFF-fallback' }))
+    try {
+        # WaitForExit keeps $spawn (and its open job handle) alive for the whole
+        # run, so the kill-on-close guarantee holds until the child is gone.
+        # Ctrl+C in this console reaches the child directly (it shares our
+        # signal group); we just wait and then re-propagate the exit code.
+        $code = Wait-ChildAndPropagate -Spawn $spawn
+        return $code
+    } finally {
+        # Graceful / Ctrl+C teardown. Two belts:
+        #  (a) TerminateJobObject — the EXPLICIT, reliable kill of the whole job
+        #      (child + descendants). We call this rather than leaning on the
+        #      implicit kill-on-close-on-handle-close, which is environment
+        #      sensitive. This is the guarantee for every path where this
+        #      finally actually runs.
+        #  (b) Stop-ChildTree (taskkill /T by PID) — Layer 2, covers the case
+        #      where the job was never created/assigned (assignment failed).
+        # Hard-kill of the launcher runs NEITHER of these; that case relies on
+        # KILL_ON_JOB_CLOSE firing when the kernel force-closes our last handle
+        # (the documented OS guarantee). CloseHandle is still called so that
+        # path is armed.
+        if ($spawn.JobHandle -ne [IntPtr]::Zero) {
+            [void][EDAFK.JobApi]::TerminateJobObject($spawn.JobHandle, 1)
+        }
+        Stop-ChildTree -ChildPid $spawn.ChildPid
+        if ($spawn.JobHandle -ne [IntPtr]::Zero) {
+            [void][EDAFK.JobApi]::CloseHandle($spawn.JobHandle)
+        }
+    }
+}
+
 # --- help short-circuit (before any venv work) -----------------------------
 
 $helpTokens = @('-h', '--help', '/?', 'help')
@@ -582,13 +630,10 @@ function Invoke-SettingsMenu([hashtable]$s, [bool]$visionOn) {
 if ($Extra -and $Extra.Count -gt 0) {
     Write-Host "[launch] passthrough: $($Extra -join ' ')"
     $passArgs = @("-m", "ed_autojump.cli") + $Extra
-    Push-Location $ProjectRoot
-    try {
-        & $venvPython @passArgs
-        exit $LASTEXITCODE
-    } finally {
-        Pop-Location
-    }
+    # Passthrough is a long-running child too (doctor/launch can sit a while),
+    # so it inherits the same job-object lifetime ownership as the main run.
+    # CWD = $ProjectRoot is set inside the spawn (no Push-Location needed).
+    exit (Invoke-OwnedChild -ChildArgs $passArgs)
 }
 
 # --- gather settings (starting state from the flags) -----------------------
@@ -668,11 +713,9 @@ if (-not $NoFocus) {
 Write-Host "[launch] $venvPython $($cliArgs -join ' ')"
 
 # Run FROM the project dir so the CLI finds config.toml (its --config default is
-# cwd-relative) and resolves log/calibration/sessions dirs as documented.
-Push-Location $ProjectRoot
-try {
-    & $venvPython @cliArgs
-    exit $LASTEXITCODE
-} finally {
-    Pop-Location
-}
+# cwd-relative) and resolves log/calibration/sessions dirs as documented. The
+# spawn sets WorkingDirectory=$ProjectRoot, so the old Push-Location is folded
+# into Invoke-OwnedChild. The child now lives under a kill-on-close job: it
+# cannot outlive this launcher under ANY kill mode (Layer 1), with a taskkill
+# /T fallback on graceful exit (Layer 2). Exit code re-propagated exactly.
+exit (Invoke-OwnedChild -ChildArgs $cliArgs)
