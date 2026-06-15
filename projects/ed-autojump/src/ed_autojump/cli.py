@@ -482,6 +482,11 @@ def cmd_run(args) -> int:
     from ed_core.flow.loader import validate_procedure
     from .flow.steps import STEP_REGISTRY
 
+    # Activate autojump's own boot classifier, event routes, step impls, and
+    # procedure directory into the core registry before FlowRunner is built.
+    from ed_autojump import activate as _activate_autojump
+    _activate_autojump()
+
     # Activate domain plugins (e.g. ed_explore registers body_tour).
     # Uses Python entry_points so ed_autojump never imports a sibling domain
     # directly — DAG-clean by construction.
