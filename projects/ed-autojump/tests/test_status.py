@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.status import (
+from ed_core.status import (
     NavRouteReader,
     Status,
     StatusFlags,

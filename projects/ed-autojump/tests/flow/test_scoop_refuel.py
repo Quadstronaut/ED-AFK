@@ -8,9 +8,9 @@ no real sleeps, no real game.
 from pathlib import Path
 from types import SimpleNamespace
 
-from ed_autojump.flow.context import ShipFuel, StepContext
+from ed_core.flow.context import ShipFuel, StepContext
 from ed_autojump.flow.dispatcher import FlowRunner
-from ed_autojump.flow.loader import load_procedures
+from ed_core.flow.loader import load_procedures
 from ed_autojump.flow.steps import STEP_REGISTRY, _scoop_window_rate
 from ed_autojump.fsd.scoops import scoop_max_rate_t_s
 from tests.flow import FakeSender

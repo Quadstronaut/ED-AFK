@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from ed_autojump.executor.jump import should_refuse_target
-from ed_autojump.journal import parse_event
+from ed_core.journal import parse_event
 
 
 # --- danger-class refusal (req 3 + req 7 defense in depth) ----------------
@@ -75,8 +75,8 @@ def test_perform_honk_is_deleted():
 
 def test_danger_journal_all_refused(danger_journal):
     """All five targets in danger_journal except K class get refused."""
-    from ed_autojump.journal import JournalTail
-    from ed_autojump.journal.events import FSDTarget
+    from ed_core.journal import JournalTail
+    from ed_core.journal.events import FSDTarget
 
     tail = JournalTail(danger_journal.parent)
     refused = 0

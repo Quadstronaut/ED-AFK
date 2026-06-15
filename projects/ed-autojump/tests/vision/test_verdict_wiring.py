@@ -67,7 +67,7 @@ def _with_sink(fn):
 
 
 def test_measure_single_sample_notifies():
-    from ed_autojump.executor.align import _measure
+    from ed_core.executor.align import _measure
     from ed_vision.compass import CompassRead
 
     class _Reader:
@@ -82,7 +82,7 @@ def test_measure_single_sample_notifies():
 
 
 def test_measure_majority_not_found_notifies_miss():
-    from ed_autojump.executor.align import _measure
+    from ed_core.executor.align import _measure
     from ed_vision.compass import CompassRead
 
     class _Reader:

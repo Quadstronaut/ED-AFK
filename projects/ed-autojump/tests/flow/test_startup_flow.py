@@ -26,7 +26,7 @@ incident, already removed from arrival) — see test_startup_recovery_has_no_pit
 
 from pathlib import Path
 
-from ed_autojump.flow.loader import load_procedures
+from ed_core.flow.loader import load_procedures
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
 

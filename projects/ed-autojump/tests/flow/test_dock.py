@@ -8,11 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from ed_autojump.flow.context import StepContext
+from ed_core.flow.context import StepContext
 from ed_autojump.flow.dispatcher import FlowRunner
-from ed_autojump.flow.model import Procedure, Step
+from ed_core.flow.model import Procedure, Step
 from ed_autojump.flow.steps import INPUT_EXCLUSIVE_ACTIONS, STEP_REGISTRY
-from ed_autojump.journal import (
+from ed_core.journal import (
     Docked,
     DockingDenied,
     DockingGranted,
@@ -809,7 +809,7 @@ def test_docking_denied_supplier_wired_into_context():
 
 def test_dock_procedure_loads_and_validates():
     from pathlib import Path
-    from ed_autojump.flow.loader import load_procedures, validate_procedure
+    from ed_core.flow.loader import load_procedures, validate_procedure
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     procs = load_procedures(proc_dir)
     assert "dock" in procs
@@ -821,7 +821,7 @@ def test_dock_procedure_loads_and_validates():
 
 def test_dock_procedure_gates_are_required():
     from pathlib import Path
-    from ed_autojump.flow.loader import load_procedures
+    from ed_core.flow.loader import load_procedures
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
     required = {s.action for s in dock.steps if s.required}
@@ -836,7 +836,7 @@ def test_dock_procedure_retry_from_is_dock_approach():
     'dock_target_station': a Distance denial should re-close from the current
     position, NOT re-fly SC-assist from the system star."""
     from pathlib import Path
-    from ed_autojump.flow.loader import load_procedures
+    from ed_core.flow.loader import load_procedures
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
     assert dock.on_required_fail.retry_from == "dock_approach"

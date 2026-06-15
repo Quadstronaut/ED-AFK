@@ -1,4 +1,4 @@
-﻿from ed_autojump.flow.context import StepContext
+﻿from ed_core.flow.context import StepContext
 from ed_autojump.flow.steps import STEP_REGISTRY
 from tests.flow import FakeSender
 from ed_vision.compass import CompassRead

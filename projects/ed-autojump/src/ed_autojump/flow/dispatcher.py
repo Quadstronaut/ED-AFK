@@ -13,9 +13,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from ..fsd.scoops import scoop_max_rate_t_s
-from .context import ShipFuel, StepContext
-from .interpreter import run_procedure
-from .model import Procedure
+from ed_core.flow.context import ShipFuel, StepContext
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.model import Procedure
 
 # Procedures whose whole premise is a live supercruise/fresh-load scene: a
 # star smack (SupercruiseExit Body=Star) yanks that scene away mid-run, so

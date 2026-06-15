@@ -9,7 +9,7 @@ terminal-idle guard."""
 from types import SimpleNamespace
 
 from ed_autojump.flow.dispatcher import FlowRunner, _CLEAR_JOIN_WINDOW_S
-from ed_autojump.flow.model import Procedure, Step
+from ed_core.flow.model import Procedure, Step
 from tests.flow import FakeSender
 
 

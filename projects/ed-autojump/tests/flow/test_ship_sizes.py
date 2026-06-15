@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ed_autojump.ship_sizes import pitch_s_for_ship, size_for_ship
+from ed_core.ship_sizes import pitch_s_for_ship, size_for_ship
 from ed_autojump.flow.dispatcher import FlowRunner
 from tests.flow import FakeSender
 

@@ -1,6 +1,6 @@
 """[vision] config block: defaults + TOML override."""
 
-from ed_autojump.config import Config, VisionConfig, load_config
+from ed_core.config import Config, VisionConfig, load_config
 
 
 def test_defaults_are_safe_and_off():

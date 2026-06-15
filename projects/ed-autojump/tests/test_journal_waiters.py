@@ -16,8 +16,8 @@ from typing import Optional
 
 import pytest
 
-from ed_autojump.journal.events import LoadGame, Music, parse_event
-from ed_autojump.journal.waiters import (
+from ed_core.journal.events import LoadGame, Music, parse_event
+from ed_core.journal.waiters import (
     LoadGameMismatch,
     WaitResult,
     wait_for_load_game,

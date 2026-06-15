@@ -8,8 +8,8 @@ live: wrong-body row-0 lock, and the pose/SC guards on the orbit macro."""
 from types import SimpleNamespace
 from pathlib import Path
 
-from ed_autojump.flow.context import StepContext
-from ed_autojump.flow.loader import load_procedures
+from ed_core.flow.context import StepContext
+from ed_core.flow.loader import load_procedures
 from ed_autojump.flow.steps import STEP_REGISTRY, _destination_is_local_star
 from ed_vision.compass import CompassRead
 from tests.flow import FakeSender

@@ -2,8 +2,8 @@
 
 import json
 
-from ed_autojump.config import OverlayConfig
-from ed_autojump.overlay import (
+from ed_core.config import OverlayConfig
+from ed_core.overlay import (
     OverlayWriter,
     PLUGIN_TAIL,
     _frame,
@@ -268,7 +268,7 @@ def test_build_overlay_none_when_section_missing():
 
 
 def test_overlay_config_defaults_and_toml_override(tmp_path):
-    from ed_autojump.config import Config, load_config
+    from ed_core.config import Config, load_config
     # default: on, raw-socket localhost:5010, 30s connect window
     c = Config()
     assert c.overlay.enabled is True

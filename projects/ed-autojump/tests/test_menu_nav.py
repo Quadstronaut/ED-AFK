@@ -16,8 +16,8 @@ from typing import Any, Optional
 
 import pytest
 
-from ed_autojump.config import MenuNavConfig
-from ed_autojump.launcher.menu_nav import (
+from ed_core.config import MenuNavConfig
+from ed_core.launcher.menu_nav import (
     DOWN_ARROW_SCANCODE,
     ENTER_SCANCODE,
     ESCAPE_SCANCODE,
