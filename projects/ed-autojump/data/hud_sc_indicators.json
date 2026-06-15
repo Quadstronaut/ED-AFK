@@ -1,0 +1,35 @@
+{
+  "_doc": "Center-screen supercruise / alignment HUD prompts to CV-match (operator-witnessed LIVE, 2026-06-14). These are ED's own center messages that appear during supercruise + SC-assist. Use them as a CV cross-check of the nav-compass for SC-assist alignment, and to detect 'not pointed at the jump/target'. Evidence class: LIVE (Operator provided full frames + crops).",
+  "resolution": [1920, 1080],
+  "monitor": "ED = primary monitor, 1920x1080",
+  "indicators": {
+    "orbiting_destination": {
+      "text": "ORBITING DESTINATION",
+      "color": "cyan / light-blue (glyph is a hollow blue triangle above/left of the text)",
+      "meaning": "SC-assist has you orbiting the destination body — arrived / holding at the target. Positive 'we're there' state.",
+      "crop_xyxy": [869, 468, 1051, 527],
+      "crop_wh": [182, 59],
+      "center_xy": [960, 497],
+      "seen_in": "ARRIVAL > WAIT step (full frame: M7 Sector LN-Z B1-6, orbiting the A belt)",
+      "match_notes": "text is dim white/grey with a cyan triangle; sits just below screen center. Match on the cyan triangle + the literal text 'ORBITING DESTINATION'."
+    },
+    "align_with_target_destination": {
+      "text": "ALIGN WITH TARGET DESTINATION",
+      "color": "orange text + a RED hollow triangle reticle (the 'target is off-screen / behind' marker)",
+      "meaning": "You are NOT pointed at what you should be. SC-assist wants you to align with the target before it can hold course. The RED triangle also appears when you are not pointed at a jump.",
+      "crop_xyxy": [820, 341, 1099, 411],
+      "crop_wh": [279, 70],
+      "center_xy": [960, 376],
+      "seen_in": "SC_RESUME > WAIT step (full frame: Synuefai KL-F B31-0, deep space)",
+      "match_notes": "orange text 'ALIGN WITH TARGET DESTINATION' with a red triangle; sits above screen center. Slightly higher on screen than ORBITING DESTINATION."
+    }
+  },
+  "intended_use": [
+    "CV cross-check of the nav-compass for SC-assist: if 'ALIGN WITH TARGET DESTINATION' is on-screen, the ship is NOT aligned — corroborates / overrides a compass read before trusting SC-assist to hold course.",
+    "'ORBITING DESTINATION' = arrived/holding at the destination (a clean arrival signal independent of journal timing).",
+    "The RED triangle (align prompt) also signals 'not pointed at a jump' — use to gate jump engagement (fail closed if shown).",
+    "Both are center-screen, horizontally centered (~x960), system-independent (fixed cockpit HUD). Vertical: align ~y376, orbiting ~y497."
+  ],
+  "fixtures": "Reference frames operator-provided in chat 2026-06-14 (not yet on disk). Drop the full frames + crops into tests/fixtures/hud/ when captured: orbiting_destination_full.png + orbiting_destination_crop.png, align_with_target_full.png + align_with_target_crop.png.",
+  "next": "Build a CV matcher (template/text) for these two center prompts; wire as a cross-check in the SC-assist / jump-alignment gate (fail closed). Flight-logic wiring is council-gated."
+}
