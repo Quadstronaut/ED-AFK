@@ -11,10 +11,10 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 1112,
+    "count": 1187,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-06-15T05:13:43Z",
+    "last_seen": "2026-06-15T08:38:29Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
@@ -146,10 +146,10 @@
   "$DockingChatter_Neutral;": {
     "category": "station",
     "channel": "npc",
-    "count": 19,
+    "count": 20,
     "first_seen": "2025-09-18T14:19:12Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-09T22:37:41Z",
+    "last_seen": "2026-06-15T07:23:46Z",
     "message_localised": "Ensure to observe starport protocol during your visit, pilot."
   },
   "$DockingFailed_Distance;": {
@@ -398,10 +398,10 @@
   "$STATION_NoFireZone_entered;": {
     "category": "station",
     "channel": "npc",
-    "count": 23,
+    "count": 24,
     "first_seen": "2025-09-18T14:19:11Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-09T23:27:25Z",
+    "last_seen": "2026-06-15T07:23:43Z",
     "message_localised": "No fire zone entered."
   },
   "$STATION_NoFireZone_entered_deployed;": {
@@ -416,19 +416,19 @@
   "$STATION_NoFireZone_exited;": {
     "category": "station",
     "channel": "npc",
-    "count": 22,
+    "count": 23,
     "first_seen": "2025-09-18T14:17:12Z",
     "from_example": "THE WALKING CANE | OWCH",
-    "last_seen": "2026-06-10T00:14:08Z",
+    "last_seen": "2026-06-15T07:27:44Z",
     "message_localised": "No fire zone exited."
   },
   "$STATION_docking_granted;": {
     "category": "station",
     "channel": "npc",
-    "count": 24,
+    "count": 25,
     "first_seen": "2025-09-18T14:19:12Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-09T23:27:28Z",
+    "last_seen": "2026-06-15T07:23:46Z",
     "message_localised": "Docking request granted."
   },
   "$Smuggler_NearDeath04;": {

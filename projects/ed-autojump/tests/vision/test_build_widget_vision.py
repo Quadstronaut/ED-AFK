@@ -2,8 +2,8 @@
 
 from types import SimpleNamespace
 
-from ed_autojump.vision import capture
-from ed_autojump.vision.capture import build_widget_vision
+from ed_vision import capture
+from ed_vision.capture import build_widget_vision
 
 
 def _cfg(*, on, crop=(510, 240, 900, 600), backend="gdi"):
@@ -30,7 +30,7 @@ def test_on_returns_reader_and_bound_grab(monkeypatch):
         pass
 
     monkeypatch.setattr(capture, "ScreenGrabber", _DummyGrabber)
-    monkeypatch.setattr("ed_autojump.vision.widget_ring.WidgetRingReader", _DummyReader)
+    monkeypatch.setattr("ed_vision.widget_ring.WidgetRingReader", _DummyReader)
 
     reader, grab = build_widget_vision(_cfg(on=True))
     assert isinstance(reader, _DummyReader)

@@ -1037,7 +1037,7 @@ def step_orient_widget_ring(
     if not _ensure_cockpit_focus(ctx):
         return False  # a map/panel owns the screen — every read is garbage
 
-    from ..vision.widget_ring import median_of
+    from ed_vision.widget_ring import median_of
 
     # Diagnostic frame dump + per-iteration telemetry (ADDED 2026-06-06: the
     # 13:0x WidgetRingTimeout iters=28 — a phantom ring lock over the target
@@ -1070,7 +1070,7 @@ def step_orient_widget_ring(
         read = median_of(reads)
         # CV debug detail layer: recolor the widget_ring box by this
         # measurement's outcome (no-op without a sink; sink never raises).
-        from ..vision.debug_overlay import get_debug_sink
+        from ed_vision.debug_overlay import get_debug_sink
         _sink = get_debug_sink()
         if _sink is not None:
             _sink.verdict("widget_ring", "hit" if read.found else "miss")
@@ -1796,7 +1796,7 @@ def step_auto_launch(ctx: StepContext, *, settle_s: float = 0.4,
     if getattr(ctx, "station_menu_grabber", None) is not None:
         # CV-guided seek-and-confirm. Detector rows top->bottom:
         # SERVICES / AUTO_LAUNCH / DISEMBARK.
-        from ..vision.station_menu import AUTO_LAUNCH, DISEMBARK, SERVICES
+        from ed_vision.station_menu import AUTO_LAUNCH, DISEMBARK, SERVICES
         for _ in range(max(1, max_seek)):
             item = _read_menu_item(ctx)
             if item == AUTO_LAUNCH:
@@ -1962,13 +1962,13 @@ def _read_menu_item(ctx: StepContext) -> "str | None":
     if grab is None:
         return None
     try:
-        from ..vision.station_menu import NONE, detect_menu_item, region_rect
+        from ed_vision.station_menu import NONE, detect_menu_item, region_rect
         frame = grab()
         item = detect_menu_item(frame)
         # CV debug detail layer: outline the menu region with the verdict.
         # The station grabber is full-frame, so box the detector region (with
         # the matched row token as the label) rather than the whole screen.
-        from ..vision.debug_overlay import get_debug_sink
+        from ed_vision.debug_overlay import get_debug_sink
         sink = get_debug_sink()
         if sink is not None:
             h = getattr(frame, "shape", (0,))[0]
@@ -2019,7 +2019,7 @@ def step_station_services_macro(ctx: StepContext, *, keystroke_gap_s: float = 1.
     keystroke in tests / the gate-walk), with self.sleeper(keystroke_gap_s)
     between EVERY keystroke. No per-key verification by design — that's the
     whole point of the override."""
-    from ..vision.station_menu import NONE as MENU_NONE
+    from ed_vision.station_menu import NONE as MENU_NONE
     ctx.sleeper(menu_settle_s)
     detected = None
     for attempt in range(max(1, menu_reads)):
@@ -2094,7 +2094,7 @@ def _body_tour_identity_target(ctx: StepContext, tried: set):
     tesseract, bad frame, uncalibrated region) is logged and returns None, which
     ends the tour and lets the jump resume — never raises into the loop."""
     try:
-        from ..vision.navpanel_reader import next_unexplored
+        from ed_vision.navpanel_reader import next_unexplored
         frame = ctx.nav_panel_grabber()
         _, scanned = ctx.autoscan_supplier()
         system = ctx.current_system_supplier()

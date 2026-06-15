@@ -1,7 +1,7 @@
 """ScreenGrabber auto debug-box hook — named grabbers notify the sink."""
 
-from ed_autojump.vision import debug_overlay
-from ed_autojump.vision.capture import ScreenGrabber
+from ed_vision import debug_overlay
+from ed_vision.capture import ScreenGrabber
 
 
 class _StubImpl:

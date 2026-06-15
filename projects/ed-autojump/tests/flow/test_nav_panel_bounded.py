@@ -27,7 +27,7 @@ from ed_autojump.flow.context import StepContext
 from ed_autojump.flow.interpreter import run_procedure
 from ed_autojump.flow.loader import load_procedures
 from ed_autojump.flow.steps import STEP_REGISTRY
-from ed_autojump.vision.compass import CompassRead
+from ed_vision.compass import CompassRead
 from tests.flow import FakeSender
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"

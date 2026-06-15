@@ -9,7 +9,7 @@ Convention (asserted here so the align loop can rely on it):
   offset_y: -1..+1, positive = dot is ABOVE centre      -> pitch up
 """
 
-from ed_autojump.vision.compass import CompassRead, offset_from_boxes
+from ed_vision.compass import CompassRead, offset_from_boxes
 
 
 # A compass disc occupying pixels (100,100)-(200,200): centre (150,150),

@@ -1,8 +1,8 @@
 """Detail layer — sink.verdict() + the compass/widget/station call sites."""
 
-from ed_autojump.vision import debug_overlay
-from ed_autojump.vision.debug_overlay import CvDebugSink, ScreenToOverlay
-from ed_autojump.vision.station_menu import (
+from ed_vision import debug_overlay
+from ed_vision.debug_overlay import CvDebugSink, ScreenToOverlay
+from ed_vision.station_menu import (
     REGION_X0, REGION_X1, REGION_Y0, REGION_Y1, region_rect,
 )
 
@@ -68,7 +68,7 @@ def _with_sink(fn):
 
 def test_measure_single_sample_notifies():
     from ed_autojump.executor.align import _measure
-    from ed_autojump.vision.compass import CompassRead
+    from ed_vision.compass import CompassRead
 
     class _Reader:
         def read(self, frame):
@@ -83,7 +83,7 @@ def test_measure_single_sample_notifies():
 
 def test_measure_majority_not_found_notifies_miss():
     from ed_autojump.executor.align import _measure
-    from ed_autojump.vision.compass import CompassRead
+    from ed_vision.compass import CompassRead
 
     class _Reader:
         def read(self, frame):
