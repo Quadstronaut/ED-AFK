@@ -3,9 +3,9 @@ named action (council-ratified conditional-orbit fix, 2026-06-07 lock-speed
 redesign). Strictly a forward hop — it never touches the required-fail / retry
 machinery, and a step without skip_to behaves exactly as before."""
 
-from ed_autojump.flow.context import StepContext
-from ed_autojump.flow.interpreter import run_procedure
-from ed_autojump.flow.model import OnRequiredFail, Procedure, Step
+from ed_core.flow.context import StepContext
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.model import OnRequiredFail, Procedure, Step
 from tests.flow import FakeSender
 
 
@@ -126,7 +126,7 @@ def test_loader_flags_unresolvable_skip_to():
     """validate_procedure catches a skip_to that matches no step (same loud
     check as retry_from) — the typo is caught at load, not silently swallowed
     into a one-step advance at runtime."""
-    from ed_autojump.flow.loader import validate_procedure
+    from ed_core.flow.loader import validate_procedure
     proc = Procedure(
         name="p",
         steps=(Step("a"), Step("guard", skip_to="nowhere"), Step("b")),

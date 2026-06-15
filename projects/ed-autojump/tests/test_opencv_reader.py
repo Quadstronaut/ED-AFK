@@ -9,7 +9,7 @@ keys on brightness/shape, so hue is irrelevant by construction).
 import cv2
 import numpy as np
 
-from ed_autojump.vision.opencv_reader import OpenCvCompassReader
+from ed_vision.opencv_reader import OpenCvCompassReader
 
 
 def _blank(size=200):

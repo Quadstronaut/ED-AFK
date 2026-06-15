@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.journal import (
+from ed_core.journal import (
     FSDJump,
     FSDTarget,
     FSSDiscoveryScan,

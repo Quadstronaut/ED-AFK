@@ -12,10 +12,10 @@ from typing import Optional
 
 import pytest
 
-from ed_autojump.config import LauncherConfig, MenuNavConfig
-from ed_autojump.journal.events import parse_event
-from ed_autojump.launcher import DryrunOutcome, DryrunResult, LaunchSpec
-from ed_autojump.launcher.flow import FlowStatus, LaunchFlowResult, launch_and_enter_game
+from ed_core.config import LauncherConfig, MenuNavConfig
+from ed_core.journal.events import parse_event
+from ed_core.launcher import DryrunOutcome, DryrunResult, LaunchSpec
+from ed_core.launcher.flow import FlowStatus, LaunchFlowResult, launch_and_enter_game
 
 
 # --- fakes ---------------------------------------------------------------
@@ -146,7 +146,7 @@ def test_default_focus_waits_for_window_with_launch_timeout(monkeypatch):
     for ED's window using launch_timeout_s — not focus_ed_window's 5s default.
     Even though by nav time ED is up, using the generous timeout keeps focus
     robust (observed earlier: 5s focus timing out with 'could not focus ED')."""
-    import ed_autojump.launcher.flow as flow_mod
+    import ed_core.launcher.flow as flow_mod
 
     seen_timeouts = []
 
@@ -330,7 +330,7 @@ def test_no_nav_path_waits_for_sustained_audio_then_hands_off():
 
 
 def test_nav_failure_bubbles_up_as_nav_failed():
-    from ed_autojump.launcher.menu_nav import MenuNavError
+    from ed_core.launcher.menu_nav import MenuNavError
     mel = _FakeMel(dryrun_outcome=DryrunOutcome.OK)
     nav = _FakeNavigator(raises=MenuNavError("no calibration"))
     tail = _FakeTail([])

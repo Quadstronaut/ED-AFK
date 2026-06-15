@@ -16,9 +16,9 @@ from ed_autojump.flow.dispatcher import FlowRunner
 from ed_autojump.flow.steps import (
     INPUT_EXCLUSIVE_ACTIONS,
     STEP_REGISTRY,
-    step_body_tour,
 )
-from ed_autojump.journal.events import parse_event
+from ed_explore.steps_body_tour import step_body_tour
+from ed_core.journal.events import parse_event
 from tests.flow import FakeSender
 
 
@@ -504,7 +504,7 @@ def _identity_ctx(sender, box, bodies, *, on_each_pump=None, records_fn=None,
 def test_body_tour_identity_targets_unexplored_in_order():
     """The two unexplored planets are toured by NAME (the arrival star, already
     in the scanned-set, is skipped), then the tour ends when none remain."""
-    from ed_autojump.vision.navpanel_reader import NavBody
+    from ed_vision.navpanel_reader import NavBody
     sender = FakeSender()
     box = _Box()
     records, rec = _records()
@@ -539,7 +539,7 @@ def test_body_tour_identity_targets_unexplored_in_order():
 
 def test_body_tour_identity_no_unexplored_immediate_end():
     """Every panel body already scanned -> the tour ends before any keypress."""
-    from ed_autojump.vision.navpanel_reader import NavBody
+    from ed_vision.navpanel_reader import NavBody
     sender = FakeSender()
     box = _Box()
     records, rec = _records()

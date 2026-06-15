@@ -2,7 +2,7 @@
   "$BadKarmaCriticalDamage01;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-01-10T04:25:42Z",
     "from_example": "Ellie Rose",
     "last_seen": "2026-01-10T04:25:42Z",
@@ -11,16 +11,16 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 1112,
+    "count": 2374,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-06-15T05:13:43Z",
+    "last_seen": "2026-06-15T08:38:29Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
     "category": "other",
     "channel": "npc",
-    "count": 2,
+    "count": 4,
     "first_seen": "2025-12-22T05:33:05Z",
     "from_example": "Peter sanders",
     "last_seen": "2026-06-09T22:42:09Z",
@@ -29,7 +29,7 @@
   "$Commuter_AuthorityScan02;": {
     "category": "other",
     "channel": "npc",
-    "count": 3,
+    "count": 6,
     "first_seen": "2026-06-09T21:49:10Z",
     "from_example": "Lestrade",
     "last_seen": "2026-06-09T23:07:06Z",
@@ -38,7 +38,7 @@
   "$Commuter_AuthorityScan03;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-09T21:34:58Z",
     "from_example": "Jack Henry",
     "last_seen": "2026-06-09T21:34:58Z",
@@ -47,7 +47,7 @@
   "$Commuter_AuthorityScan04;": {
     "category": "other",
     "channel": "npc",
-    "count": 2,
+    "count": 4,
     "first_seen": "2026-06-09T23:16:47Z",
     "from_example": "Winterstein",
     "last_seen": "2026-06-09T23:56:44Z",
@@ -56,7 +56,7 @@
   "$Commuter_AuthorityScan08;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-09T23:23:51Z",
     "from_example": "Alana Clarke",
     "last_seen": "2026-06-09T23:23:51Z",
@@ -65,7 +65,7 @@
   "$ConvoyWedding_Patrol06;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-08T05:17:45Z",
     "from_example": "Wedding Barge",
     "last_seen": "2026-06-08T05:17:45Z",
@@ -74,7 +74,7 @@
   "$ConvoyWedding_Patrol09;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-08T05:17:15Z",
     "from_example": "Wedding Barge",
     "last_seen": "2026-06-08T05:17:15Z",
@@ -83,7 +83,7 @@
   "$CruiseLiner_SCPatrol01;": {
     "category": "other",
     "channel": "npc",
-    "count": 34,
+    "count": 68,
     "first_seen": "2026-05-25T09:49:31Z",
     "from_example": "Cruise Ship",
     "last_seen": "2026-06-15T02:56:27Z",
@@ -92,7 +92,7 @@
   "$CruiseLiner_SCPatrol02;": {
     "category": "other",
     "channel": "npc",
-    "count": 32,
+    "count": 64,
     "first_seen": "2026-05-25T09:46:41Z",
     "from_example": "Cruise Ship",
     "last_seen": "2026-06-15T02:57:04Z",
@@ -101,7 +101,7 @@
   "$CruiseLiner_SCPatrol03;": {
     "category": "other",
     "channel": "npc",
-    "count": 53,
+    "count": 106,
     "first_seen": "2026-05-25T03:44:04Z",
     "from_example": "Cruise Ship",
     "last_seen": "2026-06-14T02:13:16Z",
@@ -110,7 +110,7 @@
   "$CruiseLiner_SCPatrol04;": {
     "category": "other",
     "channel": "npc",
-    "count": 32,
+    "count": 64,
     "first_seen": "2026-05-25T09:42:02Z",
     "from_example": "Cruise Ship",
     "last_seen": "2026-06-14T02:21:52Z",
@@ -119,7 +119,7 @@
   "$CruiseLiner_SCPatrol05;": {
     "category": "other",
     "channel": "npc",
-    "count": 34,
+    "count": 68,
     "first_seen": "2026-05-25T09:42:32Z",
     "from_example": "Cruise Ship",
     "last_seen": "2026-06-15T02:55:59Z",
@@ -128,7 +128,7 @@
   "$DockingChatter_Allied;": {
     "category": "station",
     "channel": "npc",
-    "count": 4,
+    "count": 8,
     "first_seen": "2026-01-10T04:10:34Z",
     "from_example": "Jameson Memorial",
     "last_seen": "2026-06-09T23:27:28Z",
@@ -137,7 +137,7 @@
   "$DockingChatter_Cordial;": {
     "category": "station",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-05-02T06:29:10Z",
     "from_example": "Leonard Nimoy Station",
     "last_seen": "2026-05-02T06:29:10Z",
@@ -146,16 +146,16 @@
   "$DockingChatter_Neutral;": {
     "category": "station",
     "channel": "npc",
-    "count": 19,
+    "count": 40,
     "first_seen": "2025-09-18T14:19:12Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-09T22:37:41Z",
+    "last_seen": "2026-06-15T07:23:46Z",
     "message_localised": "Ensure to observe starport protocol during your visit, pilot."
   },
   "$DockingFailed_Distance;": {
     "category": "station",
     "channel": "npc",
-    "count": 2,
+    "count": 4,
     "first_seen": "2026-05-02T06:29:56Z",
     "from_example": "Leonard Nimoy Station",
     "last_seen": "2026-06-07T23:37:47Z",
@@ -164,7 +164,7 @@
   "$DockingOffenceCleared;": {
     "category": "station",
     "channel": "npc",
-    "count": 2,
+    "count": 4,
     "first_seen": "2025-12-22T06:47:59Z",
     "from_example": "THE WALKING CANE | OWCH",
     "last_seen": "2026-01-10T03:04:08Z",
@@ -173,7 +173,7 @@
   "$DockingPadBlockWarningComms;": {
     "category": "station",
     "channel": "npc",
-    "count": 2,
+    "count": 4,
     "first_seen": "2025-12-22T06:47:57Z",
     "from_example": "THE WALKING CANE | OWCH",
     "last_seen": "2026-01-10T03:04:06Z",
@@ -182,7 +182,7 @@
   "$Military_StartInterdiction01;": {
     "category": "authority",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-07T14:23:30Z",
     "from_example": "Imperial Navy Vessel",
     "last_seen": "2026-06-07T14:23:30Z",
@@ -191,7 +191,7 @@
   "$MinerCriticalDamage02;": {
     "category": "miner",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-01-10T04:29:22Z",
     "from_example": "Lee Brindley",
     "last_seen": "2026-01-10T04:29:22Z",
@@ -200,7 +200,7 @@
   "$Pirate_OnNoCargoFound02;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-10T23:52:50Z",
     "from_example": "Chris Hesketh",
     "last_seen": "2026-06-10T23:52:50Z",
@@ -209,7 +209,7 @@
   "$Pirate_OnNoCargoFound03;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-13T07:09:30Z",
     "from_example": "Guillaume-en-Egypte",
     "last_seen": "2026-06-13T07:09:30Z",
@@ -218,7 +218,7 @@
   "$Pirate_OnNoCargoFound07;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-01-10T03:52:52Z",
     "from_example": "Akira Brahe",
     "last_seen": "2026-01-10T03:52:52Z",
@@ -227,7 +227,7 @@
   "$Pirate_OnStartScanCargo01;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-13T07:09:20Z",
     "from_example": "Guillaume-en-Egypte",
     "last_seen": "2026-06-13T07:09:20Z",
@@ -236,7 +236,7 @@
   "$Pirate_OnStartScanCargo08;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-10T23:53:04Z",
     "from_example": "Malte Titze",
     "last_seen": "2026-06-10T23:53:04Z",
@@ -245,7 +245,7 @@
   "$Pirate_OnStartScanCargo09;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-01-10T03:52:42Z",
     "from_example": "Akira Brahe",
     "last_seen": "2026-01-10T03:52:42Z",
@@ -254,7 +254,7 @@
   "$Pirate_OnStartScanCargo11;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-10T23:52:40Z",
     "from_example": "Chris Hesketh",
     "last_seen": "2026-06-10T23:52:40Z",
@@ -263,7 +263,7 @@
   "$Pirate_StartInterdiction07;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-06T18:13:01Z",
     "from_example": "Baron",
     "last_seen": "2026-06-06T18:13:01Z",
@@ -272,7 +272,7 @@
   "$Police_ThankYouPassedStopAndSearch01;": {
     "category": "authority",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-05-05T06:07:05Z",
     "from_example": "System Authority Vessel",
     "last_seen": "2026-05-05T06:07:05Z",
@@ -281,7 +281,7 @@
   "$Police_ThankYouPassedStopAndSearch03;": {
     "category": "authority",
     "channel": "npc",
-    "count": 3,
+    "count": 6,
     "first_seen": "2026-05-05T05:43:36Z",
     "from_example": "System Authority Vessel",
     "last_seen": "2026-06-07T23:49:45Z",
@@ -290,7 +290,7 @@
   "$Police_ThankYouPassedStopAndSearch04;": {
     "category": "authority",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-09T10:08:54Z",
     "from_example": "System Authority Vessel",
     "last_seen": "2026-06-09T10:08:54Z",
@@ -299,7 +299,7 @@
   "$Police_ThankYouPassedStopAndSearch05;": {
     "category": "authority",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-05-05T04:22:17Z",
     "from_example": "System Authority Vessel",
     "last_seen": "2026-05-05T04:22:17Z",
@@ -308,7 +308,7 @@
   "$Police_ThankYouPassedStopAndSearch06;": {
     "category": "authority",
     "channel": "npc",
-    "count": 2,
+    "count": 4,
     "first_seen": "2026-06-01T05:33:00Z",
     "from_example": "System Authority Vessel",
     "last_seen": "2026-06-09T21:55:53Z",
@@ -317,7 +317,7 @@
   "$Police_ThankYouPassedStopAndSearch09;": {
     "category": "authority",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-01-10T04:11:00Z",
     "from_example": "System Authority Vessel",
     "last_seen": "2026-01-10T04:11:00Z",
@@ -326,7 +326,7 @@
   "$Police_ThankYouPassedStopAndSearch10;": {
     "category": "authority",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-09T23:12:34Z",
     "from_example": "System Authority Vessel",
     "last_seen": "2026-06-09T23:12:34Z",
@@ -335,7 +335,7 @@
   "$Police_ThankYouPassedStopAndSearch11;": {
     "category": "authority",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-05-05T05:50:08Z",
     "from_example": "System Authority Vessel",
     "last_seen": "2026-05-05T05:50:08Z",
@@ -344,7 +344,7 @@
   "$PowersSecurity_PassedStopAndSearchNoPower09;": {
     "category": "authority",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-05-05T04:22:45Z",
     "from_example": "Power Security Force",
     "last_seen": "2026-05-05T04:22:45Z",
@@ -353,7 +353,7 @@
   "$Propagandist_Patrol01;": {
     "category": "other",
     "channel": "npc",
-    "count": 3,
+    "count": 6,
     "first_seen": "2026-06-06T16:46:22Z",
     "from_example": "Constance Gardener",
     "last_seen": "2026-06-06T16:54:05Z",
@@ -362,7 +362,7 @@
   "$Propagandist_Patrol02;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-06T16:53:26Z",
     "from_example": "Mark Parsons",
     "last_seen": "2026-06-06T16:53:26Z",
@@ -371,7 +371,7 @@
   "$Propagandist_Patrol04;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-11T00:37:15Z",
     "from_example": "Talibur Tasslehoff",
     "last_seen": "2026-06-11T00:37:15Z",
@@ -380,7 +380,7 @@
   "$Propagandist_Patrol05;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-06T16:45:56Z",
     "from_example": "Constance Gardener",
     "last_seen": "2026-06-06T16:45:56Z",
@@ -389,7 +389,7 @@
   "$Protester_Patrol04;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-05-25T09:15:37Z",
     "from_example": "Maldel Espace",
     "last_seen": "2026-05-25T09:15:37Z",
@@ -398,16 +398,16 @@
   "$STATION_NoFireZone_entered;": {
     "category": "station",
     "channel": "npc",
-    "count": 23,
+    "count": 48,
     "first_seen": "2025-09-18T14:19:11Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-09T23:27:25Z",
+    "last_seen": "2026-06-15T07:23:43Z",
     "message_localised": "No fire zone entered."
   },
   "$STATION_NoFireZone_entered_deployed;": {
     "category": "station",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-05-02T06:28:46Z",
     "from_example": "Leonard Nimoy Station",
     "last_seen": "2026-05-02T06:28:46Z",
@@ -416,25 +416,25 @@
   "$STATION_NoFireZone_exited;": {
     "category": "station",
     "channel": "npc",
-    "count": 22,
+    "count": 46,
     "first_seen": "2025-09-18T14:17:12Z",
     "from_example": "THE WALKING CANE | OWCH",
-    "last_seen": "2026-06-10T00:14:08Z",
+    "last_seen": "2026-06-15T07:27:44Z",
     "message_localised": "No fire zone exited."
   },
   "$STATION_docking_granted;": {
     "category": "station",
     "channel": "npc",
-    "count": 24,
+    "count": 50,
     "first_seen": "2025-09-18T14:19:12Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-09T23:27:28Z",
+    "last_seen": "2026-06-15T07:23:46Z",
     "message_localised": "Docking request granted."
   },
   "$Smuggler_NearDeath04;": {
     "category": "piracy",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-06-09T23:12:39Z",
     "from_example": "Steve Hunt",
     "last_seen": "2026-06-09T23:12:39Z",
@@ -443,7 +443,7 @@
   "$Trader_OnEnemyShipDetection02;": {
     "category": "other",
     "channel": "npc",
-    "count": 4,
+    "count": 8,
     "first_seen": "2026-01-10T04:25:57Z",
     "from_example": "Keiner Wars",
     "last_seen": "2026-06-08T04:53:45Z",
@@ -452,7 +452,7 @@
   "$Trader_OnEnemyShipDetection03;": {
     "category": "other",
     "channel": "npc",
-    "count": 1,
+    "count": 2,
     "first_seen": "2026-01-10T04:24:53Z",
     "from_example": "Ellie Rose",
     "last_seen": "2026-01-10T04:24:53Z",
@@ -461,7 +461,7 @@
   "$Trader_OnEnemyShipDetection05;": {
     "category": "other",
     "channel": "npc",
-    "count": 2,
+    "count": 4,
     "first_seen": "2026-05-25T03:27:57Z",
     "from_example": "Darion ep Tellek",
     "last_seen": "2026-06-08T04:53:44Z",

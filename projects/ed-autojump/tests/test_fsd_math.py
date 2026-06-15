@@ -14,7 +14,7 @@ from ed_autojump.fsd import (
     max_jump_range,
 )
 from ed_autojump.fsd.math import fsd_spec_from_item
-from ed_autojump.journal import parse_event
+from ed_core.journal import parse_event
 
 
 def test_fsd_spec_constants_class_5_a():

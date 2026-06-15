@@ -77,3 +77,9 @@ fixtures/journals/*.log
 projects/ed-autojump/.claude/
 projects/ed-autojump/calibration/*.png
 projects/ed-autojump/calibration/*.json
+
+# Runtime harvest state (regenerated at every CV capture run)
+**/.harvest_state.json
+
+# Reorg scratch (one-time baseline capture, not a tracked artifact)
+/reorg_baseline_fails.txt

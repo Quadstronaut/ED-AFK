@@ -1,0 +1,62 @@
+[project]
+name = "ed-core"
+version = "0.2.0"
+description = "ED-AFK engine + plumbing: journal/keys/status, the flow engine, the registry + active-set runtime, shared flight primitives, and the CLI host."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Quadstronaut" }]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
+
+dependencies = [
+    "ed-vision",
+    "pydantic>=2.0",
+    "watchdog>=4.0",
+    "requests>=2.31",
+    # Use the rgx fork specifically: upstream `pydirectinput` 1.x lacks the
+    # scancode_keyDown/scancode_keyUp functions we need. Sending Frontier-
+    # accepted scancodes via the upstream lib's `keyDown(key, scancode=...)`
+    # raises TypeError — the upstream signature has no scancode kwarg.
+    'pydirectinput-rgx>=2.0; sys_platform == "win32"',
+    # Per-process WASAPI audio session monitor — the canonical "ED is
+    # ready for input" signal is its audio meter going non-zero, not
+    # an arbitrary delay after a journal event.
+    'pycaw>=20251023; sys_platform == "win32"',
+    "tomli>=2.0;python_version<'3.11'",
+]
+
+[project.optional-dependencies]
+# The shared flight primitives (orient/pitch/hold) reach DOWN into ed-vision,
+# so the CV stack is an extra here too (re-exposed from ed-vision).
+cv = ["ed-vision[cv]"]
+vision = ["ed-vision[vision]"]
+vision-heavy = ["ed-vision[vision-heavy]"]
+hotkey = [
+    # Enables the global Ctrl+Alt+P panic hotkey listener. Without this
+    # the bot still runs — just no OS-level panic. Ctrl+C in the
+    # terminal continues to work either way.
+    'keyboard>=0.13; sys_platform == "win32"',
+]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+# The CLI host moves to core (it selects + runs the active app set).
+[project.scripts]
+ed-autojump = "ed_core.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# ships.json is read by ship_sizes (core). schemas (if any) ride with core.
+ed_core = [
+    "data/*.json", "schemas/*.json",
+]

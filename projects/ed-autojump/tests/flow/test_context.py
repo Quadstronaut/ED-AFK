@@ -1,4 +1,4 @@
-from ed_autojump.flow.context import StepContext
+from ed_core.flow.context import StepContext
 
 
 def test_context_minimal_construction():

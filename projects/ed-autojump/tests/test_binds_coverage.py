@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.binds_validate import REQUIRED_ACTIONS
-from ed_autojump.keys import parse_binds
+from ed_core.binds_validate import REQUIRED_ACTIONS
+from ed_core.keys import parse_binds
 
 
 EXECUTOR_DIR = Path(__file__).parent.parent / "src" / "ed_autojump" / "executor"

@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.binds_tool import (
+from ed_core.binds_tool import (
     _BACKUP_NAME,
     install_binds_preset,
     restore_start_preset,
     swap_start_preset,
 )
-from ed_autojump.config import load_config
-from ed_autojump.keys import parse_binds
+from ed_core.config import load_config
+from ed_core.keys import parse_binds
 
 
 def _cfg(tmp_path: Path):

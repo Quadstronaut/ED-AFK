@@ -2,8 +2,8 @@
 
 import json
 
-from ed_autojump.vision import debug_overlay
-from ed_autojump.vision.debug_overlay import (
+from ed_vision import debug_overlay
+from ed_vision.debug_overlay import (
     TRANSFORM_FILENAME,
     VIRTUAL_HEIGHT_PLUS,
     VIRTUAL_WIDTH_PLUS,

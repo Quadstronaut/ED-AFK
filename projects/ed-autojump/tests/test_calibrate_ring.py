@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ed_autojump.vision.capture import locate_compass_ring, ring_to_region
+from ed_vision.capture import locate_compass_ring, ring_to_region
 
 
 # ---------------------------------------------------------------------------

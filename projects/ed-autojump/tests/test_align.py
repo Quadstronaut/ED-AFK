@@ -13,8 +13,8 @@ import math
 
 import pytest
 
-from ed_autojump.executor.align import align_to_target, AlignOutcome, _measure, _correct
-from ed_autojump.vision.compass import CompassRead
+from ed_core.executor.align import align_to_target, AlignOutcome, _measure, _correct
+from ed_vision.compass import CompassRead
 
 
 class _Sim:

@@ -7,7 +7,7 @@ import json
 
 
 def _load_ships() -> list[dict]:
-    ref = pkg_resources.files("ed_autojump.data").joinpath("ships.json")
+    ref = pkg_resources.files("ed_core.data").joinpath("ships.json")
     with ref.open("r", encoding="utf-8") as fh:
         payload = json.load(fh)
     return payload["ships"]

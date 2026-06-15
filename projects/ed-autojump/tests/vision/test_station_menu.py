@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 import pytest
 
-from ed_autojump.vision.station_menu import (
+from ed_vision.station_menu import (
     AUTO_LAUNCH,
     DISEMBARK,
     NONE,

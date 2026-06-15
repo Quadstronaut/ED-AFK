@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import pytest
 
-from ed_autojump.vision.widget_ring import (
+from ed_vision.widget_ring import (
     WidgetRingRead,
     WidgetRingReader,
     WidgetRingResolutionError,

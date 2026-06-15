@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
-from ed_autojump.flow.context import StepContext
-from ed_autojump.flow.interpreter import run_procedure
-from ed_autojump.flow.model import OnRequiredFail, Procedure, Step
+from ed_core.flow.context import StepContext
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.model import OnRequiredFail, Procedure, Step
 from tests.flow import FakeSender
 
 

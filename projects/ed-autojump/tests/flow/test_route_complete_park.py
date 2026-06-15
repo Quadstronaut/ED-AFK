@@ -7,9 +7,9 @@ next hop at route end, and re-jumping is exactly the false-abort bug it fixes.""
 from pathlib import Path
 from types import SimpleNamespace
 
-from ed_autojump.flow.context import StepContext
-from ed_autojump.flow.interpreter import run_procedure
-from ed_autojump.flow.loader import load_procedures, validate_procedure
+from ed_core.flow.context import StepContext
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.loader import load_procedures, validate_procedure
 from ed_autojump.flow.steps import STEP_REGISTRY
 from tests.flow import FakeSender
 

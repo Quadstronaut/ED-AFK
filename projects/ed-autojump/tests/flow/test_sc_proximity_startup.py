@@ -1,4 +1,4 @@
-"""TDD tests for the SC restart proximity branch (2026-06-08 operator spec).
+﻿"""TDD tests for the SC restart proximity branch (2026-06-08 operator spec).
 
 Four-priority launch gate (in order):
   1. INDETERMINATE (dest=None / unknown system) -> arrival (fail-safe).
@@ -18,8 +18,9 @@ from types import SimpleNamespace as NS
 import pytest
 
 from ed_autojump.flow.dispatcher import FlowRunner
-from ed_autojump.flow.model import Procedure, Step
+from ed_core.flow.model import Procedure, Step
 from tests.flow import FakeSender
+from ed_autojump.flow.boot_routes import classify_startup
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +108,7 @@ def test_no_destination_runs_arrival_failsafe():
     st = _status(in_supercruise=True, destination=None)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=120.0)   # stale — priority 1 fires before priority 4
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival must run; actions={actions}"
     assert "SetSpeed25" not in actions, "sc_resume must NOT run when dest=None"
@@ -125,7 +126,7 @@ def test_near_primary_star_dest_runs_arrival():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=120.0)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival did not run; actions={actions}"
     assert "SetSpeed25" not in actions, "sc_resume must NOT run on NEAR path"
@@ -138,7 +139,7 @@ def test_near_secondary_star_dest_runs_arrival():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=120.0)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions
     assert "SetSpeed25" not in actions
@@ -159,7 +160,7 @@ def test_fresh_arrival_route_hop_dest_runs_arrival():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=15.0)   # within 30s fresh window
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival must run (fresh); actions={actions}"
     assert "SetSpeed25" not in actions, "sc_resume must NOT run within fresh window"
@@ -174,7 +175,7 @@ def test_fresh_arrival_named_station_dest_runs_arrival():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=5.0)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival must run (fresh station); actions={actions}"
     assert "SetSpeed25" not in actions
@@ -188,7 +189,7 @@ def test_fresh_arrival_boundary_exactly_30s_runs_arrival():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=30.0)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival must run at boundary 30.0s; actions={actions}"
     assert "SetSpeed25" not in actions
@@ -202,7 +203,7 @@ def test_stale_arrival_boundary_just_over_30s_runs_sc_resume():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=30.1)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "SetSpeed25" in actions, f"sc_resume must run at 30.1s; actions={actions}"
     assert "TargetNextRouteSystem" not in actions
@@ -217,7 +218,7 @@ def test_jump_age_indeterminate_no_fsdjump_runs_arrival():
     # jump_age_s=None -> _last_fsdjump_utc stays None -> _jump_age() returns None
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=None)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival must run (no jump seen); actions={actions}"
     assert "SetSpeed25" not in actions
@@ -237,7 +238,7 @@ def test_far_station_dest_runs_sc_resume():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=120.0)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "SetSpeed25" in actions, f"sc_resume did not run; actions={actions}"
     assert "TargetNextRouteSystem" not in actions, "arrival must NOT run on FAR/stale path"
@@ -251,7 +252,7 @@ def test_far_station_dest_records_sc_resume_event():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo",
                      route=_ROUTE, records=records, jump_age_s=120.0)
-    r._maybe_startup()
+    classify_startup(r)
     names = [n for n, _ in records]
     assert "ScResumeOnRestart" in names, f"expected ScResumeOnRestart, got {names}"
 
@@ -265,7 +266,7 @@ def test_far_route_hop_dest_stale_runs_sc_resume():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system="Robigo", route=_ROUTE,
                      jump_age_s=120.0)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "SetSpeed25" in actions, f"sc_resume did not run; actions={actions}"
     assert "TargetNextRouteSystem" not in actions
@@ -283,7 +284,7 @@ def test_indeterminate_no_system_name_runs_arrival():
     st = _status(in_supercruise=True, destination=dest)
     r = _prox_runner(sender, st=st, current_system=None, route=_ROUTE,
                      jump_age_s=120.0)
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "TargetNextRouteSystem" in actions, f"arrival must run on indeterminate; actions={actions}"
     assert "SetSpeed25" not in actions, "sc_resume must NOT run when system is unknown"
@@ -317,7 +318,7 @@ def test_indeterminate_no_status_attr_runs_arrival():
     r._current_system = "Robigo"
     r._startup_done = False
     # _latest_status is None because status_supplier returned None at init
-    r._maybe_startup()
+    classify_startup(r)
     # With None status, _maybe_startup returns early (st is None guard at L906)
     # — nothing runs, startup_done is NOT set to True (returns before that).
     # So this verifies the early-return, not the proximity branch.
@@ -351,7 +352,7 @@ def test_parked_terminal_still_idles_not_sc_resume():
         navroute_reader=_make_navroute_reader([]),   # empty route = parked
     )
     r._current_system = "Robigo"
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == [], f"nothing should run; got {sender.actions()}"
     names = [n for n, _ in records]
     assert "RouteCompleteIdleOnRestart" in names
@@ -379,7 +380,7 @@ def test_smacked_with_cooldown_still_runs_smack_recovery_not_sc_resume():
     )
     r.navroute_reader = _make_navroute_reader(_ROUTE)
     r._smacked = True
-    r._maybe_startup()
+    classify_startup(r)
     actions = sender.actions()
     assert "SetSpeed50" in actions, f"smack_recovery must run; actions={actions}"
     assert "SetSpeed25" not in actions

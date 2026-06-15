@@ -1,7 +1,7 @@
 [project]
 name = "ed-autojump"
 version = "0.2.0"
-description = "Autonomous exploration bot for Elite Dangerous: Odyssey"
+description = "Autonomous jump + dock domain for Elite Dangerous: Odyssey. Depends on ed-core + ed-vision; never on a sibling domain."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
@@ -11,56 +11,22 @@ classifiers = [
 ]
 
 dependencies = [
-    "pydantic>=2.0",
-    "watchdog>=4.0",
-    "requests>=2.31",
-    # Use the rgx fork specifically: upstream `pydirectinput` 1.x lacks the
-    # scancode_keyDown/scancode_keyUp functions we need. Sending Frontier-
-    # accepted scancodes via the upstream lib's `keyDown(key, scancode=...)`
-    # raises TypeError — the upstream signature has no scancode kwarg.
-    'pydirectinput-rgx>=2.0; sys_platform == "win32"',
-    # Per-process WASAPI audio session monitor — the canonical "ED is
-    # ready for input" signal is its audio meter going non-zero, not
-    # an arbitrary delay after a journal event.
-    'pycaw>=20251023; sys_platform == "win32"',
-    "tomli>=2.0;python_version<'3.11'",
+    "ed-core",
+    "ed-vision",
 ]
 
 [project.optional-dependencies]
-cv = [
-    "opencv-python>=4.9",
-    "numpy>=1.26",
-    "dxcam-cpp",
-    "pytesseract>=0.3.10",
-]
-# Nav-compass alignment. Default (light) path: onnxruntime runs the
-# vendored compass.onnx. opencv/dxcam do capture + the colour-free
-# fallback reader. No PyTorch here — this is the "just works" tier.
-vision = [
-    "onnxruntime>=1.17",
-    "opencv-python>=4.9",
-    "numpy>=1.26",
-    "dxcam-cpp",
-]
-# Opt-in heavy backend. Only needed if the onnxruntime path misbehaves
-# in-game and you want to fall back to the full ultralytics runtime on
-# the same vendored weights (compass.pt). Pulls in torch (~hundreds of MB).
-vision-heavy = [
-    "ultralytics>=8.3",
-]
-hotkey = [
-    # Enables the global Ctrl+Alt+P panic hotkey listener. Without this
-    # the bot still runs — just no OS-level panic. Ctrl+C in the
-    # terminal continues to work either way.
-    'keyboard>=0.13; sys_platform == "win32"',
-]
+# Convenience: pull the engine's extras through the domain so an editable
+# `ed-autojump[dev,hotkey,vision]` install still resolves everything (the
+# launcher uses exactly that spec).
+cv = ["ed-core[cv]"]
+vision = ["ed-core[vision]"]
+vision-heavy = ["ed-core[vision-heavy]"]
+hotkey = ["ed-core[hotkey]"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
 ]
-
-[project.scripts]
-ed-autojump = "ed_autojump.cli:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -70,9 +36,9 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
+# galmap/fsd/fuel-scoop json + runtime binds follow the jump domain (G11).
 ed_autojump = [
-    "data/*.json", "schemas/*.json", "binds/*.binds", "edhm-presets/*.json",
-    "vision/model/*.onnx", "vision/model/*.pt", "vision/model/*.md",
+    "data/*.json", "binds/*.binds", "edhm-presets/*.json",
 ]
 
 [tool.pytest.ini_options]

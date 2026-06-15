@@ -12,8 +12,8 @@ from typing import Any, Optional
 
 import pytest
 
-from ed_autojump.config import LauncherConfig
-from ed_autojump.launcher import (
+from ed_core.config import LauncherConfig
+from ed_core.launcher import (
     DryrunOutcome,
     LaunchSpec,
     LauncherError,
