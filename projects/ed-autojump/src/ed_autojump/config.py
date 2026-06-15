@@ -330,12 +330,13 @@ class OverlayConfig:
     ttl: int = 6                       # seconds; > keepalive_s so it never blinks
     # CV debug boxes (spec 2026-06-10): flash an outlined box over every
     # region a named ScreenGrabber captures, color-coded by detector verdict
-    # (white look / green hit / red miss). DEFAULT ON, OPT-OUT (operator
-    # directive 2026-06-13): vision data is ALWAYS drawn to the overlay so
-    # sizing/location/confidence are continuously verifiable. Opt out with
-    # `cv_debug = false` in config.local.toml or ED_AUTOJUMP_OVERLAY_CV_DEBUG=0.
-    # Fail-soft: no EDMCOverlay / overlay disabled -> silently no boxes.
-    cv_debug: bool = True
+    # (white look / green hit / red miss). DEFAULT OFF, OPT-IN (operator
+    # directive 2026-06-14, supersedes the 2026-06-13 default-on rule). Opt in
+    # via the launcher VISION toggle, which writes ED_AUTOJUMP_OVERLAY_CV_DEBUG=1
+    # into projects/ed-autojump/.env (local, gitignored, never committed); or set
+    # `cv_debug = true` in config.local.toml. A real env var of the same name
+    # wins over .env. Fail-soft: no EDMCOverlay / overlay disabled -> no boxes.
+    cv_debug: bool = False
     cv_debug_ttl_s: float = 2.0        # flash duration; wire ttl = int(this)
 
 
