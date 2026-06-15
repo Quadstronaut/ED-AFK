@@ -1,0 +1,74 @@
+{
+  "_doc": "Empirical nav-panel coordinate map (operator-measured, Claude-verified 2026-06-14). Filtered-to-systems view, Sol. Replaces offset-guessing — see resume-state-2026-06-14-navpanel-cv memory.",
+  "resolution": [1920, 1080],
+  "verification": "orange_frac 0.26-0.34 + template corr 0.60-0.97 vs mean system glyph + visual box overlay (2_verified/3_verified). Selected rows: inverted polarity (orange_frac ~0.7, corr ~ -0.75).",
+  "geometry": {
+    "row_pitch_px": 36.5,
+    "x_drift_per_row_px": 2.9,
+    "x_drift_note": "icon X increases going DOWN (perspective tilt); right edge of panel is farther/lower",
+    "box_size_px": [24, 22]
+  },
+  "selected_row": {
+    "tell": "inverted polarity — dark glyph on bright-orange highlight band",
+    "orange_frac": "~0.66-0.74 (vs ~0.27-0.34 unselected)",
+    "template_corr_vs_unselected": "negative (~ -0.75)"
+  },
+  "column_1": {
+    "meaning": "leftmost body/system TYPE icon (here: system glyph = concentric circles). This is the column whose X varies with orbital indentation in body views; in a systems-only view all rows are systems so it is uniform.",
+    "top_bounded": {
+      "source": "image-cache/2.png",
+      "fills_y": [456, 841],
+      "twelfth_row": "cut off at BOTTOM",
+      "rows": [
+        {"row": 1,  "name": "alpha centauri",       "selected": true,  "box": [529, 456, 553, 478]},
+        {"row": 2,  "name": "barnard's star",       "selected": false, "box": [531, 493, 556, 515]},
+        {"row": 3,  "name": "luhman 16",            "selected": false, "box": [534, 530, 559, 552]},
+        {"row": 4,  "name": "wise 0855-0714",       "selected": false, "box": [537, 566, 562, 589]},
+        {"row": 5,  "name": "wolf 359",             "selected": false, "box": [540, 603, 565, 625]},
+        {"row": 6,  "name": "lalande 21185",        "selected": false, "box": [543, 639, 567, 661]},
+        {"row": 7,  "name": "uv ceti",              "selected": false, "box": [546, 676, 570, 698]},
+        {"row": 8,  "name": "sirius",               "selected": false, "box": [549, 712, 574, 734]},
+        {"row": 9,  "name": "ross 154",             "selected": false, "box": [552, 749, 575, 770]},
+        {"row": 10, "name": "yin sector cl-y d127", "selected": false, "box": [555, 784, 580, 805]},
+        {"row": 11, "name": "duamta",               "selected": false, "box": [558, 820, 582, 841]}
+      ]
+    },
+    "bottom_bounded": {
+      "source": "image-cache/3.png",
+      "fills_y": [479, 864],
+      "twelfth_row": "cut off at TOP (ez aquarii)",
+      "rows_from_bottom": [
+        {"row_from_bottom": 1,  "name": "teegarden's star", "selected": true,  "box": [560, 842, 585, 864]},
+        {"row_from_bottom": 2,  "name": "luyten's star",    "selected": false, "box": [558, 806, 581, 828]},
+        {"row_from_bottom": 3,  "name": "wise 0350-5658",   "selected": false, "box": [554, 770, 579, 792]},
+        {"row_from_bottom": 4,  "name": "yz ceti",          "selected": false, "box": [552, 734, 576, 757]},
+        {"row_from_bottom": 5,  "name": "tau ceti",         "selected": false, "box": [548, 699, 571, 722]},
+        {"row_from_bottom": 6,  "name": "spf-lf 1",         "selected": false, "box": [545, 662, 570, 685]},
+        {"row_from_bottom": 7,  "name": "epsilon indi",     "selected": false, "box": [542, 626, 566, 649]},
+        {"row_from_bottom": 8,  "name": "groombridge 34",   "selected": false, "box": [540, 590, 564, 612]},
+        {"row_from_bottom": 9,  "name": "struve 2398",      "selected": false, "box": [537, 553, 561, 576]},
+        {"row_from_bottom": 10, "name": "procyon",          "selected": false, "box": [534, 516, 558, 539]},
+        {"row_from_bottom": 11, "name": "61 cygni",         "selected": false, "box": [530, 479, 555, 502]}
+      ]
+    }
+  },
+  "coordinate_model_v1": {
+    "validated": "2026-06-14, operator-confirmed 'WAY better, on point' on 4.png (Sol body view, top-bounded)",
+    "formula": "x0 = indent_base_x_left[col] + tilt_x_per_row_px*(row-1) ;  yc = icon_center_y_row1 + row_pitch_px*(row-1)",
+    "icon_center_y_row1": 467,
+    "row_pitch_px": 36.5,
+    "tilt_x_per_row_px": 2.9,
+    "MAX_COLUMNS": 4,
+    "cap_note": "Nav panel indents MAX 3 levels = 4 columns (Gemini-confirmed + TYC-observed). Do NOT expect 5-7. Column meaning: col1=primary star(s); col2=planets / secondary stars; col3=moons; col4(MAX)=sub-moons OR man-made (station/outpost/megaship/settlement). Barycenters = SAME level (no extra indent). USS/RES/CombatZone/fleet-carriers are anchored to the nearest body and do NOT force col4.",
+    "indent_base_x_left": {"1": 529, "2": 544, "3": 560, "4": 575},
+    "col4_note": "575 = extrapolated from the ~15.5 step; the one col4 row in TYC image-cache/8.png was the SELECTED (inverted) row so not directly measured. Validate against a non-selected col4 row.",
+    "cross_system_validated": "TYC 3319-306-1 (deep, unexplored) tilt-adjusted icon X = col2 ~544, col3 ~559 — IDENTICAL to Sol. Model is SYSTEM-INDEPENDENT (fixed cockpit HUD geometry).",
+    "indent_step_px": 15.5,
+    "box_px": [25, 22],
+    "known_drift": "rows 8+ ~1px low+right; row 11 a couple px low. Linear model slightly oversteps toward the bottom (perspective foreshortening) — refine with a DEEPER system (more rows) via a homography / non-linear pitch.",
+    "depth_source_decision": "PRIMARY = method A: detect icon left-edge X, tilt-correct, snap to the indent grid. FALLBACK = journal body parent-chain (BodyID->depth), run AGGRESSIVELY in the background so the player is never left with nothing (operator directive 2026-06-14).",
+    "selected_row": "inverted-polarity icon (orange_frac ~0.7, template corr negative) — handle separately."
+  },
+  "column_0": "TODO — operator to provide (column left of the type-icon: status/filter column).",
+  "next": "capture a DEEPER-nesting system (5-6 indent columns) to extend indent_base_x + fix bottom drift; then map column 0; then per-type icon templates; build the detect+snap localizer with journal-parent-chain fallback."
+}
