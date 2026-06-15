@@ -232,6 +232,21 @@ def _parser() -> argparse.ArgumentParser:
              "panel is open, compass/sun/widget when forward; logs UI changes",
     )
 
+    # ed-autojump cleanup — kill a stale survivor named by the PID file
+    # (Layer 4). PID-targeted; never a command-line scan.
+    sub.add_parser(
+        "cleanup",
+        help="kill a leftover bot child from a crashed prior session "
+             "(targets the recorded PID file only; never your shell)",
+    )
+
+    # ed-autojump panic — release held DirectInput keys NOW (Layer 4).
+    sub.add_parser(
+        "panic",
+        help="release any held DirectInput keys immediately (clears a stuck "
+             "key after a hard-kill that left the game holding one)",
+    )
+
     return p
 
 
@@ -271,6 +286,7 @@ def cmd_run(args) -> int:
     from .config import load_config
     from .journal.tail import JournalTail
     from .keys import NullSender, parse_binds
+    from .lifecycle import install_signal_cleanup
     from .panic import PanicSwitch
     from .panic_listener import HotkeyListener, _NullBackend, resolve_backend
     from .recorder import Recorder, default_session_path
@@ -531,6 +547,16 @@ def cmd_run(args) -> int:
     if visited_logger is not None:
         print(f"visited-log: ON -> {visited_logger.path}")
 
+    # Layer-3/4 best-effort cleanup: install win32 console-ctrl + signal +
+    # atexit handlers all converging on ONE idempotent release-keys + panic +
+    # close. Writes a PID file (Layer 4) the launcher / `cleanup` can target.
+    # Fail-soft on any platform missing a piece (AC12). This is the ONLY layer
+    # that releases HELD KEYS on a graceful-ish termination; it does nothing on
+    # a raw TerminateProcess of this child (documented residual).
+    cleanup_guard = install_signal_cleanup(
+        panic=panic, sender=sender, recorder=recorder, on_log=print,
+    )
+
     runner = FlowRunner(
         procedures=procedures,
         sender=sender,
@@ -619,7 +645,10 @@ def cmd_run(args) -> int:
         return 0
     except KeyboardInterrupt:
         print("\ninterrupted — tripping panic switch")
-        panic.trip()
+        # Route through the idempotent guard so the same release-keys + panic
+        # + close path runs whether we got here via Ctrl+C, a signal handler,
+        # or the win32 console handler — exactly once regardless.
+        cleanup_guard.run("KeyboardInterrupt")
         runner.request_stop()
         return 130
     finally:
@@ -627,13 +656,9 @@ def cmd_run(args) -> int:
             listener.stop()
         if overlay is not None:
             overlay.close()
-        # Release held keys best-effort; close recorder if one is open.
-        try:
-            sender.release_all()
-        except Exception:
-            pass
-        if recorder is not None:
-            recorder.close()
+        # Idempotent: if a handler already ran cleanup this is a no-op; if we
+        # exited normally this is the one that releases keys + closes recorder.
+        cleanup_guard.run("cmd_run finally")
 
 
 def _build_launch_spec(cfg, *, commander=None, auth=None, product=None):
@@ -871,6 +896,32 @@ def cmd_navpanel_overlay(args) -> int:
     return run_navpanel_overlay(cfg, n_rows=args.rows)
 
 
+def cmd_cleanup(args) -> int:
+    """Kill a leftover bot child from a crashed prior session (Layer 4).
+
+    Targets the PID recorded in the PID file ONLY, and only if that PID is a
+    live python interpreter that isn't us — so the operator's own shell and
+    this very process are never touched (the command-line-match gotcha)."""
+    from .lifecycle import default_pid_path, kill_pid_file_survivor
+
+    pid = kill_pid_file_survivor()
+    if pid:
+        print(f"cleanup: killed leftover bot child PID {pid}")
+    else:
+        print(f"cleanup: nothing to do (no live survivor at "
+              f"{default_pid_path()})")
+    return 0
+
+
+def cmd_panic(args) -> int:
+    """Release any held DirectInput keys immediately (Layer 4)."""
+    from .lifecycle import panic_release_keys
+
+    panic_release_keys()
+    print("panic: release_all() sent — any held keys cleared")
+    return 0
+
+
 def cmd_cv_debug(args) -> int:
     """Live context-aware CV overlay that reacts to the current UI (GuiFocus)."""
     cfg = load_config(args.config if args.config.is_file() else None)
@@ -967,6 +1018,8 @@ def main(argv: list[str] | None = None) -> int:
         "calibrate-overlay": cmd_calibrate_overlay,
         "navpanel-overlay": cmd_navpanel_overlay,
         "cv-debug": cmd_cv_debug,
+        "cleanup": cmd_cleanup,
+        "panic": cmd_panic,
     }
     return dispatch[cmd](args)
 
