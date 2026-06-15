@@ -482,6 +482,13 @@ def cmd_run(args) -> int:
     from ed_core.flow.loader import validate_procedure
     from .flow.steps import STEP_REGISTRY
 
+    # Activate domain plugins (e.g. ed_explore registers body_tour).
+    # Uses Python entry_points so ed_autojump never imports a sibling domain
+    # directly — DAG-clean by construction.
+    import importlib.metadata as _meta
+    for _ep in _meta.entry_points(group="ed_autojump.plugins"):
+        _ep.load()()
+
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     procedures = load_procedures(proc_dir)
     # Fail fast on an invalid procedure file rather than improvising in flight.

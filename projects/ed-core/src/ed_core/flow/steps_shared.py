@@ -700,6 +700,96 @@ def step_orient_widget_ring(
     return degrade
 
 
+def step_engage_supercruise(
+    ctx: StepContext, *, poll_s: float = 0.8, max_charge_s: float = 60.0,
+    presses: int = 1, between_press_s: float = 8.0,
+    until_charging: bool = False, press: bool = True,
+) -> bool:
+    """Press Supercruise, then gate on game signals — no success-window clock.
+
+    Success: `SupercruiseEntry` journal event, or the Supercruise status flag
+    (state-side confirmation, absorbs journal-write latency). Failure: the
+    FsdCharging flag observed true→false without entry (the game aborted the
+    charge), or operator abort. `poll_s` is the event-poll cadence, not a gate.
+
+    `max_charge_s` is the OPERATOR-SANCTIONED stuck-state watchdog (2026-06-06:
+    "if it charges for a good minute without jumping, that's a fail") — set far
+    above any real spool, it catches a wedged FSD / unregistered press, never a
+    healthy charge.
+
+    `presses` > 1 (ADDED 2026-06-06 run 6, the exclusion-zone climb-out):
+    inside a star's exclusion zone ED REFUSES the SC press outright — no
+    FsdCharging, no journal event, nothing (session_142708: one press at
+    14:27:11, then a 60s hold that never saw a charge; the ship had spent
+    runs 3-4 thrusting INTO the star and was deep inside). While the ship
+    flies back out, re-press every `between_press_s` until the charge takes.
+    A press is ONLY re-sent when no charge ever started in its window —
+    re-pressing during a live charge would CANCEL it; a charge that starts
+    then drops is handled by the existing charge_dropped exit. presses=1 is
+    the exact legacy behavior.
+
+    `until_charging` (ADDED 2026-06-06 run 9): SUCCESS = a LIVE CHARGE, not
+    SC entry. A post-smack charge spawns an ESCAPE VECTOR and holds until
+    the ship ALIGNS with it (screen-confirmed 14:56: cyan "ALIGN WITH
+    ESCAPE VECTOR" marker; 9 minutes of full-throttle burn never engaged
+    because ED wanted attitude, not distance).
+
+    `press=False` (ADDED 2026-06-06 run 10): gate-only mode — the charge is
+    ALREADY live (a prior until_charging step got it) and the ship was just
+    aligned; pressing again would CANCEL it. Pure wait for entry/dropped.
+    """
+    st = ctx.status_supplier()
+    if st is not None and getattr(st, "in_supercruise", False):
+        return True  # already in SC; nothing to engage
+
+    for attempt in range(max(1, presses)):
+        if press and not _press(ctx, "Supercruise"):
+            return False
+        if ctx.event_waiter is None:
+            return True  # no journal wiring (unit tests) -> proceed
+        charge_seen = False
+        start = ctx.clock()
+        while True:
+            if ctx.should_abort():
+                ctx.log("EngageSupercruiseDone", {"reason": "abort"})
+                return False
+            now = ctx.clock()
+            if now - start > max_charge_s:
+                ctx.log("EngageSupercruiseDone", {"reason": "watchdog",
+                                                  "attempt": attempt + 1})
+                return False
+            # Press refused (no charge in its window) -> next press attempt.
+            if (not charge_seen and now - start > between_press_s
+                    and attempt + 1 < max(1, presses)):
+                ctx.log("EngageSupercruiseRetry", {"attempt": attempt + 1})
+                break
+            if ctx.event_waiter("SupercruiseEntry", poll_s):
+                return True
+            st = ctx.status_supplier()
+            if st is None:
+                continue
+            if getattr(st, "in_supercruise", False):
+                return True
+            if getattr(st, "fsd_charging", False):
+                if until_charging:
+                    ctx.log("EngageSupercruiseDone", {"reason": "charging",
+                                                      "attempt": attempt + 1})
+                    return True   # live charge IS the goal — caller aligns
+                charge_seen = True
+            elif charge_seen:
+                # Charge dropped without entry. One grace poll absorbs the
+                # Status-write vs journal-write race, then it's a real abort.
+                if ctx.event_waiter("SupercruiseEntry", poll_s):
+                    return True
+                st = ctx.status_supplier()
+                if st is not None and getattr(st, "in_supercruise", False):
+                    return True
+                ctx.log("EngageSupercruiseDone", {"reason": "charge_dropped"})
+                return False
+    ctx.log("EngageSupercruiseDone", {"reason": "presses_exhausted"})
+    return False
+
+
 # ---- register all shared steps into the core merged table -----------------
 register_step("press", step_press)
 register_step("wait", step_wait)
@@ -716,3 +806,4 @@ register_step("orient_compass", step_orient_compass)
 register_step("pitch_compass", step_pitch_compass)
 register_step("hold_alignment", step_hold_alignment)
 register_step("orient_widget_ring", step_orient_widget_ring)
+register_step("engage_supercruise", step_engage_supercruise)

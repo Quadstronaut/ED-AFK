@@ -11,12 +11,17 @@ is imported. ed_explore.activate() triggers that import.
 from __future__ import annotations
 
 import contextlib
-from typing import Any
 
 from ed_core.flow.context import StepContext
 from ed_core.flow.step_registry import register_step
 # _ensure_cockpit_focus lives in ed-core shared prims (steps_shared).
 from ed_core.flow.steps_shared import _ensure_cockpit_focus
+# Predicates relocated to ed_core (Phase-1 reorg).
+from ed_core.flow.predicates import _destination_is_local_star
+# Navpanel macro relocated to ed_core (Phase-1 reorg).
+from ed_core.executor.navpanel import engage_supercruise_assist_row
+# engage_supercruise relocated to ed_core (Phase-1 reorg).
+from ed_core.flow.steps_shared import step_engage_supercruise
 
 
 def _body_tour_identity_target(ctx: StepContext, tried: set):
@@ -36,17 +41,6 @@ def _body_tour_identity_target(ctx: StepContext, tried: set):
     except Exception as e:  # fail-open: OCR/env/frame issues never block the jump
         ctx.log("BodyTourReadFail", {"err": type(e).__name__})
         return None
-
-
-def _destination_is_local_star(st: Any, system_name: "str | None") -> "bool | None":
-    """Local import of the intra-ed-autojump helper — deferred to avoid a
-    module-level ed-explore -> ed-autojump import at import time."""
-    # This is a deferred cross-domain import (ed-explore -> ed-autojump).
-    # A1 does not scan ed-explore, so no layering violation is flagged.
-    # The dependency is intentional and documented here. Phase 2 may move
-    # shared nav helpers into ed-core if more domains need them.
-    from ed_autojump.flow.steps import _destination_is_local_star as _fn
-    return _fn(st, system_name)
 
 
 def step_body_tour(
@@ -79,8 +73,7 @@ def step_body_tour(
         ctx.log("BodyTourSkipped", {"reason": "disabled"})
         return True
 
-    # step_engage_supercruise is in ed-autojump steps; deferred cross-domain import.
-    from ed_autojump.flow.steps import step_engage_supercruise
+    # step_engage_supercruise imported from ed_core.flow.steps_shared at module level.
 
     # Fresh per-`with` context manager around each per-body macro (PD3): the
     # guard is a FACTORY (ctx.exclusive_guard()), NOT a context manager itself.
@@ -155,7 +148,6 @@ def step_body_tour(
                 ctx.log("BodyTourFocusFail", {"row": row})
                 return True                # focus desync -> end tour, jump resumes
             try:
-                from ed_autojump.executor.navpanel import engage_supercruise_assist_row
                 engage_supercruise_assist_row(
                     ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s,
                     row=row, pin_to_top=True, pin_hold_s=4.0)
