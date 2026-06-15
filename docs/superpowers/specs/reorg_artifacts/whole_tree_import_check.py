@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 PKGS = {"ed_vision": 0, "ed_core": 1,
-        "ed_autojump": 2, "ed_explore": 2, "ed_combat": 2}
+        "ed_autojump": 2, "ed_explore": 2, "ed_combat": 2, "ed_trading": 2}
 ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
     r"<repo-root>\ED-AFK\projects")
 
@@ -30,6 +30,7 @@ DIRS = {
     "ed_autojump": ROOT / "ed-autojump" / "src" / "ed_autojump",
     "ed_explore": ROOT / "ed-explore" / "src" / "ed_explore",
     "ed_combat": ROOT / "ed-combat" / "src" / "ed_combat",
+    "ed_trading": ROOT / "ed-trading" / "src" / "ed_trading",
 }
 
 
