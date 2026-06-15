@@ -178,6 +178,8 @@ def main() -> int:
                     help="Path to boot_routes.py (post-split); enables classify_startup checks")
     ap.add_argument("--engine", type=Path, default=None,
                     help="Path to ed-core dispatcher.py (post-split); B3 reads from here")
+    ap.add_argument("--explore", type=Path, default=None,
+                    help="Path to ed-explore steps_body_tour.py (Step 5+); B7 includes it")
     args = ap.parse_args()
     src_root = args.src or default_src()
     proc_dir = args.proc or default_proc()
@@ -186,6 +188,7 @@ def main() -> int:
     steps = (src_root / "flow" / "steps.py").read_text(encoding="utf-8")
     boot_src = args.boot.read_text(encoding="utf-8") if args.boot else None
     engine_src = args.engine.read_text(encoding="utf-8") if args.engine else None
+    explore_src = args.explore.read_text(encoding="utf-8") if args.explore else None
 
     results: list[tuple[str, bool, str]] = []
 
@@ -244,6 +247,9 @@ def main() -> int:
                           / "ed_core" / "flow" / "steps_shared.py")
         if steps_shared_p.exists():
             have |= defined_funcs(steps_shared_p.read_text(encoding="utf-8"))
+    if explore_src is not None:
+        # Step 5+: step_body_tour relocated to ed-explore/steps_body_tour.py
+        have |= defined_funcs(explore_src)
     missing_steps = [s for s in REQUIRED_STEPS if s not in have]
     results.append(("B7 shared/honk/body step impls present",
                     not missing_steps, f"missing: {missing_steps}"))

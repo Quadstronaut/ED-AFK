@@ -14,7 +14,8 @@ __version__ = "0.2.0"
 def activate() -> None:
     """Register ed-explore's contributions into the core registry surfaces.
 
-    Phase-1 skeleton: filled in Step 5 when step_body_tour relocates here and
-    registers itself (surface #3) into the merged core step table.
+    Imports steps_body_tour as a side effect, which registers `body_tour` into
+    the merged core step table (surface #3). Called by the CLI host active-set
+    registrar before constructing FlowRunner.
     """
-    return None
+    from . import steps_body_tour as _bt  # noqa: F401 — registers body_tour step
