@@ -1,0 +1,24 @@
+{
+  "_doc": "Galaxy Map search-box automation coordinates (operator-measured 2026-06-14, 1920x1080, ED=primary monitor). For FUTURE programmatic route-plotting. NOT yet wired. Operator note: 'rather train you on too much, not need it'.",
+  "open_close_key": "numpad * (asterisk above the 10-key) — toggles the galaxy map open AND closed",
+  "search_box": {
+    "center": [952, 124],
+    "note": "one LEFT-click focuses it; then type the exact system name"
+  },
+  "results": {
+    "row1_topleft": [955, 155],
+    "rows_y_top": {"row1": 155, "row2": 185, "row3": 213, "row4": 242, "row5": 271},
+    "row_pitch_px": "~28-30",
+    "max_displayed": 20,
+    "scrollbar": "barely-visible on the right edge when results overflow",
+    "too_many_results_msg": {
+      "text": "OVER 100 RESULTS FOUND. PLEASE REFINE YOUR SEARCH.",
+      "box": [696, 719, 1223, 744]
+    },
+    "current_policy": "exact system name -> use ROW 1 only (top result). Other rows captured for possible later use."
+  },
+  "exit_button": {
+    "box": [77, 901, 124, 1029],
+    "appearance": "bright orange, highlighted; door + arrow symbol; left edge of screen"
+  }
+}
