@@ -1,0 +1,37 @@
+[project]
+name = "ed-trading"
+version = "0.2.0"
+description = "Trading domain for the ED-AFK bot. Phase 1: an empty scaffold that registers nothing; auto-discovered via the ed_autojump.plugins entry-point (explore-style, additive). Real build is Phase 2. Depends on ed-core + ed-vision; never on a sibling domain."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Quadstronaut" }]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
+
+dependencies = [
+    "ed-core",
+    "ed-vision",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[project.entry-points."ed_autojump.plugins"]
+# Additive co-activation (explore-style, NOT solo combat which declares none).
+# The CLI plug-in loop (cli.py:494-495) does `_ep.load()()` for every entry in
+# this group AFTER ed_autojump.activate(), so ed-trading is auto-discovered the
+# moment it is installed in the env — ed_autojump never imports it sideways.
+# Phase 1: activate() registers NOTHING, so this co-activation is a safe no-op.
+trading = "ed_trading:activate"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
