@@ -11,7 +11,15 @@ from __future__ import annotations
 import contextlib
 from typing import Any, Callable
 
-from .context import StepContext
+from ed_core.flow.context import StepContext
+# G12: jump/dock step impls register BY NAME into the one core-owned merged
+# step table (registration surface #3). The interpreter/cli read that merged
+# table, never this module. register_step is fail-on-duplicate.
+from ed_core.flow.step_registry import (
+    INPUT_EXCLUSIVE_ACTIONS,
+    STEP_REGISTRY,
+    register_step,
+)
 
 # Map a throttle percentage to its ED action name.
 _THROTTLE_ACTION = {
@@ -257,12 +265,10 @@ def step_engage_supercruise(
     return False
 
 
-STEP_REGISTRY: dict[str, Callable[..., bool]] = {
-    "press": step_press,
-    "wait": step_wait,
-    "set_throttle": step_set_throttle,
-    "pitch": step_pitch,
-}
+register_step("press", step_press)
+register_step("wait", step_wait)
+register_step("set_throttle", step_set_throttle)
+register_step("pitch", step_pitch)
 
 def step_ensure_analysis_mode(
     ctx: StepContext, *,
@@ -306,13 +312,11 @@ def step_ensure_analysis_mode(
                 return True
 
 
-STEP_REGISTRY.update({
-    "target_ahead": step_target_ahead,
-    "target_next_route": step_target_next_route,
-    "engage_jump": step_engage_jump,
-    "engage_supercruise": step_engage_supercruise,
-    "ensure_analysis_mode": step_ensure_analysis_mode,
-})
+register_step("target_ahead", step_target_ahead)
+register_step("target_next_route", step_target_next_route)
+register_step("engage_jump", step_engage_jump)
+register_step("engage_supercruise", step_engage_supercruise)
+register_step("ensure_analysis_mode", step_ensure_analysis_mode)
 
 
 # `wait_for_event` (timeout-gated passive wait) is DELETED, not deprecated:
@@ -381,13 +385,11 @@ def step_hold_until_event(
             ctx.log("BindMissing", {"action": bind, "phase": "up"})
 
 
-STEP_REGISTRY.update({
-    "wait_cooldown_clear": step_wait_cooldown_clear,
-    # hold_until_event keeps its max_hold_s: it is a key-RELEASE safety (a
-    # held key forever = jammed input), not a success/failure gate, and the
-    # honk track gates nothing. Operator reviewed and kept it (2026-06-06).
-    "hold_until_event": step_hold_until_event,
-})
+register_step("wait_cooldown_clear", step_wait_cooldown_clear)
+# hold_until_event keeps its max_hold_s: it is a key-RELEASE safety (a
+# held key forever = jammed input), not a success/failure gate, and the
+# honk track gates nothing. Operator reviewed and kept it (2026-06-06).
+register_step("hold_until_event", step_hold_until_event)
 
 
 def _destination_is_local_star(st: Any, system_name: "str | None") -> "bool | None":
@@ -533,7 +535,7 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
     if not _ensure_cockpit_focus(ctx):
         return False
 
-    from ..executor.align import _measure
+    from ed_core.executor.align import _measure
 
     # DECOUPLED counters (2026-06-07 council, the 11:23Z Lyncis incident):
     # the old `for attempt in range(max_toggles)` made ONE counter serve both
@@ -665,7 +667,7 @@ def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
         return False  # FAIL CLOSED — never proceed to jump without a confirmed orient
     if not _ensure_cockpit_focus(ctx):
         return False  # a map/panel owns the screen — every read is garbage
-    from ..executor.align import align_to_target
+    from ed_core.executor.align import align_to_target
     kwargs = dict(ctx.align_kwargs)
     kwargs.update(align_overrides)
 
@@ -742,7 +744,7 @@ def step_pitch_compass(
         return False
     if not _ensure_cockpit_focus(ctx):
         return False  # a map/panel owns the screen — every read is garbage
-    from ..executor.align import _measure
+    from ed_core.executor.align import _measure
 
     def _at_gate(read) -> bool:
         if not read.found:
@@ -941,7 +943,7 @@ def step_hold_alignment(
     if not _ensure_cockpit_focus(ctx):
         return False  # a map/panel owns the screen — every read is garbage
 
-    from ..executor.align import _correct, _measure
+    from ed_core.executor.align import _correct, _measure
 
     success_flag = _HOLD_SUCCESS_FLAG.get(until_event)
     charge_seen = False
@@ -1906,7 +1908,7 @@ def step_dock_blind_maneuver(ctx: StepContext, *, burn_s: float = 7.0,
         return False
     if not _ensure_cockpit_focus(ctx):
         return False
-    from ..ship_sizes import pitch_s_for_ship, size_for_ship
+    from ed_core.ship_sizes import pitch_s_for_ship, size_for_ship
     ship = ctx.ship_supplier()
     if pitch_override_s > 0:
         pitch_s = float(pitch_override_s)
@@ -2079,12 +2081,13 @@ def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
 # DeployHeatSink press mid-hold is harmless to the UI but the exclusive wrap
 # keeps the watchdog from interleaving with a deliberate blind trajectory.
 # confirm_menu_item stays OUT: it reads the screen and presses nothing.
-INPUT_EXCLUSIVE_ACTIONS = frozenset({
-    "sc_assist_orbit", "nav_panel_target",
-    "dock_target_station", "dock_sc_assist", "dock_approach", "dock_request",
-    "station_services", "auto_launch",
-    "station_services_macro", "dock_blind_maneuver",
-})
+# Actions that own input exclusively (the heat watchdog pauses for their
+# duration) are flagged at registration via register_step(.., input_exclusive=
+# True) in the block below; the merged core table accumulates them into
+# INPUT_EXCLUSIVE_ACTIONS. Set membership is byte-identical to the pre-reorg
+# frozenset: {sc_assist_orbit, nav_panel_target, dock_target_station,
+# dock_sc_assist, dock_approach, dock_request, station_services, auto_launch,
+# station_services_macro, dock_blind_maneuver}.
 
 def _body_tour_identity_target(ctx: StepContext, tried: set):
     """IDENTITY targeting helper (task #45): read the NAVIGATION panel and return
@@ -2300,24 +2303,22 @@ def step_body_tour(
     return True
 
 
-STEP_REGISTRY.update({
-    "sc_assist_orbit": step_sc_assist_orbit,
-    "nav_panel_target": step_nav_panel_target,
-    "orient_compass": step_orient_compass,
-    "pitch_compass": step_pitch_compass,
-    "hold_alignment": step_hold_alignment,
-    "orient_widget_ring": step_orient_widget_ring,
-    "scoop_refuel": step_scoop_refuel,
-    "body_tour": step_body_tour,
-    "dock_target_station": step_dock_target_station,
-    "dock_sc_assist": step_dock_sc_assist,
-    "dock_approach": step_dock_approach,
-    "dock_request": step_dock_request,
-    "dock_await_docked": step_dock_await_docked,
-    "station_services": step_station_services,
-    "auto_launch": step_auto_launch,
-    "wait_masslock_clear": step_wait_masslock_clear,
-    "confirm_menu_item": step_confirm_menu_item,
-    "station_services_macro": step_station_services_macro,
-    "dock_blind_maneuver": step_dock_blind_maneuver,
-})
+register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
+register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
+register_step("orient_compass", step_orient_compass)
+register_step("pitch_compass", step_pitch_compass)
+register_step("hold_alignment", step_hold_alignment)
+register_step("orient_widget_ring", step_orient_widget_ring)
+register_step("scoop_refuel", step_scoop_refuel)
+register_step("body_tour", step_body_tour)
+register_step("dock_target_station", step_dock_target_station, input_exclusive=True)
+register_step("dock_sc_assist", step_dock_sc_assist, input_exclusive=True)
+register_step("dock_approach", step_dock_approach, input_exclusive=True)
+register_step("dock_request", step_dock_request, input_exclusive=True)
+register_step("dock_await_docked", step_dock_await_docked)
+register_step("station_services", step_station_services, input_exclusive=True)
+register_step("auto_launch", step_auto_launch, input_exclusive=True)
+register_step("wait_masslock_clear", step_wait_masslock_clear)
+register_step("confirm_menu_item", step_confirm_menu_item)
+register_step("station_services_macro", step_station_services_macro, input_exclusive=True)
+register_step("dock_blind_maneuver", step_dock_blind_maneuver, input_exclusive=True)

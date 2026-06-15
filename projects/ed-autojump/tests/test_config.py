@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ed_autojump.config import Config, load_config
+from ed_core.config import Config, load_config
 
 
 def test_default_config_loadable_without_file():

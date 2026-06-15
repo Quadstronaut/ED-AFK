@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from ed_autojump.flow.dispatcher import FlowRunner
-from ed_autojump.flow.model import Procedure, Step
+from ed_core.flow.model import Procedure, Step
 from tests.flow import FakeSender
 
 
@@ -497,8 +497,8 @@ def test_interpreter_wraps_exclusive_steps_in_guard():
     """sc_assist_orbit / nav_panel_target run inside ctx.exclusive_guard —
     held during the step, released after, even though the step presses keys."""
     from contextlib import contextmanager
-    from ed_autojump.flow.interpreter import run_procedure
-    from ed_autojump.flow.context import StepContext
+    from ed_core.flow.interpreter import run_procedure
+    from ed_core.flow.context import StepContext
 
     held_during: list[bool] = []
     state = {"held": False}

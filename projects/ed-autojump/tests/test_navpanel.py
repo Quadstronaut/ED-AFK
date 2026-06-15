@@ -17,8 +17,8 @@ from ed_autojump.executor.navpanel import (
     engage_supercruise_assist,
     target_via_navpanel,
 )
-from ed_autojump.keys import parse_binds
-from ed_autojump.keys.sender import RecordingSender
+from ed_core.keys import parse_binds
+from ed_core.keys.sender import RecordingSender
 
 
 BINDS_PATH = Path(__file__).parent / "fixtures" / "ED-AFK.legacy.binds"

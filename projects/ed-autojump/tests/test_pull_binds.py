@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.pull_binds import (
+from ed_core.pull_binds import (
     ActionBind,
     BindSlot,
     BindsDiff,

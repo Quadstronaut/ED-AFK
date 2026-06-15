@@ -18,7 +18,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from ed_autojump.flow.dispatcher import FlowRunner
-from ed_autojump.flow.model import Procedure, Step
+from ed_core.flow.model import Procedure, Step
 from tests.flow import FakeSender
 
 

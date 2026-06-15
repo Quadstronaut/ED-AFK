@@ -18,10 +18,10 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from ed_autojump.flow.context import StepContext
+from ed_core.flow.context import StepContext
 from ed_autojump.flow.dispatcher import FlowRunner
 from ed_autojump.flow.steps import INPUT_EXCLUSIVE_ACTIONS, STEP_REGISTRY
-from ed_autojump.journal.events import Location, parse_event
+from ed_core.journal.events import Location, parse_event
 from tests.flow import FakeSender
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -323,7 +323,7 @@ def test_location_undocked_does_not_touch_docked_or_smack():
 # ===================== dock.toml shape =====================
 
 def test_dock_toml_blind_maneuver_then_orient_before_sc_assist():
-    from ed_autojump.flow.loader import load_procedures
+    from ed_core.flow.loader import load_procedures
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
     actions = [s.action for s in dock.steps]

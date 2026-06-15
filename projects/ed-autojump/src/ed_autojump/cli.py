@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .config import load_config
+from ed_core.config import load_config
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -251,8 +251,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def cmd_replay(args) -> int:
-    from .journal.tail import JournalTail
-    from .recorder import Recorder
+    from ed_core.journal.tail import JournalTail
+    from ed_core.recorder import Recorder
     from collections import Counter
 
     tail = JournalTail(args.journal.parent)
@@ -283,15 +283,15 @@ def cmd_run(args) -> int:
     """
     from datetime import datetime, timezone
 
-    from .config import load_config
-    from .journal.tail import JournalTail
-    from .keys import NullSender, parse_binds
-    from .lifecycle import install_signal_cleanup
-    from .panic import PanicSwitch
-    from .panic_listener import HotkeyListener, _NullBackend, resolve_backend
-    from .recorder import Recorder, default_session_path
-    from .status.navroute import NavRouteReader
-    from .status.status import StatusReader
+    from ed_core.config import load_config
+    from ed_core.journal.tail import JournalTail
+    from ed_core.keys import NullSender, parse_binds
+    from ed_core.lifecycle import install_signal_cleanup
+    from ed_core.panic import PanicSwitch
+    from ed_core.panic_listener import HotkeyListener, _NullBackend, resolve_backend
+    from ed_core.recorder import Recorder, default_session_path
+    from ed_core.status.navroute import NavRouteReader
+    from ed_core.status.status import StatusReader
 
     cfg = load_config(args.config if args.config.is_file() else None)
     journal_dir = args.journal_dir or cfg.paths.journal_dir_expanded()
@@ -338,7 +338,7 @@ def cmd_run(args) -> int:
 
     # Sender selection. Real key dispatch requires the binds preset.
     if args.engage_keys:
-        from .keys import DirectInputSender
+        from ed_core.keys import DirectInputSender
         binds_path = Path(__file__).parent / "binds" / "ED-AFK.4.2.binds"
         binds = parse_binds(binds_path)
         sender = DirectInputSender(binds)
@@ -351,7 +351,7 @@ def cmd_run(args) -> int:
     # way to tell "the escape never pitched" from "it pitched but the ship didn't
     # respond". Wrap only when recording.
     if recorder is not None:
-        from .keys import LoggingSender
+        from ed_core.keys import LoggingSender
         sender = LoggingSender(sender, recorder)
 
     # Status + NavRoute readers (default on when journal dir exists).
@@ -367,9 +367,9 @@ def cmd_run(args) -> int:
     # BEFORE the AFK loop begins. If the launch fails, abort with a clear
     # message rather than start the loop on a non-launched game.
     if getattr(args, "launch", False):
-        from .launcher import LauncherError
-        from .launcher.flow import FlowStatus, launch_and_enter_game
-        from .launcher.menu_nav import MenuNavigator
+        from ed_core.launcher import LauncherError
+        from ed_core.launcher.flow import FlowStatus, launch_and_enter_game
+        from ed_core.launcher.menu_nav import MenuNavigator
 
         try:
             launch_spec = _build_launch_spec(
@@ -479,7 +479,7 @@ def cmd_run(args) -> int:
                       f"(crop={tuple(cfg.vision.widget_crop)})")
 
     from .flow import FlowRunner, load_procedures
-    from .flow.loader import validate_procedure
+    from ed_core.flow.loader import validate_procedure
     from .flow.steps import STEP_REGISTRY
 
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
@@ -509,8 +509,8 @@ def cmd_run(args) -> int:
     #   - EDMCOverlay in-game writer (None when [overlay].enabled=false)
     #   - console mirror → launch terminal (the stream's console). ON by default;
     #     [overlay].console=false or --no-console-status suppresses it.
-    from .overlay import build_overlay
-    from .console_status import ConsoleStatusWriter, OverlayTee
+    from ed_core.overlay import build_overlay
+    from ed_core.console_status import ConsoleStatusWriter, OverlayTee
 
     edmc = build_overlay(cfg)
     console = (ConsoleStatusWriter()
@@ -542,7 +542,7 @@ def cmd_run(args) -> int:
 
     # Visited-systems log (default on; --no-visited-log disables). Passive
     # observer: appends each live FSDJump arrival to ~/Documents, never deleted.
-    from .visited import VisitedSystemsLogger
+    from ed_core.visited import VisitedSystemsLogger
     visited_logger = VisitedSystemsLogger() if args.visited_log else None
     if visited_logger is not None:
         print(f"visited-log: ON -> {visited_logger.path}")
@@ -594,7 +594,7 @@ def cmd_run(args) -> int:
     _nav_path = journal_dir / "NavRoute.json"
     _plotted = []
     try:
-        from .status.navroute import parse_navroute
+        from ed_core.status.navroute import parse_navroute
         _raw = _nav_path.read_text(encoding="utf-8").strip()
         if _raw:
             _plotted = parse_navroute(_raw).route
@@ -636,7 +636,7 @@ def cmd_run(args) -> int:
         # terminal sends the whole flight into the terminal. WIRED 2026-06-06:
         # the helper existed but only the --launch path called it.
         if args.engage_keys:
-            from .launcher.focus import focus_ed_window
+            from ed_core.launcher.focus import focus_ed_window
             print("[run] focusing ED window before key dispatch...")
             if not focus_ed_window():
                 print("[run] WARN: could not focus EliteDangerous64.exe — "
@@ -664,7 +664,7 @@ def cmd_run(args) -> int:
 def _build_launch_spec(cfg, *, commander=None, auth=None, product=None):
     """Build a LaunchSpec from config + CLI overrides. Raises LauncherError
     if the commander isn't in config.launcher.profiles."""
-    from .launcher import LaunchSpec, resolve_profile
+    from ed_core.launcher import LaunchSpec, resolve_profile
 
     cmdr = commander or cfg.launcher.default_commander
     profile = resolve_profile(cmdr, cfg.launcher)
@@ -682,14 +682,14 @@ def _build_launch_spec(cfg, *, commander=None, auth=None, product=None):
 def _resolve_mel(cfg, *, explicit_path=None):
     """Locate MinEdLauncher.exe via explicit path → config → auto-detect.
     Returns a MinEdLauncher instance ready to spawn."""
-    from .launcher import MinEdLauncher, detect_min_ed_launcher
+    from ed_core.launcher import MinEdLauncher, detect_min_ed_launcher
 
     path = explicit_path
     if path is None and cfg.launcher.mel_path:
         path = Path(cfg.launcher.mel_path)
     det = detect_min_ed_launcher(explicit_path=path)
     if not det.found:
-        from .launcher import LauncherError
+        from ed_core.launcher import LauncherError
         raise LauncherError(
             "MinEdLauncher.exe not found — pass --mel-path, set "
             "[launcher].mel_path in config.toml, or install it on PATH"
@@ -699,10 +699,10 @@ def _resolve_mel(cfg, *, explicit_path=None):
 
 def cmd_launch(args) -> int:
     """Standalone launch — start ED, wait for main menu, optionally nav to PG."""
-    from .journal.tail import JournalTail
-    from .launcher import LauncherError
-    from .launcher.flow import FlowStatus, launch_and_enter_game
-    from .launcher.menu_nav import MenuNavigator
+    from ed_core.journal.tail import JournalTail
+    from ed_core.launcher import LauncherError
+    from ed_core.launcher.flow import FlowStatus, launch_and_enter_game
+    from ed_core.launcher.menu_nav import MenuNavigator
 
     cfg = load_config(args.config if args.config.is_file() else None)
     journal_dir = args.journal_dir or cfg.paths.journal_dir_expanded()
@@ -726,7 +726,7 @@ def cmd_launch(args) -> int:
         from dataclasses import replace
         nav_cfg = replace(nav_cfg, enabled=False)
     if nav_cfg.enabled:
-        from .keys import DirectInputSender
+        from ed_core.keys import DirectInputSender
         sender = DirectInputSender(binds=None)
         navigator = MenuNavigator(sender=sender, config=nav_cfg, sleep=__import__("time").sleep)
 
@@ -751,8 +751,8 @@ def cmd_launch(args) -> int:
 
 def cmd_setup_creds(args) -> int:
     """Interactive .cred onboarding wizard."""
-    from .launcher import LauncherError
-    from .launcher.wizard import setup_frontier_creds
+    from ed_core.launcher import LauncherError
+    from ed_core.launcher.wizard import setup_frontier_creds
 
     cfg = load_config(args.config if args.config.is_file() else None)
     commanders = args.commanders or list(cfg.launcher.profiles.keys())
@@ -772,7 +772,7 @@ def cmd_setup_creds(args) -> int:
 
 def cmd_calibrate_menu(args) -> int:
     """Interactive menu calibration. Prints TOML snippet for user to paste."""
-    from .launcher.wizard import calibrate_menu
+    from ed_core.launcher.wizard import calibrate_menu
 
     cfg = load_config(args.config if args.config.is_file() else None)
     is_owner = args.is_owner or (args.commander == cfg.menu_nav.group_owner_commander)
@@ -885,14 +885,14 @@ def cmd_calibrate_compass(args) -> int:
 def cmd_calibrate_overlay(args) -> int:
     """Interactive screen->overlay transform tuning for the CV debug boxes."""
     cfg = load_config(args.config if args.config.is_file() else None)
-    from .cv_debug_cli import run_calibration
+    from ed_core.cv_debug_cli import run_calibration
     return run_calibration(cfg)
 
 
 def cmd_navpanel_overlay(args) -> int:
     """Live per-row nav-icon vision diagnostic on the EDMCOverlay."""
     cfg = load_config(args.config if args.config.is_file() else None)
-    from .cv_debug_cli import run_navpanel_overlay
+    from ed_core.cv_debug_cli import run_navpanel_overlay
     return run_navpanel_overlay(cfg, n_rows=args.rows)
 
 
@@ -902,7 +902,7 @@ def cmd_cleanup(args) -> int:
     Targets the PID recorded in the PID file ONLY, and only if that PID is a
     live python interpreter that isn't us — so the operator's own shell and
     this very process are never touched (the command-line-match gotcha)."""
-    from .lifecycle import default_pid_path, kill_pid_file_survivor
+    from ed_core.lifecycle import default_pid_path, kill_pid_file_survivor
 
     pid = kill_pid_file_survivor()
     if pid:
@@ -915,7 +915,7 @@ def cmd_cleanup(args) -> int:
 
 def cmd_panic(args) -> int:
     """Release any held DirectInput keys immediately (Layer 4)."""
-    from .lifecycle import panic_release_keys
+    from ed_core.lifecycle import panic_release_keys
 
     panic_release_keys()
     print("panic: release_all() sent — any held keys cleared")
@@ -925,12 +925,12 @@ def cmd_panic(args) -> int:
 def cmd_cv_debug(args) -> int:
     """Live context-aware CV overlay that reacts to the current UI (GuiFocus)."""
     cfg = load_config(args.config if args.config.is_file() else None)
-    from .cv_debug_cli import run_cv_debug
+    from ed_core.cv_debug_cli import run_cv_debug
     return run_cv_debug(cfg)
 
 
 def cmd_doctor(args) -> int:
-    from .doctor import format_results, overall_status, run_all_checks
+    from ed_core.doctor import format_results, overall_status, run_all_checks
 
     cfg = load_config(args.config if args.config.is_file() else None)
     print(f"ed-autojump {__version__}")
@@ -944,7 +944,7 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_install_binds(args) -> int:
-    from .binds_tool import install_binds_preset, swap_start_preset
+    from ed_core.binds_tool import install_binds_preset, swap_start_preset
 
     cfg = load_config(args.config if args.config.is_file() else None)
     install_binds_preset(cfg)
@@ -954,7 +954,7 @@ def cmd_install_binds(args) -> int:
 
 
 def cmd_restore_binds(args) -> int:
-    from .binds_tool import restore_start_preset
+    from ed_core.binds_tool import restore_start_preset
 
     cfg = load_config(args.config if args.config.is_file() else None)
     restore_start_preset(cfg)
@@ -962,7 +962,7 @@ def cmd_restore_binds(args) -> int:
 
 
 def cmd_pull_binds(args) -> int:
-    from .pull_binds import format_diff, pull_binds
+    from ed_core.pull_binds import format_diff, pull_binds
 
     cfg = load_config(args.config if args.config.is_file() else None)
     bindings_dir = cfg.paths.binds_dir_expanded()

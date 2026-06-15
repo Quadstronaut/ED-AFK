@@ -11,8 +11,8 @@ from __future__ import annotations
 import threading
 import time
 
-from ed_autojump.panic import PanicSwitch
-from ed_autojump.keys import NullSender, RecordingSender, parse_binds
+from ed_core.panic import PanicSwitch
+from ed_core.keys import NullSender, RecordingSender, parse_binds
 from pathlib import Path
 
 

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.config import Config
-from ed_autojump.doctor import (
+from ed_core.config import Config
+from ed_core.doctor import (
     check_binds_preset,
     check_journal_dir_readable,
     check_pydirectinput,
@@ -95,12 +95,12 @@ def test_run_all_checks_returns_one_per_check(tmp_path: Path, monkeypatch):
 
 
 def test_overall_status_zero_when_all_pass():
-    from ed_autojump.doctor import CheckResult
+    from ed_core.doctor import CheckResult
     results = [CheckResult("x", "PASS"), CheckResult("y", "WARN")]
     assert overall_status(results) == 0
 
 
 def test_overall_status_nonzero_on_any_fail():
-    from ed_autojump.doctor import CheckResult
+    from ed_core.doctor import CheckResult
     results = [CheckResult("x", "PASS"), CheckResult("y", "FAIL")]
     assert overall_status(results) == 1

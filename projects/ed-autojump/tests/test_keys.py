@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.keys import (
+from ed_core.keys import (
     KEY_TO_SCANCODE,
     BindsFile,
     LoggingSender,

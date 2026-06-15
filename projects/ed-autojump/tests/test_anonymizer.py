@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.anonymizer import anonymize_jsonl, anonymize_obj
+from ed_core.anonymizer import anonymize_jsonl, anonymize_obj
 
 
 def _write(p: Path, rows: list[dict]) -> None:
@@ -111,7 +111,7 @@ def test_anonymize_obj_does_not_mutate_input():
 
 
 def test_cli_module_entrypoint(tmp_path: Path):
-    """`python -m ed_autojump.anonymizer <in> <out>` should produce a
+    """`python -m ed_core.anonymizer <in> <out>` should produce a
     scrubbed copy. We import the main() rather than spawning a subprocess
     so we get deterministic exit codes."""
     inp = tmp_path / "in.jsonl"
@@ -120,7 +120,7 @@ def test_cli_module_entrypoint(tmp_path: Path):
         "kind": "journal", "event_name": "Commander",
         "payload": {"Commander": "X", "FID": "F1"},
     }])
-    from ed_autojump.anonymizer import main as anon_main
+    from ed_core.anonymizer import main as anon_main
     rc = anon_main([str(inp), str(out)])
     assert rc == 0
     assert _read(out)[0]["payload"]["Commander"] == "AnonCmdr"

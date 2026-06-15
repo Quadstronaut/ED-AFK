@@ -47,7 +47,7 @@ from __future__ import annotations
 import time
 from typing import Callable
 
-from ..keys.sender import Sender
+from ed_core.keys.sender import Sender
 
 
 # Default settle between UI keystrokes. The nav panel animates its

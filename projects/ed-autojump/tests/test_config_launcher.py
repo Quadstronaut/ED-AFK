@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ed_autojump.config import LauncherConfig, MenuNavConfig, load_config
+from ed_core.config import LauncherConfig, MenuNavConfig, load_config
 
 
 def test_launcher_config_defaults():

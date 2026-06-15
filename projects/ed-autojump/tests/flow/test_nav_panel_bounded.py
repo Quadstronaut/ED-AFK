@@ -23,9 +23,9 @@ rejected jump-age design would skip a stationary-near-star restart)."""
 from pathlib import Path
 from types import SimpleNamespace
 
-from ed_autojump.flow.context import StepContext
-from ed_autojump.flow.interpreter import run_procedure
-from ed_autojump.flow.loader import load_procedures
+from ed_core.flow.context import StepContext
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.loader import load_procedures
 from ed_autojump.flow.steps import STEP_REGISTRY
 from ed_vision.compass import CompassRead
 from tests.flow import FakeSender

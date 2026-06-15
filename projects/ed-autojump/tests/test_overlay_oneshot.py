@@ -2,8 +2,8 @@
 
 import json
 
-from ed_autojump.config import OverlayConfig
-from ed_autojump.overlay import _ONESHOT_CAP, OverlayWriter
+from ed_core.config import OverlayConfig
+from ed_core.overlay import _ONESHOT_CAP, OverlayWriter
 
 
 class _CaptureSock:

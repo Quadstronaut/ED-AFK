@@ -12,8 +12,8 @@ import time
 
 import pytest
 
-from ed_autojump.panic import PanicSwitch
-from ed_autojump.panic_listener import HotkeyListener, _NullBackend
+from ed_core.panic import PanicSwitch
+from ed_core.panic_listener import HotkeyListener, _NullBackend
 
 
 class _FakeBackend:
@@ -73,6 +73,6 @@ def test_listener_stop_unregisters_hotkey():
 def test_listener_handles_missing_keyboard_module_gracefully():
     """If the `keyboard` lib isn't installed, fall back to NullBackend
     silently — the bot still records, just no hotkey-driven panic."""
-    from ed_autojump.panic_listener import resolve_backend
+    from ed_core.panic_listener import resolve_backend
     backend = resolve_backend(prefer="nonexistent_module_xyzzy")
     assert isinstance(backend, _NullBackend)

@@ -18,7 +18,7 @@ from ed_autojump.flow.steps import (
     STEP_REGISTRY,
     step_body_tour,
 )
-from ed_autojump.journal.events import parse_event
+from ed_core.journal.events import parse_event
 from tests.flow import FakeSender
 
 

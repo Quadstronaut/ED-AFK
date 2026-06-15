@@ -1,4 +1,4 @@
-from ed_autojump.flow.model import Step, OnRequiredFail, Procedure
+from ed_core.flow.model import Step, OnRequiredFail, Procedure
 
 
 def test_step_holds_action_and_params():
