@@ -20,6 +20,8 @@ from ed_core.flow.context import ShipFuel, StepContext
 from ed_core.flow.registry import run_classifiers, run_event_routes
 from ed_core.flow.interpreter import run_procedure
 from ed_core.flow.model import Procedure
+from ed_core.flow.predicates import _dest_is_named_station, _destination_is_local_star
+from ed_core.fsd_util import scoop_max_rate_t_s as _scoop_max_rate_t_s
 
 # Procedures whose whole premise is a live supercruise/fresh-load scene: a
 # star smack (SupercruiseExit Body=Star) yanks that scene away mid-run, so
@@ -699,15 +701,7 @@ class FlowRunner:
             # status leaves _dock_target None -> park path at terminus.
             # LIVE-TEST-GATED: see __init__ comment above.
             st_cap = self._fresh_status()
-            _dns = self._dest_is_named_station_fn
-            if _dns is None:
-                # Deferred fallback: import at call-time so the engine never
-                # has a module-level domain import.
-                try:
-                    from ed_autojump.flow.steps import (  # type: ignore[import]
-                        _dest_is_named_station as _dns)
-                except ImportError:
-                    pass
+            _dns = self._dest_is_named_station_fn or _dest_is_named_station
             if st_cap is not None and _dns is not None and _dns(st_cap):
                 d = getattr(st_cap, "destination", None)
                 self._dock_target = (
@@ -784,17 +778,8 @@ class FlowRunner:
                      if m.item.startswith("int_fuelscoop_")), None)
                 rate = None
                 if scoop_item is not None:
-                    if self._scoop_rate_fn is not None:
-                        rate = self._scoop_rate_fn(scoop_item)
-                    else:
-                        # Deferred fallback: import at call-time so the
-                        # engine never has a module-level domain import.
-                        try:
-                            from ed_autojump.fsd.scoops import (  # type: ignore[import]
-                                scoop_max_rate_t_s as _smr)
-                            rate = _smr(scoop_item)
-                        except ImportError:
-                            pass
+                    _smr = self._scoop_rate_fn or _scoop_max_rate_t_s
+                    rate = _smr(scoop_item)
                 self._ship_fuel = ShipFuel(capacity_t=float(cap),
                                            scoop_max_rate_t_s=rate)
         elif name == "Scan":
@@ -962,27 +947,5 @@ class FlowRunner:
             watchdog_stop.set()
             self._hub.unsubscribe(main_handle)
 
-    # ------------------------------------------------------------------
-    # Backward-compatibility delegates (tests + callers use these names)
-    # ------------------------------------------------------------------
-
-    def _maybe_startup(self) -> None:
-        """Backward-compat delegate -> classify_startup(runner) from boot_routes."""
-        from ed_autojump.flow.boot_routes import classify_startup  # type: ignore[import]
-        classify_startup(self)
-
-    def dispatch(self, ev: Any) -> None:
-        """Backward-compat dispatch by event name -> boot_routes route handlers."""
-        name = getattr(ev, 'event', None)
-        from ed_autojump.flow import boot_routes as _br  # type: ignore[import]
-        if name == 'FSDJump':
-            _br._route_fsd_jump(self, ev)
-        elif name == 'SupercruiseExit':
-            _br._route_sc_exit(self, ev)
-        elif name == 'NavRoute':
-            _br._route_nav_route(self, ev)
-
-    def dispatch_route_complete(self, ev: Any) -> None:
-        """Backward-compat delegate -> dispatch_route_complete(runner, ev)."""
-        from ed_autojump.flow.boot_routes import dispatch_route_complete as _drc  # type: ignore[import]
-        _drc(self, ev)
+    # (Phase-1 reorg): backward-compat shim methods _maybe_startup, dispatch,
+    # dispatch_route_complete removed. Tests now call boot_routes functions directly.

@@ -39,7 +39,9 @@ from ed_core.flow.steps_shared import (
     step_set_throttle,
     step_pitch,
     step_target_ahead,
+    step_engage_supercruise,
 )
+from ed_core.flow.predicates import _destination_is_local_star, _dest_is_named_station
 import ed_core.flow.steps_shared as _steps_shared  # noqa: F401 â€” register shared steps
 
 
@@ -151,99 +153,11 @@ def step_engage_jump(ctx: StepContext) -> bool:
     return _press(ctx, "Hyperspace")
 
 
-def step_engage_supercruise(
-    ctx: StepContext, *, poll_s: float = 0.8, max_charge_s: float = 60.0,
-    presses: int = 1, between_press_s: float = 8.0,
-    until_charging: bool = False, press: bool = True,
-) -> bool:
-    """Press Supercruise, then gate on game signals â€” no success-window clock.
-
-    Success: `SupercruiseEntry` journal event, or the Supercruise status flag
-    (state-side confirmation, absorbs journal-write latency). Failure: the
-    FsdCharging flag observed trueâ†’false without entry (the game aborted the
-    charge), or operator abort. `poll_s` is the event-poll cadence, not a gate.
-
-    `max_charge_s` is the OPERATOR-SANCTIONED stuck-state watchdog (2026-06-06:
-    "if it charges for a good minute without jumping, that's a fail") â€” set far
-    above any real spool, it catches a wedged FSD / unregistered press, never a
-    healthy charge.
-
-    `presses` > 1 (ADDED 2026-06-06 run 6, the exclusion-zone climb-out):
-    inside a star's exclusion zone ED REFUSES the SC press outright â€” no
-    FsdCharging, no journal event, nothing (session_142708: one press at
-    14:27:11, then a 60s hold that never saw a charge; the ship had spent
-    runs 3-4 thrusting INTO the star and was deep inside). While the ship
-    flies back out, re-press every `between_press_s` until the charge takes.
-    A press is ONLY re-sent when no charge ever started in its window â€”
-    re-pressing during a live charge would CANCEL it; a charge that starts
-    then drops is handled by the existing charge_dropped exit. presses=1 is
-    the exact legacy behavior.
-
-    `until_charging` (ADDED 2026-06-06 run 9): SUCCESS = a LIVE CHARGE, not
-    SC entry. A post-smack charge spawns an ESCAPE VECTOR and holds until
-    the ship ALIGNS with it (screen-confirmed 14:56: cyan "ALIGN WITH
-    ESCAPE VECTOR" marker; 9 minutes of full-throttle burn never engaged
-    because ED wanted attitude, not distance).
-
-    `press=False` (ADDED 2026-06-06 run 10): gate-only mode â€” the charge is
-    ALREADY live (a prior until_charging step got it) and the ship was just
-    aligned; pressing again would CANCEL it. Pure wait for entry/dropped.
-    """
-    st = ctx.status_supplier()
-    if st is not None and getattr(st, "in_supercruise", False):
-        return True  # already in SC; nothing to engage
-
-    for attempt in range(max(1, presses)):
-        if press and not _press(ctx, "Supercruise"):
-            return False
-        if ctx.event_waiter is None:
-            return True  # no journal wiring (unit tests) -> proceed
-        charge_seen = False
-        start = ctx.clock()
-        while True:
-            if ctx.should_abort():
-                ctx.log("EngageSupercruiseDone", {"reason": "abort"})
-                return False
-            now = ctx.clock()
-            if now - start > max_charge_s:
-                ctx.log("EngageSupercruiseDone", {"reason": "watchdog",
-                                                  "attempt": attempt + 1})
-                return False
-            # Press refused (no charge in its window) -> next press attempt.
-            if (not charge_seen and now - start > between_press_s
-                    and attempt + 1 < max(1, presses)):
-                ctx.log("EngageSupercruiseRetry", {"attempt": attempt + 1})
-                break
-            if ctx.event_waiter("SupercruiseEntry", poll_s):
-                return True
-            st = ctx.status_supplier()
-            if st is None:
-                continue
-            if getattr(st, "in_supercruise", False):
-                return True
-            if getattr(st, "fsd_charging", False):
-                if until_charging:
-                    ctx.log("EngageSupercruiseDone", {"reason": "charging",
-                                                      "attempt": attempt + 1})
-                    return True   # live charge IS the goal â€” caller aligns
-                charge_seen = True
-            elif charge_seen:
-                # Charge dropped without entry. One grace poll absorbs the
-                # Status-write vs journal-write race, then it's a real abort.
-                if ctx.event_waiter("SupercruiseEntry", poll_s):
-                    return True
-                st = ctx.status_supplier()
-                if st is not None and getattr(st, "in_supercruise", False):
-                    return True
-                ctx.log("EngageSupercruiseDone", {"reason": "charge_dropped"})
-                return False
-    ctx.log("EngageSupercruiseDone", {"reason": "presses_exhausted"})
-    return False
-
 
 register_step("target_next_route", step_target_next_route)
 register_step("engage_jump", step_engage_jump)
-register_step("engage_supercruise", step_engage_supercruise)
+# engage_supercruise is now in ed_core.flow.steps_shared (Phase-1 reorg);
+# imported above and registered there. Re-exported here for callers.
 
 
 # `wait_for_event` (timeout-gated passive wait) is DELETED, not deprecated:
@@ -256,38 +170,6 @@ register_step("engage_supercruise", step_engage_supercruise)
 # `wait_cooldown` (fixed-seconds cooldown sleep) is DELETED for the same
 # reason: a 45s constant was a guess at when the smack cooldown ends. The
 # FsdCooldown status flag is the game's own answer â€” see wait_cooldown_clear.
-
-
-def _destination_is_local_star(st: Any, system_name: "str | None") -> "bool | None":
-    """Is Status.Destination the CURRENT system's star?
-
-    The 2026-06-07 10:30Z incident: nav_panel_target locked the NAV BEACON
-    (journal-identically to a star lock â€” the compass dot renders for any
-    locked target) and the orbit no-oped. Destination.Name is the only live
-    discriminator: the primary star carries the BARE system name ("Acihaut"),
-    secondaries the "<system> A".."<system> D" designation; beacons and
-    scenario rows carry "$..." symbol names; stations carry unrelated names.
-
-    Returns True (it's the star), False (it's something else / nothing is
-    locked), or None (no status or system unknown â€” cannot judge; callers
-    degrade to dot-only verification, loudly)."""
-    if st is None or not system_name:
-        return None
-    dest = getattr(st, "destination", None)
-    if dest is None:
-        return False          # nothing locked at all -> the lock didn't take
-    name = (getattr(dest, "name", "") or "").strip()
-    if not name or name.startswith("$"):
-        return False          # symbolic = beacon / scenario / signal row
-    if name == system_name:
-        return True           # primary star = bare system name
-    # secondary star designation: "<system> A".."<system> Z" (one letter)
-    if (name.startswith(system_name + " ")
-            and len(name) == len(system_name) + 2
-            and name[-1].isalpha()):
-        return True
-    return False
-
 
 def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
     """Engage SC-assist on the locked star â€” GUARDED (2026-06-07 council):
@@ -670,18 +552,6 @@ def step_scoop_refuel(
 # failsafe). Every event gate carries a Status/state fallback (house rule);
 # no step uses a wall-clock as a success/failure gate.
 
-
-def _dest_is_named_station(st: Any) -> bool:
-    """True iff Status.Destination is a locked BODY with a non-symbolic name â€”
-    the station the route-complete decision already identified. Used to confirm
-    a target press actually landed on the station (the T-then-fallback path)."""
-    dest = getattr(st, "destination", None) if st is not None else None
-    if dest is None:
-        return False
-    if getattr(dest, "body", 0) == 0:
-        return False                       # an FSD route hop / star, not a body
-    name = (getattr(dest, "name", "") or "").strip()
-    return bool(name) and not name.startswith("$")
 
 
 def step_dock_target_station(
@@ -1410,20 +1280,14 @@ def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
 # dock_sc_assist, dock_approach, dock_request, station_services, auto_launch,
 # station_services_macro, dock_blind_maneuver}.
 
-# step_body_tour + _body_tour_identity_target have been relocated to
-# ed_explore.steps_body_tour (Step 5). Re-exported here so tests that import
-# from this module keep working unchanged.
-from ed_explore.steps_body_tour import (
-    _body_tour_identity_target,
-    step_body_tour,
-)
+# step_body_tour + _body_tour_identity_target live in ed_explore.steps_body_tour.
+# No longer re-exported here (Phase-1 reorg: sideways ed_autojump->ed_explore import removed).
 
 
 register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
 register_step("scoop_refuel", step_scoop_refuel)
 # body_tour is registered by ed_explore.steps_body_tour on import (surface #3).
-# It is re-exported above for backward-compat callers but NOT re-registered here.
 register_step("dock_target_station", step_dock_target_station, input_exclusive=True)
 register_step("dock_sc_assist", step_dock_sc_assist, input_exclusive=True)
 register_step("dock_approach", step_dock_approach, input_exclusive=True)

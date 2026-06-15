@@ -1,4 +1,4 @@
-"""Route-complete detection + system-park terminal (council-ratified
+﻿"""Route-complete detection + system-park terminal (council-ratified
 2026-06-07). At route end the bot used to arrive, run arrival, find no next
 hop, watchdog 60s, retry required-fail 3x, and mis-report a clean SUCCESS as
 '[ABORTED] manual intervention needed' (~5m40s of false alarm). These pin the
@@ -11,10 +11,22 @@ from types import SimpleNamespace
 from ed_autojump.flow.dispatcher import FlowRunner, _CLEAR_JOIN_WINDOW_S
 from ed_core.flow.model import Procedure, Step
 from tests.flow import FakeSender
+import ed_autojump.flow.boot_routes as _br
+from ed_autojump.flow.boot_routes import classify_startup, dispatch_route_complete
 
 
 def _ev(name, **fields):
     return SimpleNamespace(event=name, **fields)
+
+
+def _dispatch(r, ev):
+    name = getattr(ev, 'event', None)
+    if name == 'FSDJump':
+        _br._route_fsd_jump(r, ev)
+    elif name == 'SupercruiseExit':
+        _br._route_sc_exit(r, ev)
+    elif name == 'NavRoute':
+        _br._route_nav_route(r, ev)
 
 
 # A jump's journal timestamp is its OWN ISO8601 stamp (the same field
@@ -96,7 +108,7 @@ def test_e1_route_complete_runs_park_not_arrival():
     r = _runner(sender, status=_status(), record=lambda n, p: records.append((n, p)))
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
     assert "SetSpeedZero" in sender.actions()                    # park ran
     assert "TargetNextRouteSystem" not in sender.actions()    # arrival did NOT
@@ -113,7 +125,7 @@ def test_e4_clear_then_jump_to_different_system_runs_arrival():
     r = _runner(sender)
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Other",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Other",
                    system_address=99999, timestamp=_ts(10)))
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
 
@@ -125,7 +137,7 @@ def test_no_clear_runs_arrival():
     r = _runner(sender)
     _arm_final_waypoint(r, 12345, "Destination Sys")
     # no NavRouteClear latched
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
     assert sender.actions() == ["TargetNextRouteSystem"]
 
@@ -135,7 +147,7 @@ def test_no_final_waypoint_runs_arrival():
     r = _runner(sender)
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
     # _final_waypoint never cached (no route ever seen)
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="X",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="X",
                    system_address=12345, timestamp=_ts(10)))
     assert sender.actions() == ["TargetNextRouteSystem"]
 
@@ -149,7 +161,7 @@ def test_stale_clear_outside_window_runs_arrival():
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
     # jump_ts - clear_ts > window -> stale
     far = f"2026-06-07T12:0{int(_CLEAR_JOIN_WINDOW_S // 60) + 1}:01Z"
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=far))
     assert sender.actions() == ["TargetNextRouteSystem"]
 
@@ -161,7 +173,7 @@ def test_clear_after_jump_is_not_completion():
     r = _runner(sender)
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(30)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
     assert sender.actions() == ["TargetNextRouteSystem"]
 
@@ -216,7 +228,7 @@ def test_fix1_journal_rotation_no_navroute_event_resolves_from_reader():
                 record=lambda n, p: records.append((n, p)))
     assert r._final_waypoint is None                          # no NavRoute event
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Final Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Final Sys",
                    system_address=54321, timestamp=_ts(10)))
     assert "SetSpeedZero" in sender.actions()                    # park ran
     assert "TargetNextRouteSystem" not in sender.actions()    # arrival did NOT
@@ -242,7 +254,7 @@ def test_fix1_reader_none_first_poll_then_current_holds_route():
     r = _runner(sender, status=_status(), navroute=_PollNoneCurrentHolds())
     assert r._final_waypoint is None
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Final Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Final Sys",
                    system_address=54321, timestamp=_ts(10)))
     assert "SetSpeedZero" in sender.actions()                    # park ran
     assert "TargetNextRouteSystem" not in sender.actions()
@@ -256,7 +268,7 @@ def test_fix1_reader_resolved_address_mismatch_runs_arrival():
     nr = _NRRoute([_wp(54321, "Final Sys")])
     r = _runner(sender, status=_status(), navroute=_FakeNavReader(nr))
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Mid Hop",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Mid Hop",
                    system_address=999, timestamp=_ts(10)))
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
 
@@ -272,14 +284,14 @@ def test_second_jump_same_system_no_replot_runs_arrival():
     r = _runner(sender, status=_status(), navroute=_FakeNavReader(nr))
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
     # First jump completes the route -> park.
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Final Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Final Sys",
                    system_address=54321, timestamp=_ts(10)))
     assert "SetSpeedZero" in sender.actions()
     assert r._navroute_cleared is False                       # latch consumed
     # Second jump into the same system, no NavRoute / NavRouteClear between.
     sender2 = FakeSender()
     r.sender = sender2
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Final Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Final Sys",
                    system_address=54321, timestamp=_ts(20)))
     assert sender2.actions() == ["TargetNextRouteSystem"]     # arrival, not park
 
@@ -298,7 +310,7 @@ def test_station_destination_runs_dock_not_park():
     r._current_system = "Destination Sys"
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
     assert any(n == "RouteCompleteStation" and p["station"] == "Jameson Memorial"
                for n, p in records)
@@ -316,7 +328,7 @@ def test_star_destination_body_zero_runs_system_park():
     r._current_system = "Destination Sys"
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
     assert any(n == "RouteComplete" for n, _ in records)
     assert not any(n == "RouteCompleteStationGated" for n, _ in records)
@@ -334,7 +346,7 @@ def test_dest_locked_in_different_system_runs_system_park():
     r._current_system = "Destination Sys"
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
     assert any(n == "RouteComplete" and p["type"] == "system" for n, p in records)
     assert not any(n == "RouteCompleteStationGated" for n, _ in records)
@@ -350,7 +362,7 @@ def test_address_mismatch_same_system_name_runs_arrival():
     r = _runner(sender)
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=67890, timestamp=_ts(10)))   # name same, addr differs
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
 
@@ -374,7 +386,7 @@ def test_route_complete_overlay_uses_event_and_status_slots():
     r._current_system = "Destination Sys"
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
     assert any("[ROUTE COMPLETE]" in t for t in ov.events)
     assert any("Route complete" in t for t in ov.status_lines)
@@ -411,7 +423,7 @@ def test_restart_parked_terminal_idles_no_arrival():
     r = _startup_runner(sender, status=st, navroute=_FakeNavReader(_EmptyNR()),
                         record=lambda n, p: records.append((n, p)),
                         current_system="Destination Sys")
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == []                             # idled
     assert any(n == "RouteCompleteIdleOnRestart" for n, _ in records)
 
@@ -421,7 +433,7 @@ def test_restart_parked_terminal_no_destination_idles():
     sender = FakeSender()
     st = _status(dest_name=None, in_supercruise=True)
     r = _startup_runner(sender, status=st, navroute=_FakeNavReader(_EmptyNR()))
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == []
 
 
@@ -436,7 +448,7 @@ def test_restart_with_live_route_runs_arrival():
     st = _status(dest_name="Destination Sys", in_supercruise=True)
     r = _startup_runner(sender, status=st, navroute=_FakeNavReader(_LiveNR()),
                         current_system="Destination Sys")
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
 
 
@@ -447,7 +459,7 @@ def test_restart_no_navroute_reader_runs_arrival():
     st = _status(dest_name="Destination Sys", in_supercruise=True)
     r = _startup_runner(sender, status=st, navroute=None,
                         current_system="Destination Sys")
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
 
 
@@ -469,7 +481,7 @@ def test_restart_navroute_route_attr_missing_runs_arrival():
     st = _status(dest_name="Destination Sys", in_supercruise=True)
     r = _startup_runner(sender, status=st, navroute=_FakeNavReader(_NoRouteAttr()),
                         current_system="Destination Sys")
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival, not idle
 
 
@@ -484,5 +496,5 @@ def test_restart_navroute_route_is_none_runs_arrival():
     st = _status(dest_name="Destination Sys", in_supercruise=True)
     r = _startup_runner(sender, status=st, navroute=_FakeNavReader(_NoneRoute()),
                         current_system="Destination Sys")
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["TargetNextRouteSystem"]      # arrival, not idle

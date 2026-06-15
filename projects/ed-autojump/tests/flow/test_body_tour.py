@@ -16,8 +16,8 @@ from ed_autojump.flow.dispatcher import FlowRunner
 from ed_autojump.flow.steps import (
     INPUT_EXCLUSIVE_ACTIONS,
     STEP_REGISTRY,
-    step_body_tour,
 )
+from ed_explore.steps_body_tour import step_body_tour
 from ed_core.journal.events import parse_event
 from tests.flow import FakeSender
 

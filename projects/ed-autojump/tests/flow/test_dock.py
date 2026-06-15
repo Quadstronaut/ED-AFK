@@ -1,4 +1,4 @@
-"""Station-dock feature (station-dock): typed events, dock steps, the dock
+﻿"""Station-dock feature (station-dock): typed events, dock steps, the dock
 terminus vs pit-stop dispatch, and the request_docking macro.
 
 Real fakes only (FakeSender + scripted suppliers/waiters), no game, no sleeps.
@@ -23,6 +23,18 @@ from ed_core.journal import (
     parse_event,
 )
 from tests.flow import FakeSender
+import ed_autojump.flow.boot_routes as _br
+from ed_autojump.flow.boot_routes import classify_startup, dispatch_route_complete
+
+
+def _dispatch(r, ev):
+    name = getattr(ev, 'event', None)
+    if name == 'FSDJump':
+        _br._route_fsd_jump(r, ev)
+    elif name == 'SupercruiseExit':
+        _br._route_sc_exit(r, ev)
+    elif name == 'NavRoute':
+        _br._route_nav_route(r, ev)
 
 
 # ============================ typed events parse ============================
@@ -692,7 +704,7 @@ def test_station_terminus_runs_dock_and_records_docked():
     r._docked = True
     r._docked_station = "Jameson Memorial"
     r._on_tail_event(_ev("NavRouteClear", timestamp="2026-06-07T12:00:00Z"))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp="2026-06-07T12:00:10Z"))
     assert "SetSpeed50" in sender.actions()                  # dock ran
     assert "SetSpeedZero" not in sender.actions()            # NOT the park path
@@ -712,7 +724,7 @@ def test_station_dock_not_completed_no_docked_record():
     r._final_waypoint = (12345, "Destination Sys")
     # _docked stays False (dock failed).
     r._on_tail_event(_ev("NavRouteClear", timestamp="2026-06-07T12:00:00Z"))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Destination Sys",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp="2026-06-07T12:00:10Z"))
     assert "SetSpeed50" in sender.actions()                  # dock attempted
     assert not any(n == "RouteCompleteDocked" for n, _ in records)
@@ -735,7 +747,7 @@ def test_pit_stop_new_route_while_docked_runs_dock_resume():
         record=lambda n, p: records.append((n, p)))
     r._docked = True
     r._docked_station = "Jameson Memorial"
-    r.dispatch(_ev("NavRoute"))
+    _dispatch(r, _ev("NavRoute"))
     assert "SetSpeed75" in sender.actions()                  # dock_resume ran
     assert any(n == "DockPitStopResume" for n, _ in records)
 
@@ -754,7 +766,7 @@ def test_new_route_while_NOT_docked_does_not_resume():
         navroute_reader=type("R", (), {"poll": lambda self: _NR(),
                                        "current": _NR()})())
     r._docked = False
-    r.dispatch(_ev("NavRoute"))
+    _dispatch(r, _ev("NavRoute"))
     assert "SetSpeed75" not in sender.actions()              # no resume
 
 
@@ -772,7 +784,7 @@ def test_empty_navroute_while_docked_stays_docked():
         navroute_reader=type("R", (), {"poll": lambda self: _EmptyNR(),
                                        "current": _EmptyNR()})())
     r._docked = True
-    r.dispatch(_ev("NavRoute"))
+    _dispatch(r, _ev("NavRoute"))
     assert "SetSpeed75" not in sender.actions()
 
 
@@ -952,7 +964,7 @@ def test_route_complete_with_captured_station_runs_dock():
     r._docked_station = "Robigo Mines"
 
     r._on_tail_event(_ev("NavRouteClear", timestamp="2026-06-08T05:44:54Z"))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Robigo",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Robigo",
                    system_address=55555, timestamp="2026-06-08T05:45:05Z"))
 
     assert "SetSpeed50" in sender.actions()              # dock ran
@@ -976,7 +988,7 @@ def test_route_complete_no_capture_parks():
     # _dock_target is None (default) — the current park behavior.
 
     r._on_tail_event(_ev("NavRouteClear", timestamp="2026-06-08T05:44:54Z"))
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Robigo",
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Robigo",
                    system_address=99999, timestamp="2026-06-08T05:45:05Z"))
 
     assert "SetSpeedZero" in sender.actions()            # park ran

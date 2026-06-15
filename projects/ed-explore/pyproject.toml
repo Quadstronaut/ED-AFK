@@ -21,6 +21,12 @@ dev = [
     "pytest-asyncio>=0.23",
 ]
 
+[project.entry-points."ed_autojump.plugins"]
+# Registers body_tour into the core step registry at CLI startup (surface #3).
+# The CLI calls all ed_autojump.plugins entry-points before validating procedures,
+# which avoids a sideways ed_autojump -> ed_explore import.
+explore = "ed_explore:activate"
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"

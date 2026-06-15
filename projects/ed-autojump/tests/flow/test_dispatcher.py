@@ -1,12 +1,24 @@
-from types import SimpleNamespace
+﻿from types import SimpleNamespace
 
 from ed_autojump.flow.dispatcher import FlowRunner
 from ed_core.flow.model import Procedure, Step
 from tests.flow import FakeSender
+import ed_autojump.flow.boot_routes as _br
+from ed_autojump.flow.boot_routes import classify_startup, dispatch_route_complete
 
 
 def _ev(name, **fields):
     return SimpleNamespace(event=name, **fields)
+
+
+def _dispatch(r, ev):
+    name = getattr(ev, 'event', None)
+    if name == 'FSDJump':
+        _br._route_fsd_jump(r, ev)
+    elif name == 'SupercruiseExit':
+        _br._route_sc_exit(r, ev)
+    elif name == 'NavRoute':
+        _br._route_nav_route(r, ev)
 
 
 def _runner(procs, sender, clock):
@@ -25,7 +37,7 @@ def test_fsdjump_runs_arrival():
     sender = FakeSender()
     procs = {"arrival": Procedure(name="arrival", steps=(Step("target_next_route"),))}
     r = _runner(procs, sender, clock=lambda: 0.0)
-    r.dispatch(_ev("FSDJump", body_type="Star"))
+    _dispatch(r, _ev("FSDJump", body_type="Star"))
     assert sender.actions() == ["TargetNextRouteSystem"]
 
 
@@ -34,7 +46,7 @@ def test_supercruise_exit_at_star_runs_smack_and_records_drop_time():
     procs = {"smack_recovery": Procedure(name="smack_recovery", steps=(Step("target_ahead"),))}
     t = [500.0]
     r = _runner(procs, sender, clock=lambda: t[0])
-    r.dispatch(_ev("SupercruiseExit", body_type="Star"))
+    _dispatch(r, _ev("SupercruiseExit", body_type="Star"))
     assert sender.actions() == ["SelectTarget"]
     assert r.event_time("drop") == 500.0
 
@@ -43,7 +55,7 @@ def test_supercruise_exit_not_star_is_ignored():
     sender = FakeSender()
     procs = {"smack_recovery": Procedure(name="smack_recovery", steps=(Step("target_ahead"),))}
     r = _runner(procs, sender, clock=lambda: 0.0)
-    r.dispatch(_ev("SupercruiseExit", body_type="Planet"))
+    _dispatch(r, _ev("SupercruiseExit", body_type="Planet"))
     assert sender.actions() == []
 
 
@@ -105,7 +117,7 @@ def test_startup_in_supercruise_runs_arrival_instead():
     origin = NS(system_address=1, star_system="Wolf 359")
     hop = NS(system_address=2, star_system="Sol")
     r = _startup_runner(sender, in_supercruise=True, route=[origin, hop])
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["TargetNextRouteSystem"]   # arrival ran
     assert r._startup_done is True
 
@@ -118,7 +130,7 @@ def test_startup_in_normal_space_with_route_runs_startup():
     origin = NS(system_address=1, star_system="Wolf 359")
     hop = NS(system_address=2, star_system="Sol")
     r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["SelectTarget"]            # startup ran
     assert r._startup_done is True
 
@@ -134,7 +146,7 @@ def test_startup_normal_space_empty_route_aborts():
     from types import SimpleNamespace as NS
     r = _startup_runner(sender, in_supercruise=False, route=[])
     r.record = lambda name, payload: records.append((name, payload))
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == []                          # startup did NOT run
     assert r._startup_done is True
     assert any(n == "NoRouteOnStartup" for n, _ in records)
@@ -149,7 +161,7 @@ def test_startup_normal_space_absent_route_reader_aborts():
     # No route= kwarg -> navroute_reader stays None
     r = _startup_runner(sender, in_supercruise=False)
     r.record = lambda name, payload: records.append((name, payload))
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == []
     assert r._startup_done is True
     assert any(n == "NoRouteOnStartup" for n, _ in records)
@@ -165,7 +177,7 @@ def test_startup_normal_space_origin_only_route_runs_startup():
     from types import SimpleNamespace as NS
     origin = NS(system_address=1, star_system="Wolf 359")
     r = _startup_runner(sender, in_supercruise=False, route=[origin])
-    r._maybe_startup()
+    classify_startup(r)
     # Startup RUNS (Fix 1 passes it through); Fix 2 will fast-fail the step.
     assert sender.actions() == ["SelectTarget"]
     assert r._startup_done is True
@@ -180,7 +192,7 @@ def test_startup_docked_route_irrelevant():
     # empty route, but docked — docked branch takes precedence
     r = _startup_runner(sender, in_supercruise=False, docked=True, route=[])
     r.record = lambda name, payload: records.append((name, payload))
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == []
     assert r._startup_done is True
     assert not any(n == "NoRouteOnStartup" for n, _ in records)
@@ -215,7 +227,7 @@ def test_startup_in_supercruise_empty_route_runs_parked_idle():
         navroute_reader=_make_navroute_reader([]),
     )
     r._current_system = system
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == []                     # neither startup nor arrival ran
     assert any(n == "RouteCompleteIdleOnRestart" for n, _ in records)
     assert not any(n == "NoRouteOnStartup" for n, _ in records)
@@ -229,14 +241,14 @@ def test_startup_in_normal_space_runs_startup():
     origin = NS(system_address=1, star_system="Wolf 359")
     hop = NS(system_address=2, star_system="Sol")
     r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["SelectTarget"]            # startup ran
 
 
 def test_startup_docked_runs_nothing():
     sender = FakeSender()
     r = _startup_runner(sender, in_supercruise=False, docked=True)
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == []
     assert r._startup_done is True
 
@@ -249,7 +261,7 @@ def test_startup_smacked_with_live_cooldown_runs_smack_recovery():
     sender = FakeSender()
     r = _startup_runner(sender, in_supercruise=False, fsd_cooldown=True)
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))   # backlog
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["SetSpeed50"]      # smack_recovery ran
 
 
@@ -268,7 +280,7 @@ def test_stale_star_drop_without_cooldown_runs_startup():
     r = _startup_runner(sender, in_supercruise=False, fsd_cooldown=False,
                         route=[origin, hop])
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))   # backlog
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["SelectTarget"]    # startup ran, NOT smack
 
 
@@ -280,7 +292,7 @@ def test_smacked_scene_cleared_by_supercruise_entry():
     r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
     r._on_tail_event(_ev("SupercruiseEntry"))      # recovered before restart
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["SelectTarget"]    # plain startup
 
 
@@ -292,7 +304,7 @@ def test_smacked_scene_cleared_by_fsdjump():
     r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
     r._on_tail_event(_ev("FSDJump", star_system="X"))
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["SelectTarget"]    # plain startup
 
 
@@ -303,7 +315,7 @@ def test_non_star_drop_is_not_smacked():
     hop = NS(system_address=2, star_system="Sol")
     r = _startup_runner(sender, in_supercruise=False, route=[origin, hop])
     r._on_tail_event(_ev("SupercruiseExit", body_type="Planet"))
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["SelectTarget"]    # plain startup
 
 
@@ -312,7 +324,7 @@ def test_in_supercruise_outranks_stale_smack():
     sender = FakeSender()
     r = _startup_runner(sender, in_supercruise=True)
     r._on_tail_event(_ev("SupercruiseExit", body_type="Star"))
-    r._maybe_startup()
+    classify_startup(r)
     assert sender.actions() == ["TargetNextRouteSystem"]   # arrival
 
 
@@ -435,7 +447,7 @@ def test_overlay_threads_into_context_and_jump_event():
         overlay=ov,
     )
     assert r._make_context().overlay is ov                 # threaded through
-    r.dispatch(_ev("FSDJump", body_type="Star", star_system="Sol"))
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Sol"))
     assert ov.events == ["Jump 1: Sol"]                    # counter + system
     assert ("arrival", "target_next_route", 1, 1) in ov.steps  # per-step status
 
@@ -699,7 +711,7 @@ def test_parallel_track_runs_alongside_main():
                           steps=(Step("press", {"bind": "ExplorationFSSDiscoveryScan", "hold_s": 0.01}),)),
     }
     r = _runner(procs, sender, clock=lambda: 0.0)
-    r.dispatch(_ev("FSDJump", body_type="Star"))
+    _dispatch(r, _ev("FSDJump", body_type="Star"))
     acts = sender.actions()
     assert "ExplorationFSSDiscoveryScan" in acts   # honk fired
     assert "TargetNextRouteSystem" in acts          # arrival fired
