@@ -1,0 +1,114 @@
+{
+  "_comment": "RESOLVED placement — gen-opus-1. Every module labeled; G2/G12/G13 resolved and modeled. A1 must PASS this. The _splits block models the G2 debug_overlay split (sink stays vision; run_* CLI runners -> new ed_core.cv_debug_cli) and the G12 step-table split (domain step modules register into a core-owned merged STEP_REGISTRY; the interpreter/cli read the core registry module, never a domain step module).",
+
+  "_splits": {
+    "ed_autojump.vision.debug_overlay": {
+      "new_module": "ed_core.cv_debug_cli",
+      "package": "ed-core",
+      "move_edges": [
+        "ed_autojump.overlay",
+        "ed_autojump.vision",
+        "ed_autojump.vision.capture",
+        "ed_autojump.vision.navpanel_icons",
+        "ed_autojump.vision.station_menu"
+      ],
+      "back_edge": false,
+      "_why": "Sink (ScreenToOverlay/CvDebugSink/set_debug_sink/get_debug_sink, lines 1-207) imports NOTHING in-workspace -> stays ed-vision as a true leaf. Runners (run_calibration/run_navpanel_overlay/run_cv_debug, lines 208+) carry ALL upward edges (..overlay) and the capture back-arm -> move to ed_core.cv_debug_cli. Kills both the VISION-IMPORTS violation and the vision.debug_overlay<->vision.capture cycle. capture->get_debug_sink stays a downward intra-vision edge."
+    },
+    "ed_autojump.flow.steps": {
+      "new_module": "ed_core.flow.step_registry",
+      "package": "ed-core",
+      "move_edges": [],
+      "redirect_incoming": [
+        "ed_autojump.flow.interpreter",
+        "ed_autojump.cli"
+      ],
+      "back_edge": false,
+      "_why": "G12 seam. STEP_REGISTRY + INPUT_EXCLUSIVE_ACTIONS become a CORE-owned merged table (ed_core.flow.step_registry, surface #3). The interpreter (core) and cli (core) read the MERGED registry from core, NOT from any domain step module. Domain step modules (jump/dock in ed-autojump, body_tour in ed-explore) self-register their names INTO this core table at import/activation. redirect_incoming proves interpreter+cli now point at the core registry, not the domain step module — killing the two core->domain edges G12 flagged."
+    },
+    "ed_autojump.flow.dispatcher": {
+      "new_module": "ed_autojump.flow.boot_routes",
+      "package": "ed-autojump",
+      "move_edges": [
+        "ed_autojump.fsd.scoops",
+        "ed_autojump.flow.steps"
+      ],
+      "redirect_incoming": [],
+      "back_edge": false,
+      "_why": "D3 dispatcher split. The ENGINE half (_TailHub, world-state latches, _apply_state/_record_event_time, _poll_status/_fresh_status/_navroute_state, heat watchdog, _run/_make_context/preemption/exclusive-input, the registry+active-set router shell) stays in ed_core.flow.dispatcher and keeps only the core edges (flow.context/interpreter/model). The JUMP CLASSIFIER + ROUTES half (_maybe_startup ladder, dispatch table, dispatch_route_complete, _is_route_complete, _resolve_final_waypoint, _is_parked_terminal) becomes ed_autojump.flow.boot_routes, which carries the domain edges (fsd.scoops for scoop math, the deferred .steps import for _destination_is_local_star/_dest_is_named_station — G10, now an intra-ed-autojump edge). boot_routes registers its classifier rules (surface #1) and event routes (surface #2) into the core router shell. No core->domain edge remains."
+    }
+  },
+
+  "ed_autojump": "ed-core",
+  "ed_autojump.anonymizer": "ed-core",
+  "ed_autojump.binds_tool": "ed-core",
+  "ed_autojump.binds_validate": "ed-core",
+  "ed_autojump.cli": "ed-core",
+  "ed_autojump.config": "ed-core",
+  "ed_autojump.console_status": "ed-core",
+  "ed_autojump.doctor": "ed-core",
+  "ed_autojump.lifecycle": "ed-core",
+  "ed_autojump.overlay": "ed-core",
+  "ed_autojump.panic": "ed-core",
+  "ed_autojump.panic_listener": "ed-core",
+  "ed_autojump.pull_binds": "ed-core",
+  "ed_autojump.recorder": "ed-core",
+  "ed_autojump.session_audit": "ed-autojump",
+  "ed_autojump.ship_sizes": "ed-core",
+  "ed_autojump.state": "ed-core",
+  "ed_autojump.visited": "ed-core",
+
+  "ed_autojump.executor": "ed-core",
+  "ed_autojump.executor.align": "ed-core",
+  "ed_autojump.executor.jump": "ed-autojump",
+  "ed_autojump.executor.navpanel": "ed-autojump",
+
+  "ed_autojump.flow": "ed-core",
+  "ed_autojump.flow.context": "ed-core",
+  "ed_autojump.flow.dispatcher": "ed-core",
+  "ed_autojump.flow.interpreter": "ed-core",
+  "ed_autojump.flow.loader": "ed-core",
+  "ed_autojump.flow.model": "ed-core",
+  "ed_autojump.flow.steps": "ed-autojump",
+
+  "ed_autojump.fsd": "ed-autojump",
+  "ed_autojump.fsd.danger": "ed-autojump",
+  "ed_autojump.fsd.math": "ed-autojump",
+  "ed_autojump.fsd.scoops": "ed-autojump",
+
+  "ed_autojump.journal": "ed-core",
+  "ed_autojump.journal.events": "ed-core",
+  "ed_autojump.journal.tail": "ed-core",
+  "ed_autojump.journal.waiters": "ed-core",
+
+  "ed_autojump.keys": "ed-core",
+  "ed_autojump.keys.binds": "ed-core",
+  "ed_autojump.keys.scancodes": "ed-core",
+  "ed_autojump.keys.sender": "ed-core",
+
+  "ed_autojump.launcher": "ed-core",
+  "ed_autojump.launcher.audio_wait": "ed-core",
+  "ed_autojump.launcher.flow": "ed-core",
+  "ed_autojump.launcher.focus": "ed-core",
+  "ed_autojump.launcher.launcher": "ed-core",
+  "ed_autojump.launcher.menu_nav": "ed-core",
+  "ed_autojump.launcher.wizard": "ed-core",
+
+  "ed_autojump.status": "ed-core",
+  "ed_autojump.status.navroute": "ed-core",
+  "ed_autojump.status.status": "ed-core",
+
+  "ed_autojump.vision": "ed-vision",
+  "ed_autojump.vision.capture": "ed-vision",
+  "ed_autojump.vision.compass": "ed-vision",
+  "ed_autojump.vision.cyan_reader": "ed-vision",
+  "ed_autojump.vision.debug_overlay": "ed-vision",
+  "ed_autojump.vision.navpanel_icons": "ed-vision",
+  "ed_autojump.vision.navpanel_reader": "ed-vision",
+  "ed_autojump.vision.opencv_reader": "ed-vision",
+  "ed_autojump.vision.reader": "ed-vision",
+  "ed_autojump.vision.station_menu": "ed-vision",
+  "ed_autojump.vision.ultralytics_reader": "ed-vision",
+  "ed_autojump.vision.widget_ring": "ed-vision",
+  "ed_autojump.vision.yolo": "ed-vision"
+}
