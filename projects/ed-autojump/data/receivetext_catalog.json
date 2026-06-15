@@ -11,10 +11,10 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 1013,
+    "count": 1112,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-06-11T06:47:20Z",
+    "last_seen": "2026-06-15T05:13:43Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
@@ -83,46 +83,46 @@
   "$CruiseLiner_SCPatrol01;": {
     "category": "other",
     "channel": "npc",
-    "count": 31,
+    "count": 34,
     "first_seen": "2026-05-25T09:49:31Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-11T06:34:30Z",
+    "last_seen": "2026-06-15T02:56:27Z",
     "message_localised": "And don't forget, this Liner is in the top 1% of all Liners out there."
   },
   "$CruiseLiner_SCPatrol02;": {
     "category": "other",
     "channel": "npc",
-    "count": 28,
+    "count": 32,
     "first_seen": "2026-05-25T09:46:41Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-11T01:18:53Z",
+    "last_seen": "2026-06-15T02:57:04Z",
     "message_localised": "We will be cruising in-system for a while, please feel free to take advantage of our in-flight entertainment."
   },
   "$CruiseLiner_SCPatrol03;": {
     "category": "other",
     "channel": "npc",
-    "count": 52,
+    "count": 53,
     "first_seen": "2026-05-25T03:44:04Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-11T06:37:07Z",
+    "last_seen": "2026-06-14T02:13:16Z",
     "message_localised": "Today's cruise includes some delightful views, our flight attendants are on hand with full details."
   },
   "$CruiseLiner_SCPatrol04;": {
     "category": "other",
     "channel": "npc",
-    "count": 29,
+    "count": 32,
     "first_seen": "2026-05-25T09:42:02Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-11T00:45:13Z",
+    "last_seen": "2026-06-14T02:21:52Z",
     "message_localised": "I'd like to direct your attention to our flight attendants for a brief safety demonstration."
   },
   "$CruiseLiner_SCPatrol05;": {
     "category": "other",
     "channel": "npc",
-    "count": 30,
+    "count": 34,
     "first_seen": "2026-05-25T09:42:32Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-11T00:46:49Z",
+    "last_seen": "2026-06-15T02:55:59Z",
     "message_localised": "This is your captain. Due to some unforeseen delays, we will be arriving at our next destination later than scheduled."
   },
   "$DockingChatter_Allied;": {
@@ -206,6 +206,15 @@
     "last_seen": "2026-06-10T23:52:50Z",
     "message_localised": "Bah, nothing."
   },
+  "$Pirate_OnNoCargoFound03;": {
+    "category": "piracy",
+    "channel": "npc",
+    "count": 1,
+    "first_seen": "2026-06-13T07:09:30Z",
+    "from_example": "Guillaume-en-Egypte",
+    "last_seen": "2026-06-13T07:09:30Z",
+    "message_localised": "No cargo? Useless dreg."
+  },
   "$Pirate_OnNoCargoFound07;": {
     "category": "piracy",
     "channel": "npc",
@@ -214,6 +223,15 @@
     "from_example": "Akira Brahe",
     "last_seen": "2026-01-10T03:52:52Z",
     "message_localised": "Nothing for me here."
+  },
+  "$Pirate_OnStartScanCargo01;": {
+    "category": "piracy",
+    "channel": "npc",
+    "count": 1,
+    "first_seen": "2026-06-13T07:09:20Z",
+    "from_example": "Guillaume-en-Egypte",
+    "last_seen": "2026-06-13T07:09:20Z",
+    "message_localised": "I see all!"
   },
   "$Pirate_OnStartScanCargo08;": {
     "category": "piracy",
