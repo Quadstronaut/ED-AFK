@@ -30,8 +30,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from ..vision.compass import CompassRead, CompassReader
-from ..vision.debug_overlay import get_debug_sink
+from ed_vision.compass import CompassRead, CompassReader
+from ed_vision.debug_overlay import get_debug_sink
 
 
 @dataclass

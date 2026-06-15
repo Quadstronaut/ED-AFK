@@ -7,7 +7,7 @@ model file; we hand it synthetic detection arrays.
 import numpy as np
 import pytest
 
-from ed_autojump.vision.yolo import decode_compass
+from ed_vision.yolo import decode_compass
 
 NAMES = {0: "compass", 1: "navpoint", 2: "navpoint-behind"}
 

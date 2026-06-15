@@ -11,7 +11,7 @@ not depend on test_steps_vision's internals.
 """
 from ed_autojump.flow.context import StepContext
 from ed_autojump.flow.steps import STEP_REGISTRY
-from ed_autojump.vision.compass import CompassRead
+from ed_vision.compass import CompassRead
 from tests.flow import FakeSender
 
 

@@ -8,8 +8,8 @@ with fake readers; no models involved.
 
 from pathlib import Path
 
-from ed_autojump.vision.compass import CompassRead
-from ed_autojump.vision.reader import CompositeCompassReader, build_compass_reader
+from ed_vision.compass import CompassRead
+from ed_vision.reader import CompositeCompassReader, build_compass_reader
 
 
 class _Fake:

@@ -415,13 +415,13 @@ def cmd_run(args) -> int:
     nav_panel_reader = nav_panel_grabber = None
     station_menu_grabber = None
     if args.engage_keys:
-        from .vision.capture import build_vision
+        from ed_vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
-        from .vision.capture import build_navpanel_vision
+        from ed_vision.capture import build_navpanel_vision
         nav_panel_reader, nav_panel_grabber = build_navpanel_vision(cfg)
         # Docked-menu CV (station_menu detector): feeds the auto_launch
         # undock safety gate + the services-macro menu-up entry gate.
-        from .vision.capture import build_station_menu_grabber
+        from ed_vision.capture import build_station_menu_grabber
         station_menu_grabber = build_station_menu_grabber(cfg)
         if station_menu_grabber is not None:
             print("vision: docked-menu detector ON (full-frame grab)")
@@ -449,8 +449,8 @@ def cmd_run(args) -> int:
         # version of this: the preflight warned, the pass stayed enabled, and
         # the bot flew-but-never-jumped.
         if cfg.vision.widget_ring_alignment:
-            from .vision.capture import build_widget_vision
-            from .vision.widget_ring import verify_widget_rendered
+            from ed_vision.capture import build_widget_vision
+            from ed_vision.widget_ring import verify_widget_rendered
             widget_ring_reader, widget_frame_grabber = build_widget_vision(cfg)
             degrade = cfg.vision.widget_ring_on_miss != "fail_closed"
             missing = (widget_ring_reader is None
@@ -531,7 +531,7 @@ def cmd_run(args) -> int:
     # Registered globally so vision call sites find it. Fail-soft: needs EDMC.
     if edmc is not None and cfg.overlay.cv_debug:
         import os as _os
-        from .vision.debug_overlay import (CvDebugSink, ScreenToOverlay,
+        from ed_vision.debug_overlay import (CvDebugSink, ScreenToOverlay,
                                            set_debug_sink)
         _w, _h = tuple(cfg.cv.target_resolution)
         _transform = ScreenToOverlay.load(
@@ -818,7 +818,7 @@ def cmd_calibrate_compass(args) -> int:
 
     cfg = load_config(args.config if args.config.is_file() else None)
     try:
-        from .vision.capture import ScreenGrabber, locate_compass_ring, ring_to_region
+        from ed_vision.capture import ScreenGrabber, locate_compass_ring, ring_to_region
     except Exception as e:  # noqa: BLE001
         print(f"vision deps missing ({e}); install with:  pip install -e .[vision]")
         return 1
@@ -885,14 +885,14 @@ def cmd_calibrate_compass(args) -> int:
 def cmd_calibrate_overlay(args) -> int:
     """Interactive screen->overlay transform tuning for the CV debug boxes."""
     cfg = load_config(args.config if args.config.is_file() else None)
-    from .vision.debug_overlay import run_calibration
+    from .cv_debug_cli import run_calibration
     return run_calibration(cfg)
 
 
 def cmd_navpanel_overlay(args) -> int:
     """Live per-row nav-icon vision diagnostic on the EDMCOverlay."""
     cfg = load_config(args.config if args.config.is_file() else None)
-    from .vision.debug_overlay import run_navpanel_overlay
+    from .cv_debug_cli import run_navpanel_overlay
     return run_navpanel_overlay(cfg, n_rows=args.rows)
 
 
@@ -925,7 +925,7 @@ def cmd_panic(args) -> int:
 def cmd_cv_debug(args) -> int:
     """Live context-aware CV overlay that reacts to the current UI (GuiFocus)."""
     cfg = load_config(args.config if args.config.is_file() else None)
-    from .vision.debug_overlay import run_cv_debug
+    from .cv_debug_cli import run_cv_debug
     return run_cv_debug(cfg)
 
 

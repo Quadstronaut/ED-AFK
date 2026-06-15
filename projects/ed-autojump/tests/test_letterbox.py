@@ -4,7 +4,7 @@ grab, gets the compass box in the 640 letterbox space, and must map it back
 to real screen pixels — that's `unletterbox_xyxy` undoing `letterbox_params`.
 """
 
-from ed_autojump.vision.yolo import letterbox_params, unletterbox_xyxy
+from ed_vision.yolo import letterbox_params, unletterbox_xyxy
 
 
 def test_params_centre_a_wide_frame():

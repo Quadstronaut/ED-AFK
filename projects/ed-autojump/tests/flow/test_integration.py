@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from ed_autojump.flow import load_procedures, run_procedure, StepContext
 from tests.flow import FakeSender
-from ed_autojump.vision.compass import CompassRead
+from ed_vision.compass import CompassRead
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
 

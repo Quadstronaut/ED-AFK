@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from ed_autojump.vision.capture import build_station_menu_grabber
+from ed_vision.capture import build_station_menu_grabber
 
 
 def _cfg(backend="gdi"):
