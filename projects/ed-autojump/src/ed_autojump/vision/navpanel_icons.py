@@ -55,9 +55,14 @@ NONE = "NONE"
 
 # --- 1080p-reference icon-cell geometry (full-frame pixels, MEASURED) ---------
 REF_HEIGHT = 1080
-ICON_X0 = 507          # left edge of the icon cell (flush-left column)
+ICON_X0 = 506          # left edge of the icon cell (flush-left = depth-0 column)
 ICON_W = 50            # cell width
-ROW0_CY = 485          # row-0 icon vertical centre
+# row-0 icon vertical centre. LIVE-CALIBRATED 2026-06-13 (grid-search on a real
+# Capricorni grab: star at x506,cy511,score 0.71). CAVEAT: the list top shifts
+# with the system-name header height (tyriedgoea fixture sat at 485), so this
+# fixed value is system-specific — dynamic first-icon anchoring is the planned
+# hardening so it survives every system.
+ROW0_CY = 511
 ROW_PITCH = 37         # vertical spacing between rows
 CELL_HALF_H = 20       # cell spans cy-20 .. cy+20 (41px tall)
 
