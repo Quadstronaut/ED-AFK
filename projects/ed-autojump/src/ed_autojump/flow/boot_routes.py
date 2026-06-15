@@ -15,6 +15,8 @@ from typing import Any, Optional
 from ed_core.flow.dispatcher import _CLEAR_JOIN_WINDOW_S
 from ed_core.flow.registry import register_classifier_rule, register_event_route
 
+_activated = False
+
 
 # ---------------------------------------------------------------------------
 # Parked-terminal helper (intra-module, not registered)
@@ -28,7 +30,7 @@ def _is_parked_terminal(runner: Any, st: Any) -> bool:
     waypoints, so an interrupted mid-route restart still routes to arrival.
 
     in_supercruise is the caller's precondition; this checks the rest."""
-    from .steps import _destination_is_local_star
+    from ed_core.flow.predicates import _destination_is_local_star
 
     nr = runner._navroute_state()
     route = getattr(nr, "route", None) if nr is not None else None
@@ -84,7 +86,7 @@ def classify_startup(runner: Any) -> Optional[str]:
         # no-arbitrary-timed-waits rule FOR THIS CLASSIFIER ONLY.
         FRESH_ARRIVAL_WINDOW_S = 30.0
 
-        from .steps import _destination_is_local_star
+        from ed_core.flow.predicates import _destination_is_local_star
         dest = getattr(st, "destination", None)
         near_star = _destination_is_local_star(st, runner._current_system)
 
@@ -223,7 +225,7 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
     orbit and hold. (A NEW route plotted while docked later triggers the
     pit-stop resume from the NavRoute event route; absent that, the bot
     stays docked.)"""
-    from .steps import _destination_is_local_star, _dest_is_named_station
+    from ed_core.flow.predicates import _destination_is_local_star, _dest_is_named_station
 
     system = (getattr(ev, "star_system", None)
               or (runner._final_waypoint[1] if runner._final_waypoint else None)
@@ -398,7 +400,12 @@ def _route_nav_route(runner: Any, ev: Any) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def activate(runner_class: Any = None) -> None:
-    """Register autojump boot classifier + event routes into the core registry."""
+    """Register autojump boot classifier + event routes into the core registry.
+    Idempotent: safe to call multiple times; registers only once."""
+    global _activated
+    if _activated:
+        return
+    _activated = True
     register_classifier_rule("autojump_startup", classify_startup, priority=100)
     register_event_route("FSDJump", _route_fsd_jump, name="autojump_fsd_jump", priority=100)
     register_event_route("SupercruiseExit", _route_sc_exit, name="autojump_sc_exit", priority=100)

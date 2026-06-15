@@ -1,18 +1,13 @@
-"""ed-core flow registry -- the four registration surfaces + active-set registrar.
+"""ed-core flow registry -- the four registration surfaces.
 
 Surface #1  classifier rules  (boot-state -> procedure name or None)
 Surface #2  event -> procedure routes
 Surface #3  action -> step-fn table  (lives in step_registry.py)
 Surface #4  TOML procedure directories
-
-The active-set registrar (App / ActiveSet) lets the CLI host declare which
-domain apps are active and call each app's activate() in turn before the
-FlowRunner live loop starts.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -75,10 +70,22 @@ def run_event_routes(runner: Any, ev: Any) -> Optional[str]:
 _PROC_DIRS: list[Path] = []
 
 
-def register_procedure_dir(path: Path) -> None:
+def register_procedure_dir(path: Path, *, allowed_root: "Path | None" = None) -> None:
     """Register a directory of *.toml procedure files.
-    Raises ValueError if the directory does not exist or is already registered."""
+
+    allowed_root: when provided, the resolved path must be under this root
+    (raises ValueError if not -- ancestry check prevents out-of-tree proc dirs).
+    Raises ValueError if the directory does not exist, is already registered,
+    or fails the ancestry check."""
     path = Path(path).resolve()
+    if allowed_root is not None:
+        allowed_root = Path(allowed_root).resolve()
+        try:
+            path.relative_to(allowed_root)
+        except ValueError:
+            raise ValueError(
+                f"Procedure dir {path!r} is not under allowed root {allowed_root!r}"
+            )
     if not path.is_dir():
         raise ValueError(f"Procedure dir not found: {path}")
     if path in _PROC_DIRS:
@@ -91,26 +98,11 @@ def registered_proc_dirs() -> list[Path]:
     return list(_PROC_DIRS)
 
 
-# Active-set registrar
-@dataclass
-class App:
-    """A domain application that can be activated into the core registry."""
-    name: str
-    solo: bool = False
-    activate: Callable[[], None] = field(default_factory=lambda: (lambda: None))
+def reset_registries() -> None:
+    """Clear all module-level registry lists. Intended for test setUp only.
 
-
-@dataclass
-class ActiveSet:
-    """Holds the registered domain apps and activates a named subset."""
-    apps: list[App] = field(default_factory=list)
-
-    def register(self, app: App) -> None:
-        self.apps.append(app)
-
-    def activate(self, *names: str) -> None:
-        chosen = [a for a in self.apps if a.name in names]
-        if any(a.solo for a in chosen) and len(chosen) > 1:
-            raise ValueError("solo app cannot co-activate with others")
-        for a in chosen:
-            a.activate()
+    Does NOT reset activate-once flags on domain packages — callers must do
+    that separately (e.g. ``ed_autojump._activated = False``)."""
+    _CLASSIFIER_RULES.clear()
+    _EVENT_ROUTES.clear()
+    _PROC_DIRS.clear()
