@@ -6,7 +6,7 @@ layer is calibration-pending and not exercised here — it needs a real
 planet-rich frame, which has no fixture yet.
 """
 
-from ed_autojump.vision.navpanel_reader import (
+from ed_vision.navpanel_reader import (
     NavBody,
     next_unexplored,
     parse_nav_panel_rows,

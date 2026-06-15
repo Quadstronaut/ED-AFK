@@ -1,0 +1,57 @@
+[project]
+name = "ed-vision"
+version = "0.2.0"
+description = "Pure perception for the ED-AFK bot: frames in, measurements out. Bottom leaf — imports nothing else in the workspace."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Quadstronaut" }]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
+
+# ed-vision is the true bottom leaf: it sends no keys and runs no flight. Its
+# only deps are the CV/inference stack. Nothing in-workspace.
+dependencies = []
+
+[project.optional-dependencies]
+cv = [
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "dxcam-cpp",
+    "pytesseract>=0.3.10",
+]
+# Nav-compass alignment. Default (light) path: onnxruntime runs the
+# vendored compass.onnx. opencv/dxcam do capture + the colour-free
+# fallback reader. No PyTorch here — this is the "just works" tier.
+vision = [
+    "onnxruntime>=1.17",
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "dxcam-cpp",
+]
+# Opt-in heavy backend. Only needed if the onnxruntime path misbehaves
+# in-game and you want to fall back to the full ultralytics runtime on
+# the same vendored weights (compass.pt). Pulls in torch (~hundreds of MB).
+vision-heavy = [
+    "ultralytics>=8.3",
+]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Vendored vision model weights + nav-panel icon templates follow vision (G11).
+ed_vision = [
+    "model/*.onnx", "model/*.pt", "model/*.md",
+    "assets/navpanel_icons/*.png",
+    "data/*.json",
+]

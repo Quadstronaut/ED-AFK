@@ -2,7 +2,7 @@
 
 import pytest
 
-from ed_autojump.config import load_config
+from ed_core.config import load_config
 
 
 def _write(path, text):

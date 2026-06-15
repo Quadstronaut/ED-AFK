@@ -1,7 +1,7 @@
 """Tests for the append-only visited-systems logger."""
 from pathlib import Path
 
-from ed_autojump.visited import VisitedSystemsLogger, default_visited_log_path
+from ed_core.visited import VisitedSystemsLogger, default_visited_log_path
 
 
 def test_record_appends_timestamp_and_system(tmp_path):

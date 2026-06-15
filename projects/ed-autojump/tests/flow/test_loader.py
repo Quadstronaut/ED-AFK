@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.flow.loader import (
+from ed_core.flow.loader import (
     load_procedure,
     load_procedures,
     validate_procedure,

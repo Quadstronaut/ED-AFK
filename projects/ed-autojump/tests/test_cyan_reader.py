@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 import pytest
 
-from ed_autojump.vision.cyan_reader import CyanDotReader
+from ed_vision.cyan_reader import CyanDotReader
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +342,7 @@ def test_real_frame_glare_orb_is_not_the_dot():
 
 def test_build_compass_reader_cyan_backend():
     """backend='cyan' builds a working reader without requiring model files."""
-    from ed_autojump.vision.reader import build_compass_reader
+    from ed_vision.reader import build_compass_reader
 
     reader = build_compass_reader(
         backend="cyan",

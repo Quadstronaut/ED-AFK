@@ -1,0 +1,35 @@
+[project]
+name = "ed-explore"
+version = "0.2.0"
+description = "Exploration domain for the ED-AFK bot (Phase 1: the relocated body-tour step). Depends on ed-core + ed-vision; never on a sibling domain."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Quadstronaut" }]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
+
+dependencies = [
+    "ed-core",
+    "ed-vision",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[project.entry-points."ed_autojump.plugins"]
+# Registers body_tour into the core step registry at CLI startup (surface #3).
+# The CLI calls all ed_autojump.plugins entry-points before validating procedures,
+# which avoids a sideways ed_autojump -> ed_explore import.
+explore = "ed_explore:activate"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

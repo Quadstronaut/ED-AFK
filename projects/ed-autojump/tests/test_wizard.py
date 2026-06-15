@@ -13,9 +13,9 @@ from typing import Any, Callable
 
 import pytest
 
-from ed_autojump.config import LauncherConfig
-from ed_autojump.launcher import LaunchSpec, MinEdLauncher
-from ed_autojump.launcher.wizard import (
+from ed_core.config import LauncherConfig
+from ed_core.launcher import LaunchSpec, MinEdLauncher
+from ed_core.launcher.wizard import (
     CredSetupResult,
     MenuCalibration,
     calibrate_menu,

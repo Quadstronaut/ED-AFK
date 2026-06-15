@@ -9,54 +9,40 @@ unbound action) and report it as a clean failure.
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Callable
+from typing import Any
 
-from .context import StepContext
-
-# Map a throttle percentage to its ED action name.
-_THROTTLE_ACTION = {
-    0: "SetSpeedZero",
-    25: "SetSpeed25",
-    50: "SetSpeed50",
-    75: "SetSpeed75",
-    100: "SetSpeed100",
-}
-
-
-def _press(ctx: StepContext, action: str, hold_s: float = 0.05) -> bool:
-    try:
-        ctx.sender.press(action, hold=hold_s)
-        return True
-    except KeyError:
-        ctx.log("BindMissing", {"action": action})
-        return False
-
-
-def step_press(ctx: StepContext, *, bind: str, hold_s: float = 0.05) -> bool:
-    return _press(ctx, bind, hold_s)
-
-
-def step_wait(ctx: StepContext, *, s: float) -> bool:
-    ctx.sleeper(s)
-    return True
-
-
-def step_set_throttle(ctx: StepContext, *, pct: int) -> bool:
-    action = _THROTTLE_ACTION.get(int(pct))
-    if action is None:
-        ctx.log("BadThrottle", {"pct": pct})
-        return False
-    return _press(ctx, action)
-
-
-def step_pitch(ctx: StepContext, *, dir: str, hold_s: float) -> bool:
-    action = "PitchUpButton" if dir == "up" else "PitchDownButton"
-    return _press(ctx, action, hold_s)
-
-
-def step_target_ahead(ctx: StepContext) -> bool:
-    # SelectTarget locks the body ahead; with NOTHING ahead it clears the target.
-    return _press(ctx, "SelectTarget")
+from ed_core.flow.context import StepContext
+# G12: jump/dock step impls register BY NAME into the one core-owned merged
+# step table (registration surface #3). The interpreter/cli read that merged
+# table, never this module. register_step is fail-on-duplicate.
+from ed_core.flow.step_registry import (
+    INPUT_EXCLUSIVE_ACTIONS,
+    STEP_REGISTRY,
+    register_step,
+)
+# Shared helpers and step impls live in ed-core (steps_shared registers them
+# into the merged table as a side effect of this import).
+from ed_core.flow.steps_shared import (
+    _THROTTLE_ACTION,
+    _ensure_cockpit_focus,
+    _press,
+    _supercruise_lost_guard,
+    step_orient_compass,
+    step_orient_widget_ring,
+    step_pitch_compass,
+    step_hold_alignment,
+    step_ensure_analysis_mode,
+    step_wait_cooldown_clear,
+    step_hold_until_event,
+    step_press,
+    step_wait,
+    step_set_throttle,
+    step_pitch,
+    step_target_ahead,
+    step_engage_supercruise,
+)
+from ed_core.flow.predicates import _destination_is_local_star, _dest_is_named_station
+import ed_core.flow.steps_shared as _steps_shared  # noqa: F401 â€” register shared steps
 
 
 def step_target_next_route(
@@ -65,20 +51,20 @@ def step_target_next_route(
     """Press TargetNextRouteSystem (cancels Supercruise Assist AND locks the
     next route star in one press), then VERIFY the resulting FSDTarget's
     StarClass against the danger list (fsd.danger: D*/N/H/W). WIRED
-    2026-06-06 — the filter existed since v1 with no caller; until now
+    2026-06-06 â€” the filter existed since v1 with no caller; until now
     nothing stopped a plotted route through a neutron star.
 
     State-gated, two confirmations (2026-06-06 dead run: the hop had been
     locked since route plot, the press emitted NO new FSDTarget, and the
     event-only gate watchdogged out and aborted the whole run):
       1. a NEW FSDTarget journal event (seq advances past the pre-press
-         snapshot) — carries StarClass directly; or
-      2. Status.Destination already locked on an ONWARD route hop —
+         snapshot) â€” carries StarClass directly; or
+      2. Status.Destination already locked on an ONWARD route hop â€”
          StarClass looked up by SystemAddress in NavRoute.json. route[0]
          is the system we're sitting in, so a match there is a local-body
-         lock, not the next hop — never confirmed.
+         lock, not the next hop â€” never confirmed.
     Dangerous class -> False on either path and the procedure's required-
-    fail policy takes over — FAIL CLOSED, the ship never jumps at it.
+    fail policy takes over â€” FAIL CLOSED, the ship never jumps at it.
     Unknown class (off-route Destination, no NavRoute) also fails closed
     via the watchdog. `watchdog_s` is the operator-sanctioned stuck-state
     class (no route plotted / press lost). Without journal wiring (unit
@@ -89,7 +75,7 @@ def step_target_next_route(
     # Fast-fail on an empty / origin-only NavRoute (2026-06-08 council): with no
     # onward hop the press emits NO new FSDTarget (seq never advances) and
     # Status.Destination can only ever point at route[0] (the system we sit in)
-    # or nothing — so NEITHER confirm path below can EVER conclude, and the loop
+    # or nothing â€” so NEITHER confirm path below can EVER conclude, and the loop
     # used to spin the full 60s watchdog (operator's "very slow"). Recognise the
     # no-hop route by STATE and return promptly. NOT a clock shortcut: the gate
     # keys off route length, not a reduced timeout (no-arbitrary-timed-waits).
@@ -118,7 +104,7 @@ def step_target_next_route(
             ctx.log("TargetNextRouteDone", {"reason": "watchdog"})
             return False
         # This poll pumps the tail hub, which is what advances
-        # fsd_target_supplier — do NOT replace it with a bare sleep.
+        # fsd_target_supplier â€” do NOT replace it with a bare sleep.
         ctx.event_waiter("FSDTarget", poll_s)
         seq, target = ctx.fsd_target_supplier()
         if seq > seq0 and target is not None:
@@ -167,269 +153,33 @@ def step_engage_jump(ctx: StepContext) -> bool:
     return _press(ctx, "Hyperspace")
 
 
-def step_engage_supercruise(
-    ctx: StepContext, *, poll_s: float = 0.8, max_charge_s: float = 60.0,
-    presses: int = 1, between_press_s: float = 8.0,
-    until_charging: bool = False, press: bool = True,
-) -> bool:
-    """Press Supercruise, then gate on game signals — no success-window clock.
 
-    Success: `SupercruiseEntry` journal event, or the Supercruise status flag
-    (state-side confirmation, absorbs journal-write latency). Failure: the
-    FsdCharging flag observed true→false without entry (the game aborted the
-    charge), or operator abort. `poll_s` is the event-poll cadence, not a gate.
-
-    `max_charge_s` is the OPERATOR-SANCTIONED stuck-state watchdog (2026-06-06:
-    "if it charges for a good minute without jumping, that's a fail") — set far
-    above any real spool, it catches a wedged FSD / unregistered press, never a
-    healthy charge.
-
-    `presses` > 1 (ADDED 2026-06-06 run 6, the exclusion-zone climb-out):
-    inside a star's exclusion zone ED REFUSES the SC press outright — no
-    FsdCharging, no journal event, nothing (session_142708: one press at
-    14:27:11, then a 60s hold that never saw a charge; the ship had spent
-    runs 3-4 thrusting INTO the star and was deep inside). While the ship
-    flies back out, re-press every `between_press_s` until the charge takes.
-    A press is ONLY re-sent when no charge ever started in its window —
-    re-pressing during a live charge would CANCEL it; a charge that starts
-    then drops is handled by the existing charge_dropped exit. presses=1 is
-    the exact legacy behavior.
-
-    `until_charging` (ADDED 2026-06-06 run 9): SUCCESS = a LIVE CHARGE, not
-    SC entry. A post-smack charge spawns an ESCAPE VECTOR and holds until
-    the ship ALIGNS with it (screen-confirmed 14:56: cyan "ALIGN WITH
-    ESCAPE VECTOR" marker; 9 minutes of full-throttle burn never engaged
-    because ED wanted attitude, not distance).
-
-    `press=False` (ADDED 2026-06-06 run 10): gate-only mode — the charge is
-    ALREADY live (a prior until_charging step got it) and the ship was just
-    aligned; pressing again would CANCEL it. Pure wait for entry/dropped.
-    """
-    st = ctx.status_supplier()
-    if st is not None and getattr(st, "in_supercruise", False):
-        return True  # already in SC; nothing to engage
-
-    for attempt in range(max(1, presses)):
-        if press and not _press(ctx, "Supercruise"):
-            return False
-        if ctx.event_waiter is None:
-            return True  # no journal wiring (unit tests) -> proceed
-        charge_seen = False
-        start = ctx.clock()
-        while True:
-            if ctx.should_abort():
-                ctx.log("EngageSupercruiseDone", {"reason": "abort"})
-                return False
-            now = ctx.clock()
-            if now - start > max_charge_s:
-                ctx.log("EngageSupercruiseDone", {"reason": "watchdog",
-                                                  "attempt": attempt + 1})
-                return False
-            # Press refused (no charge in its window) -> next press attempt.
-            if (not charge_seen and now - start > between_press_s
-                    and attempt + 1 < max(1, presses)):
-                ctx.log("EngageSupercruiseRetry", {"attempt": attempt + 1})
-                break
-            if ctx.event_waiter("SupercruiseEntry", poll_s):
-                return True
-            st = ctx.status_supplier()
-            if st is None:
-                continue
-            if getattr(st, "in_supercruise", False):
-                return True
-            if getattr(st, "fsd_charging", False):
-                if until_charging:
-                    ctx.log("EngageSupercruiseDone", {"reason": "charging",
-                                                      "attempt": attempt + 1})
-                    return True   # live charge IS the goal — caller aligns
-                charge_seen = True
-            elif charge_seen:
-                # Charge dropped without entry. One grace poll absorbs the
-                # Status-write vs journal-write race, then it's a real abort.
-                if ctx.event_waiter("SupercruiseEntry", poll_s):
-                    return True
-                st = ctx.status_supplier()
-                if st is not None and getattr(st, "in_supercruise", False):
-                    return True
-                ctx.log("EngageSupercruiseDone", {"reason": "charge_dropped"})
-                return False
-    ctx.log("EngageSupercruiseDone", {"reason": "presses_exhausted"})
-    return False
-
-
-STEP_REGISTRY: dict[str, Callable[..., bool]] = {
-    "press": step_press,
-    "wait": step_wait,
-    "set_throttle": step_set_throttle,
-    "pitch": step_pitch,
-}
-
-def step_ensure_analysis_mode(
-    ctx: StepContext, *,
-    poll_s: float = 0.5,
-    settle_polls: int = 4,
-    max_toggles: int = 3,
-) -> bool:
-    """The FSS honk only fires in ANALYSIS HUD mode. Operator ground truth
-    2026-06-06: "We have to be in analysis mode. If we're not, we must
-    switch to it."
-
-    State-gated on the AnalysisMode status flag (bit 27): already set ->
-    no-op success. Else press PlayerHUDModeToggle and poll the flag for
-    `settle_polls` cycles (Status.json lags the flip ~0.5s — judging too
-    early would double-toggle straight back to combat). `max_toggles` is a
-    bounded press count, not a wall clock. Fails closed without status."""
-    if ctx.status_supplier() is None:
-        ctx.log("AnalysisModeNoStatus", {})
-        return False
-    toggles = 0
-    while True:
-        if ctx.should_abort():
-            return False
-        st = ctx.status_supplier()
-        if st is not None and getattr(st, "analysis_mode", False):
-            if toggles:
-                ctx.log("AnalysisModeSwitched", {"toggles": toggles})
-            return True
-        if toggles >= max_toggles:
-            ctx.log("AnalysisModeFailed", {"toggles": toggles})
-            return False
-        if not _press(ctx, "PlayerHUDModeToggle"):
-            return False
-        toggles += 1
-        # Give Status.json time to reflect the flip before judging it.
-        for _ in range(settle_polls):
-            ctx.sleeper(poll_s)
-            st = ctx.status_supplier()
-            if st is not None and getattr(st, "analysis_mode", False):
-                ctx.log("AnalysisModeSwitched", {"toggles": toggles})
-                return True
-
-
-STEP_REGISTRY.update({
-    "target_ahead": step_target_ahead,
-    "target_next_route": step_target_next_route,
-    "engage_jump": step_engage_jump,
-    "engage_supercruise": step_engage_supercruise,
-    "ensure_analysis_mode": step_ensure_analysis_mode,
-})
+register_step("target_next_route", step_target_next_route)
+register_step("engage_jump", step_engage_jump)
+# engage_supercruise is now in ed_core.flow.steps_shared (Phase-1 reorg);
+# imported above and registered there. Re-exported here for callers.
 
 
 # `wait_for_event` (timeout-gated passive wait) is DELETED, not deprecated:
 # a wall-clock timeout as a success/failure gate cancelled a healthy jump
 # twice (2026-06-01, 2026-06-06). Gates are journal events or Status.json
-# flags only — see step_hold_alignment. Removing it from the registry makes
+# flags only â€” see step_hold_alignment. Removing it from the registry makes
 # any straggler TOML fail validation loudly instead of regressing silently.
 
 
 # `wait_cooldown` (fixed-seconds cooldown sleep) is DELETED for the same
 # reason: a 45s constant was a guess at when the smack cooldown ends. The
-# FsdCooldown status flag is the game's own answer — see wait_cooldown_clear.
-
-
-def step_wait_cooldown_clear(ctx: StepContext, *, poll_s: float = 0.5) -> bool:
-    """Block until the FsdCooldown status flag clears. STATE-DRIVEN — replaces
-    the fixed-seconds smack-cooldown sleep. Flag already clear -> instant pass
-    (the cooldown ended while earlier steps ran — that's success, not a race).
-    Fails closed without status; exits False on operator abort."""
-    if ctx.status_supplier() is None:
-        ctx.log("WaitCooldownNoStatus", {})
-        return False
-    while True:
-        if ctx.should_abort():
-            ctx.log("WaitCooldownDone", {"reason": "abort"})
-            return False
-        st = ctx.status_supplier()
-        if st is not None and not getattr(st, "fsd_cooldown", False):
-            return True
-        ctx.sleeper(poll_s)
-
-
-def step_hold_until_event(
-    ctx: StepContext,
-    *,
-    bind: str,
-    event: str,
-    max_hold_s: float = 30.0,
-) -> bool:
-    """Press the key DOWN, wait for `event` to be logged, then release.
-
-    The success path is purely log-gated — the key is released the instant
-    the journal records the event, not on a fixed timer. `max_hold_s` is a
-    safety backstop only (so a missing event can't deadlock the parallel
-    track); the default 30s is way longer than any real honk and only fires
-    if something has gone badly wrong (broken keybind, scanner disabled).
-
-    Returns True if the event fired before the safety cap, False otherwise.
-    The key is ALWAYS released (try/finally), even on the safety-cap path
-    or if the waiter raises."""
-    try:
-        ctx.sender.key_down(bind)
-    except KeyError:
-        ctx.log("BindMissing", {"action": bind, "phase": "down"})
-        return False
-    try:
-        if ctx.event_waiter is None:
-            # No journal wiring (unit-test fallback with no waiter): no way
-            # to learn of completion, so just release and report success.
-            return True
-        return ctx.event_waiter(event, max_hold_s)
-    finally:
-        try:
-            ctx.sender.key_up(bind)
-        except KeyError:
-            ctx.log("BindMissing", {"action": bind, "phase": "up"})
-
-
-STEP_REGISTRY.update({
-    "wait_cooldown_clear": step_wait_cooldown_clear,
-    # hold_until_event keeps its max_hold_s: it is a key-RELEASE safety (a
-    # held key forever = jammed input), not a success/failure gate, and the
-    # honk track gates nothing. Operator reviewed and kept it (2026-06-06).
-    "hold_until_event": step_hold_until_event,
-})
-
-
-def _destination_is_local_star(st: Any, system_name: "str | None") -> "bool | None":
-    """Is Status.Destination the CURRENT system's star?
-
-    The 2026-06-07 10:30Z incident: nav_panel_target locked the NAV BEACON
-    (journal-identically to a star lock — the compass dot renders for any
-    locked target) and the orbit no-oped. Destination.Name is the only live
-    discriminator: the primary star carries the BARE system name ("Acihaut"),
-    secondaries the "<system> A".."<system> D" designation; beacons and
-    scenario rows carry "$..." symbol names; stations carry unrelated names.
-
-    Returns True (it's the star), False (it's something else / nothing is
-    locked), or None (no status or system unknown — cannot judge; callers
-    degrade to dot-only verification, loudly)."""
-    if st is None or not system_name:
-        return None
-    dest = getattr(st, "destination", None)
-    if dest is None:
-        return False          # nothing locked at all -> the lock didn't take
-    name = (getattr(dest, "name", "") or "").strip()
-    if not name or name.startswith("$"):
-        return False          # symbolic = beacon / scenario / signal row
-    if name == system_name:
-        return True           # primary star = bare system name
-    # secondary star designation: "<system> A".."<system> Z" (one letter)
-    if (name.startswith(system_name + " ")
-            and len(name) == len(system_name) + 2
-            and name[-1].isalpha()):
-        return True
-    return False
-
+# FsdCooldown status flag is the game's own answer â€” see wait_cooldown_clear.
 
 def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
-    """Engage SC-assist on the locked star — GUARDED (2026-06-07 council):
+    """Engage SC-assist on the locked star â€” GUARDED (2026-06-07 council):
     the macro used to be a blind 5-keypress sequence that returned True
     unconditionally; the 10:30Z run pressed its keys against a Nav Beacon
     lock from a nose-anywhere pose and reported success while the ship sat
     still. Now it refuses (fail closed) when not in supercruise or when the
     destination is not the local star, and logs WHAT it engaged toward so a
     no-op is loud. ED exposes no assist-engaged Status flag, so the post-
-    macro check is limited to 'still in supercruise' — live iteration owns
+    macro check is limited to 'still in supercruise' â€” live iteration owns
     proving actual engagement."""
     from ..executor.navpanel import engage_supercruise_assist
     st = ctx.status_supplier()
@@ -448,7 +198,7 @@ def step_sc_assist_orbit(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
             return False
         ctx.log("ScAssistOrbitSent",
                 {"destination": dest_name, "identity_checked": ident is True})
-    # Blind macro — must start from cockpit focus (run 7 cycle 3: a macro
+    # Blind macro â€” must start from cockpit focus (run 7 cycle 3: a macro
     # started on a desynced cursor opened the SYSTEM MAP and blinded vision
     # for 3 full arrival retries).
     if not _ensure_cockpit_focus(ctx):
@@ -473,18 +223,18 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
                           max_rows: int = 10,
                           pin_to_top: bool = True,
                           pin_hold_s: float = 4.0) -> bool:
-    """Nav-panel macro: lock the ARRIVAL STAR — compass-verified AND
+    """Nav-panel macro: lock the ARRIVAL STAR â€” compass-verified AND
     identity-verified, scrolling past non-star rows (2026-06-07 council).
 
     Two verification layers, each from a live failure:
 
     1. COMPASS DOT (2026-06-06 14:07, run 4): target_via_navpanel is a blind
-       TOGGLE — on an already-locked star the second UI_Select lands on
+       TOGGLE â€” on an already-locked star the second UI_Select lands on
        UNLOCK, the hologram vanishes, and pitch hunted found=False 31x. No
        dot -> re-run the macro on the SAME row, up to max_toggles.
 
     2. LOCK IDENTITY (2026-06-07 10:30Z): "row 0 = star" is FALSE in a
-       populated system — the macro locked the NAV BEACON, the beacon's
+       populated system â€” the macro locked the NAV BEACON, the beacon's
        compass dot passed layer 1, and the orbit no-oped. The dot proves *a*
        lock, never the *correct* lock. So after the dot shows, compare
        Status.Destination.Name against the current system name
@@ -498,11 +248,11 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
     distance, so a CLOSE star sits in the top few rows (found inside a small
     bound) and a FAR star is buried (not found in a tight scan). arrival
     passes a TIGHT max_rows (=3) so a far star returns False FAST (no minute-
-    long grind) — the caller treats that not-found as "far -> obstruction
+    long grind) â€” the caller treats that not-found as "far -> obstruction
     negligible -> skip the get-around". A CLOSE star (row 0, with slack for a
     beacon/station ahead of it) is still found, so the orbit still runs. The
     identity check (layer 2) holds at ANY bound: a beacon is never returned as
-    True, so a tight bound never produces a wrong lock — it only changes how
+    True, so a tight bound never produces a wrong lock â€” it only changes how
     soon a genuinely-buried star gives up. route_complete_park keeps the
     default (wide) bound: a fresh route-end arrival is close in, the star is
     found, and a required fail there should retry, not skip.
@@ -513,10 +263,10 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
     def _macro(rows_down: int) -> bool:
         try:
             # pin_to_top (2026-06-07, operator-tested): the panel cursor
-            # persists across jumps — it opened at ~row 10 one system after
+            # persists across jumps â€” it opened at ~row 10 one system after
             # the first refuel and the row walk scrolled AWAY from the star.
             # Pin = tap down once + HOLD up (held saturates at top; taps at
-            # the top WRAP — never a tap burst).
+            # the top WRAP â€” never a tap burst).
             target_via_navpanel(ctx.sender, sleeper=ctx.sleeper,
                                 settle_s=settle_s, rows_down=rows_down,
                                 pin_to_top=pin_to_top, pin_hold_s=pin_hold_s)
@@ -526,14 +276,14 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
             return False
 
     if ctx.compass_reader is None or ctx.frame_grabber is None:
-        return _macro(0)   # blind legacy path — nothing to verify with
+        return _macro(0)   # blind legacy path â€” nothing to verify with
 
-    # The macro is BLIND — starting it from a map/panel is the desync source
+    # The macro is BLIND â€” starting it from a map/panel is the desync source
     # (run 7 cycle 3: a desynced macro opened the SYSTEM MAP).
     if not _ensure_cockpit_focus(ctx):
         return False
 
-    from ..executor.align import _measure
+    from ed_core.executor.align import _measure
 
     # DECOUPLED counters (2026-06-07 council, the 11:23Z Lyncis incident):
     # the old `for attempt in range(max_toggles)` made ONE counter serve both
@@ -543,10 +293,10 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
     # dot-miss slack (max_toggles) can't spin forever. NO pin-only-once
     # optimisation: cursor state after a macro is an unverified game assumption.
     # Exit-cause counters (2026-06-07 15:03-15:06Z incident): the old
-    # exhaustion log reported the CONSTANT max_toggles ({"toggles": 4}) — a flat
+    # exhaustion log reported the CONSTANT max_toggles ({"toggles": 4}) â€” a flat
     # lie next to the 35 FocusLeftPanel presses actually logged in the window.
     # Tracking dot_misses vs wrong_bodies distinguishes dot-starvation (vision/
-    # glare — no lock signal ever appeared) from rows-exhausted (a populated
+    # glare â€” no lock signal ever appeared) from rows-exhausted (a populated
     # system whose star sits past max_rows) at a glance.
     row = 0
     macros = 0
@@ -566,7 +316,7 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
             ctx.sleeper(settle_s)
         if not dot:
             dot_misses += 1
-            continue   # toggle landed on UNLOCK — SAME row again (slack)
+            continue   # toggle landed on UNLOCK â€” SAME row again (slack)
         # layer 2: the lock must be the LOCAL STAR, not whatever row 0 was
         system = ctx.current_system_supplier()
         ident = None
@@ -574,7 +324,7 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
             st = ctx.status_supplier()
             ident = _destination_is_local_star(st, system)
             if ident is not False:
-                break   # True (verified) or None (unknowable) — stop polling
+                break   # True (verified) or None (unknowable) â€” stop polling
             ctx.sleeper(settle_s)   # Status.json write latency ~1s
         dest = getattr(ctx.status_supplier() or object(), "destination", None)
         dest_name = getattr(dest, "name", None) if dest is not None else None
@@ -592,7 +342,7 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
     # Exhausted. Log the ACTUAL macro count + a cause breakdown so the diff
     # between dot-starvation and rows-exhausted is readable at a glance, then
     # leave the panel CLOSED: the failing pass left it OPEN (the retry had to
-    # clean up with UI_Back x2 / CockpitFocusRestored). Best-effort — ignore
+    # clean up with UI_Back x2 / CockpitFocusRestored). Best-effort â€” ignore
     # the return; never make the retry clean up a desynced panel. NOT on the
     # success path (target_via_navpanel already closes the panel there).
     ctx.log("NavPanelTargetUnverified",
@@ -601,551 +351,6 @@ def step_nav_panel_target(ctx: StepContext, *, settle_s: float = 0.4,
              "max_rows": max_rows, "max_toggles": max_toggles})
     _ensure_cockpit_focus(ctx)
     return False
-
-
-def _ensure_cockpit_focus(ctx: StepContext, *, max_backs: int = 4,
-                          settle_s: float = 0.5) -> bool:
-    """Press UI_Back until Status.GuiFocus returns to the cockpit (0).
-
-    2026-06-06 run 7 cycle 3 (session_143403): a desynced sc_assist_orbit
-    macro opened the SYSTEM MAP (GuiFocus 7) and orient_compass read the map
-    background — all-not-found, 7-sample zeroes — through 3 full retries.
-    Any map/panel owning the screen makes EVERY vision read garbage and
-    every blind UI macro start from an unknown cursor. State-gated on
-    GuiFocus (no clocks); True when status is unwired (nothing to verify
-    with — legacy blind behavior); False when focus can't be restored."""
-    st = ctx.status_supplier()
-    if st is None or not getattr(st, "gui_focus", 0):
-        return True
-    for _ in range(max_backs):
-        try:
-            ctx.sender.press("UI_Back")
-        except KeyError:
-            ctx.log("BindMissing", {"step": "ensure_cockpit_focus"})
-            return False
-        ctx.sleeper(settle_s)
-        st = ctx.status_supplier()
-        if st is None or not getattr(st, "gui_focus", 0):
-            ctx.log("CockpitFocusRestored", {})
-            return True
-    ctx.log("CockpitFocusStuck",
-            {"gui_focus": getattr(st, "gui_focus", None)})
-    return False
-
-
-def _supercruise_lost_guard(ctx: StepContext):
-    """Abort-check factory for long vision loops (2026-06-06 13:26 star
-    smack): the ship emergency-dropped out of supercruise 10s into orient
-    (FuelScoop -> SupercruiseExit Body=Star) and the loop kept steering
-    normal-space glare garbage for 35 more seconds, then the recovery pressed
-    Supercruise into the smack cooldown.
-
-    ASYMMETRIC by design: arms only when the step STARTS in supercruise —
-    losing it mid-step (smack, interdiction) always invalidates the step.
-    smack_recovery's escape-vector orient starts in NORMAL space and must run
-    unguarded (gaining supercruise there is success, handled by the next
-    step's gate). Returns None (no guard) when status is unwired or the
-    ship isn't in supercruise at step start."""
-    st0 = ctx.status_supplier()
-    if st0 is None or not getattr(st0, "in_supercruise", False):
-        return None
-
-    def check() -> "str | None":
-        st = ctx.status_supplier()
-        if st is not None and not getattr(st, "in_supercruise", True):
-            return "supercruise_lost"
-        return None
-
-    return check
-
-
-def step_orient_compass(ctx: StepContext, **align_overrides) -> bool:
-    if ctx.compass_reader is None or ctx.frame_grabber is None:
-        ctx.log("OrientNoVision", {})
-        return False  # FAIL CLOSED — never proceed to jump without a confirmed orient
-    if not _ensure_cockpit_focus(ctx):
-        return False  # a map/panel owns the screen — every read is garbage
-    from ..executor.align import align_to_target
-    kwargs = dict(ctx.align_kwargs)
-    kwargs.update(align_overrides)
-
-    # Diagnostic frame dump (ADDED 2026-06-06): name carries a clock stamp so
-    # the orients of one run don't collide. Only retained when cli wired a sink.
-    frame_sink = None
-    if ctx.frame_sink is not None:
-        t0 = int(ctx.clock())
-
-        def frame_sink(i: int, frames: list) -> None:
-            for si, frame in enumerate(frames):
-                ctx.frame_sink(f"orient_{t0}_i{i:02d}_s{si}", frame)
-
-    outcome = align_to_target(
-        ctx.compass_reader,
-        ctx.sender,
-        capture=ctx.frame_grabber,
-        clock=ctx.clock,
-        sleeper=ctx.sleeper,
-        samples=ctx.compass_samples,
-        on_iter=lambda p: ctx.log("OrientIter", p),
-        frame_sink=frame_sink,
-        abort_check=_supercruise_lost_guard(ctx),
-        **kwargs,
-    )
-    ctx.log("Orient", {"aligned": outcome.aligned, "reason": outcome.reason,
-                       "iterations": outcome.iterations})
-    return bool(outcome.aligned)
-
-
-def step_pitch_compass(
-    ctx: StepContext,
-    *,
-    until: str = "edge",
-    edge_frac: float = 0.6,
-    center_frac: float = 0.25,
-    pitch_hold: float = 1.0,
-    settle_s: float = 1.0,
-    max_iters: int = 20,
-    timeout_s: float = 30.0,
-    behind_gain_s: float = 0.4,      # behind-centering: press seconds per mag
-    behind_min_hold: float = 0.08,   # actuation floor for a tap
-    behind_confirm_reads: int = 1,   # CONSECUTIVE behind-gate beats to certify
-    behind_fill_max: "float | None" = None,  # decisive-hollow ceiling (smack)
-) -> bool:
-    """Compass-gated pitch. PitchUp until the TARGETED star's dot reaches the
-    gate, then stop. NEVER throttles. Fails closed without vision.
-
-    until="behind" false-pass refix (2026-06-08, smack-scoped). At a smack the
-    star is ALWAYS in front and BRIGHT; glare degrades the front/behind
-    classifier, so a SINGLE hollow+centered read is NOT trustworthy evidence
-    that the ship pitched 180 (the 2026-06-08 false pass: a glare-bright FRONT
-    star read hollow at mag 0.3487 <= center_frac 0.35 on beat 0, latched
-    "astern" before any rotation, then the flow throttled INTO the star;
-    stars do not mass-lock so engage_jump's status gate gave zero protection).
-
-    POSITIVE EVIDENCE OF ROTATION, two opt-in gates (defaults = exact legacy
-    single-read behavior, so no caller/test changes):
-      * behind_confirm_reads (>1): the behind gate must hold for that many
-        CONSECUTIVE beats before certifying. One coin-flip beat can no longer
-        latch; the run resets on any non-qualifying beat (front / miss /
-        non-hollow). This keys on the BEHIND read the ship emits once it
-        actually rotates — NOT on a confident FRONT read glare may never give,
-        so it cannot deadlock (the prior front-precondition fix did).
-      * behind_fill_max (set): a beat only QUALIFIES when DECISIVELY hollow
-        (front_fill <= behind_fill_max). A glare-bright front star's fill sits
-        in/above the 0.35-0.65 uncertainty band and can never qualify.
-        front_fill is None (non-fill backend) does NOT block — falls back to
-        the consecutive-reads requirement alone (never a deadlock).
-    The existing max_iters/timeout_s backstop still fails CLOSED (False, no
-    throttle) if rotation never completes — never fail-OPEN."""
-    if ctx.compass_reader is None or ctx.frame_grabber is None:
-        ctx.log("PitchCompassNoVision", {"until": until})
-        return False
-    if not _ensure_cockpit_focus(ctx):
-        return False  # a map/panel owns the screen — every read is garbage
-    from ..executor.align import _measure
-
-    def _at_gate(read) -> bool:
-        if not read.found:
-            return False
-        if until == "behind":
-            if read.in_front or read.magnitude > center_frac:
-                return False
-            # Decisive-hollow filter (smack): a glare-bright FRONT star can
-            # read hollow by classifier noise, but its fill sits in/above the
-            # uncertainty band — reject it. front_fill None = no fill backend
-            # -> skip the filter (the consecutive-reads gate still applies).
-            if (behind_fill_max is not None and read.front_fill is not None
-                    and read.front_fill > behind_fill_max):
-                return False
-            return True
-        # "edge": dot near the rim (≈90° off the nose)
-        return read.magnitude >= edge_frac
-
-    def _press_for(read) -> str:
-        """Choose the press that closes on the gate.
-
-        'edge' keeps the original pure-pitch sweep. 'behind' is TWO-AXIS as
-        of 2026-06-06 13:45 (the spin loop): smack_recovery's pitch-only
-        version pressed PitchUp 25x with the star behind at ox=-0.86 —
-        pitch moves the dot VERTICALLY, so a horizontal offset made the
-        'behind + mag<=center_frac' gate unreachable and the ship looped
-        forever (the smack had assumed the star starts dead-ahead; the
-        13:26 orient thrash had yawed it aside).
-
-        Behind-hemisphere compass dynamics are MIRRORED versus the front
-        laws (vector algebra, confirmed against align.py's behind-flip
-        whose PitchUp INCREASES a behind dot's oy): to drive a behind dot
-        to centre, press the OPPOSITE of the front law — dot left (ox<0)
-        -> YawRight, dot above (oy>0) -> PitchDown. Dominant axis first.
-        A front dot still gets PitchUp: flip it over the top to behind."""
-        if not read.found:
-            return "PitchUpButton"              # blind sweep until it appears
-        if until == "edge" or read.in_front:
-            return "PitchUpButton"
-        ox, oy = read.offset_x, read.offset_y
-        if abs(ox) >= abs(oy):
-            return "YawRightButton" if ox < 0 else "YawLeftButton"
-        return "PitchDownButton" if oy > 0 else "PitchUpButton"
-
-    def _hold_for(read) -> float:
-        """Full-power pitch for the sweep/flip phases; PROPORTIONAL taps for
-        behind-centering. 2026-06-06 13:53 (session_135247): a 1.0s press
-        rotates this ship ~110°+ (the behind→front flip at PitchIter i3→i4
-        proves ≥107° by geometry), so with the dot at behind mag 0.39 — a
-        hair past the 0.25 gate — every press blasted through the ±14° gate
-        window in a deterministic 2-cycle. gain·mag taps land inside it."""
-        if not read.found or until == "edge" or read.in_front:
-            return pitch_hold
-        return max(behind_min_hold,
-                   min(pitch_hold, behind_gain_s * read.magnitude))
-
-    start = ctx.clock()
-    misses = 0   # consecutive not_found beats
-    fronts = 0   # consecutive in_front beats (until="behind" only)
-    confirms = 0  # consecutive behind-gate beats (behind_confirm_reads gate)
-    confirm_target = max(1, behind_confirm_reads)
-    prev_front = None  # last FOUND verdict -> _measure hysteresis
-    for i in range(max_iters):
-        if ctx.clock() - start > timeout_s:
-            ctx.log("PitchCompassTimeout", {"until": until, "iters": i})
-            return False
-        read = _measure(ctx.compass_reader, ctx.frame_grabber,
-                        ctx.compass_samples, prev_in_front=prev_front)
-        if read.found:
-            prev_front = read.in_front
-        at_gate = _at_gate(read)
-        # Transient-miss damping (run 5, session_142245): a single
-        # not_found beat (glare flicker) used to fire the full-power blind
-        # sweep and WRECK a converging pose. One missed beat -> press
-        # NOTHING, hold position; only 3 consecutive misses mean the dot is
-        # genuinely out of view and the sweep should resume.
-        misses = misses + 1 if not read.found else 0
-        transient_miss = (not read.found) and misses < 3
-        # Front-flicker damping (run 12, session_151622): a single FRONT
-        # read amid behind-convergence — with NO press in between — is a
-        # filled/hollow classifier flicker, and the 1.0s flip it fired
-        # wrecked the pose. The flip needs 2 CONSECUTIVE front beats.
-        fronts = fronts + 1 if (read.found and read.in_front) else 0
-        front_flicker = (until == "behind" and read.found
-                         and read.in_front and fronts < 2)
-        # CONSECUTIVE-confirm gate: a single hollow+centered beat is not
-        # trustworthy under glare (the 2026-06-08 false pass). Require
-        # confirm_target beats in a row that all clear _at_gate; any
-        # non-qualifying beat resets the run. confirm_target=1 (default) =
-        # legacy single-read certify. Hold position (no press) while
-        # accumulating confirms — pressing would move the dot off the gate.
-        confirms = confirms + 1 if at_gate else 0
-        confirmed = at_gate and confirms >= confirm_target
-        action = (None if (at_gate or transient_miss or front_flicker)
-                  else _press_for(read))
-        hold = None if action is None else _hold_for(read)
-        # Per-iteration telemetry (ADDED 2026-06-06: the 13:45 spin was 25
-        # opaque presses — reads were invisible, same gap orient had).
-        ctx.log("PitchIter", {
-            "i": i, "until": until, "found": read.found,
-            "in_front": read.in_front,
-            "fill": None if read.front_fill is None else round(read.front_fill, 3),
-            "ox": round(read.offset_x, 4),
-            "oy": round(read.offset_y, 4), "mag": round(read.magnitude, 4),
-            "action": action, "hold": hold,
-            "confirms": confirms,
-        })
-        if confirmed:
-            ctx.log("PitchCompassDone", {"until": until, "iters": i,
-                                         "offset_y": read.offset_y,
-                                         "in_front": read.in_front,
-                                         "confirms": confirms})
-            return True
-        if action is not None:           # transient miss -> hold position
-            ctx.sender.press(action, hold=hold)
-        ctx.sleeper(settle_s)
-    ctx.log("PitchCompassMaxIters", {"until": until})
-    return False
-
-
-# State-side success flags per gating event: the Status.json bit that proves
-# the event's outcome even if the journal write hasn't landed yet.
-_HOLD_SUCCESS_FLAG = {
-    "StartJump": "fsd_jump",            # bit 30 — hyperspace committed
-    "SupercruiseEntry": "in_supercruise",
-}
-# Extra event polls after FsdCharging drops before declaring failure. Absorbs
-# the Status-write vs journal-write race at jump commit (flag clears at the
-# same instant the event is written, by different writers). A bounded poll
-# count, not a wall-clock gate: the decision input is still event/state.
-_HOLD_GRACE_POLLS = 3
-
-
-def step_hold_alignment(
-    ctx: StepContext,
-    *,
-    until_event: str = "StartJump",
-    poll_s: float = 0.8,
-    align_tol: float = 0.07,
-    gain: float = 0.3,
-    min_press: float = 0.04,
-    max_press: float = 0.10,
-    samples: int = 3,
-    max_charge_s: float = 60.0,
-) -> bool:
-    """Hold compass alignment during an FSD spool until `until_event` arrives.
-    PURE EVENT-DRIVEN — no wall-clock timeout (no-arbitrary-timed-waits rule).
-
-    The 12s `wait_for_event StartJump` this replaces timed out mid-spool on a
-    HEALTHY charge (twice: 2026-06-01, 2026-06-06) and the recovery path's
-    SelectTarget/Supercruise presses cancelled the jump. A clock cannot know
-    whether a charge is healthy; the game's own signals can.
-
-    Exit conditions, in priority order — every one is a game signal or the
-    operator:
-      1. `until_event` in the journal, or its state-side success flag
-         (StartJump -> FsdJump bit, SupercruiseEntry -> Supercruise bit)
-         -> True.
-      2. FsdCharging observed true→false with neither (game aborted the
-         charge; ED emits no failure event — the flag drop IS the signal),
-         after `_HOLD_GRACE_POLLS` extra polls -> False.
-      3. FsdCooldown appearing before any charge was seen (press refused
-         into cooldown) -> False.
-      4. ctx.should_abort() — panic switch / stop request -> False.
-      5. `max_charge_s` elapsed with no commit — the OPERATOR-SANCTIONED
-         stuck-state watchdog (2026-06-06: "if it charges for a good minute
-         without jumping, that's a fail. Nothing should take a minute to
-         jump."). At 60s it sits far above any real spool (~15-20s); it
-         catches a wedged FSD or an unregistered keypress, never a healthy
-         charge. This is NOT a return of the banned success-window gate.
-
-    `poll_s` is the event-poll blocking window (cadence, NOT a gate). Between
-    polls: `samples`-median compass read; in-front and within `align_tol` ->
-    no correction, else ONE micro-correction via align._correct. Defaults are
-    deliberately gentler than orient_compass (gain 0.3 vs 2.0, max_press 0.10
-    vs 0.70): this is a MAINTENANCE hold, not an acquisition swing.
-
-    Fails closed (returns False, logs) when vision, event_waiter, OR status
-    is unwired — without status there is no failure signal, and waiting
-    forever on a dead charge is as wrong as a timer. Raises ValueError on
-    samples<1 or poll_s<=0 (silent no-op/spin misconfigs).
-    """
-    if samples < 1:
-        raise ValueError(f"hold_alignment: samples must be >= 1, got {samples}")
-    if poll_s <= 0:
-        raise ValueError(f"hold_alignment: poll_s must be > 0, got {poll_s}")
-    if ctx.compass_reader is None or ctx.frame_grabber is None:
-        ctx.log("HoldAlignmentNoVision", {})
-        return False
-    if ctx.event_waiter is None:
-        ctx.log("HoldAlignmentNoWaiter", {})
-        return False
-    if ctx.status_supplier() is None:
-        ctx.log("HoldAlignmentNoStatus", {})
-        return False
-    if not _ensure_cockpit_focus(ctx):
-        return False  # a map/panel owns the screen — every read is garbage
-
-    from ..executor.align import _correct, _measure
-
-    success_flag = _HOLD_SUCCESS_FLAG.get(until_event)
-    charge_seen = False
-    iterations = 0
-    prev_front = None  # last FOUND verdict -> _measure hysteresis
-    start = ctx.clock()
-    while True:
-        if ctx.should_abort():
-            ctx.log("HoldAlignmentDone", {"reason": "abort", "iters": iterations})
-            return False
-        if ctx.clock() - start > max_charge_s:
-            ctx.log("HoldAlignmentDone", {"reason": "watchdog", "iters": iterations})
-            return False
-        if ctx.event_waiter(until_event, poll_s):
-            ctx.log("HoldAlignmentDone", {"reason": "event", "iters": iterations})
-            return True
-        st = ctx.status_supplier()
-        if st is not None:
-            if success_flag and getattr(st, success_flag, False):
-                ctx.log("HoldAlignmentDone", {"reason": "state", "iters": iterations})
-                return True
-            if getattr(st, "fsd_charging", False):
-                charge_seen = True
-            elif charge_seen:
-                for _ in range(_HOLD_GRACE_POLLS):
-                    if ctx.event_waiter(until_event, poll_s):
-                        ctx.log("HoldAlignmentDone",
-                                {"reason": "event", "iters": iterations})
-                        return True
-                    st = ctx.status_supplier()
-                    if (st is not None and success_flag
-                            and getattr(st, success_flag, False)):
-                        ctx.log("HoldAlignmentDone",
-                                {"reason": "state", "iters": iterations})
-                        return True
-                ctx.log("HoldAlignmentDone",
-                        {"reason": "charge_dropped", "iters": iterations})
-                return False
-            elif getattr(st, "fsd_cooldown", False):
-                ctx.log("HoldAlignmentDone",
-                        {"reason": "refused_cooldown", "iters": iterations})
-                return False
-        read = _measure(ctx.compass_reader, ctx.frame_grabber, samples,
-                        prev_in_front=prev_front)
-        iterations += 1
-        if not read.found:
-            continue
-        prev_front = read.in_front
-        if read.in_front and read.magnitude <= align_tol:
-            continue   # within maintenance tolerance, no correction needed
-        _correct(ctx.sender, read, gain=gain, min_press=min_press,
-                 max_press=max_press, deadzone=align_tol / 2)
-
-
-def step_orient_widget_ring(
-    ctx: StepContext, *,
-    timeout_s: float = 18.0,
-    settle_s: float = 0.45,
-    samples: int = 3,
-    gain_s_per_px: float = 0.18,     # press seconds per (|delta|/ring_r)
-    min_press: float = 0.04,
-    max_press: float = 0.25,
-) -> bool:
-    """FINE alignment stage: drive the target reticle ring onto the mouse widget.
-
-    Runs immediately AFTER orient_compass (the coarse stage, its own prior step).
-    Flag off -> no-op success: compass already oriented, there is nothing to
-    refine and re-running compass would double it.
-
-    MISS behavior is ctx.widget_ring_on_miss (operator decision 2026-06-06,
-    GitHub issue #1): "degrade" (default) -> a miss (no vision wired, widget
-    never found, or no convergence before timeout) SKIPS the fine pass with a
-    log and the compass-only jump proceeds — if we're genuinely off-target the
-    FSD charge aborts and the procedure's autorecovery maneuvers fix it.
-    "fail_closed" -> a miss fails this required step and gates the jump.
-
-    Sign convention is the locked widget-ring contract (spec §2): delta_y>0
-    (ring below) -> PitchDown, delta_x>0 (ring right) -> YawRight, NO
-    inversion. NOT shared with align.py.
-    """
-    # Flag off -> no-op success (NOT a passthrough — compass is its own prior
-    # step now, so passing through would double-run it).
-    if not getattr(ctx, "widget_ring_enabled", False):
-        return True
-
-    degrade = getattr(ctx, "widget_ring_on_miss", "degrade") != "fail_closed"
-
-    # Flag on but unwired -> miss.
-    if ctx.widget_ring_reader is None or ctx.widget_frame_grabber is None:
-        ctx.log("WidgetRingNoVision", {"degraded": degrade})
-        return degrade
-
-    if not _ensure_cockpit_focus(ctx):
-        return False  # a map/panel owns the screen — every read is garbage
-
-    from ..vision.widget_ring import median_of
-
-    # Diagnostic frame dump + per-iteration telemetry (ADDED 2026-06-06: the
-    # 13:0x WidgetRingTimeout iters=28 — a phantom ring lock over the target
-    # info TEXT — was undiagnosable from the recording; only the operator's
-    # screenshot exposed it). Mirrors step_orient_compass: clock-stamped names
-    # so one run's orients don't collide; only active when cli wired a sink.
-    t0 = int(ctx.clock()) if ctx.frame_sink is not None else 0
-
-    # Losing supercruise mid-step (smack, interdiction) is NOT a vision miss:
-    # degrade would walk the flow on to engage_jump in normal space inside the
-    # exclusion zone. Fail closed REGARDLESS of on_miss so the procedure
-    # unwinds and the queued smack_recovery dispatch can run.
-    sc_guard = _supercruise_lost_guard(ctx)
-
-    start = ctx.clock()
-    iterations = 0
-    while ctx.clock() - start < timeout_s:
-        if sc_guard is not None:
-            why = sc_guard()
-            if why:
-                ctx.log("WidgetRingAbort", {"why": why, "iters": iterations})
-                return False
-        frames = [] if ctx.frame_sink is not None else None
-        reads = []
-        for _ in range(samples):
-            frame = ctx.widget_frame_grabber()
-            if frames is not None:
-                frames.append(frame)
-            reads.append(ctx.widget_ring_reader.read(frame))
-        read = median_of(reads)
-        # CV debug detail layer: recolor the widget_ring box by this
-        # measurement's outcome (no-op without a sink; sink never raises).
-        from ..vision.debug_overlay import get_debug_sink
-        _sink = get_debug_sink()
-        if _sink is not None:
-            _sink.verdict("widget_ring", "hit" if read.found else "miss")
-        if frames is not None:
-            for si, f in enumerate(frames):
-                ctx.frame_sink(f"widget_{t0}_i{iterations:02d}_s{si}", f)
-        iterations += 1
-
-        action: "str | None" = None
-        hold: "float | None" = None
-        aligned_now = read.aligned
-        if read.found and not aligned_now:
-            # Bind-missing catch lives HERE in the loop — an unbound Yaw/Pitch
-            # key must log and continue to the timeout, never propagate a
-            # KeyError out of the step.
-            try:
-                pressed = _correct_widget_ring(ctx.sender, read,
-                                               gain_s_per_px=gain_s_per_px,
-                                               min_press=min_press,
-                                               max_press=max_press)
-                if pressed is not None:
-                    action, hold = pressed
-            except KeyError as e:
-                ctx.log("BindMissing",
-                        {"action": str(e), "step": "orient_widget_ring"})
-        ctx.log("WidgetRingIter", {
-            "i": iterations - 1, "found": read.found,
-            "dx": round(read.delta_x, 2), "dy": round(read.delta_y, 2),
-            "r": round(read.ring_radius_px, 2),
-            "deadzone": round(read.deadzone_px, 2),
-            "action": action, "hold": hold, "aligned": aligned_now,
-            "raw": [[r_.found, round(r_.delta_x, 2), round(r_.delta_y, 2),
-                     round(r_.ring_radius_px, 2)] for r_ in reads],
-        })
-        if aligned_now:
-            ctx.log("WidgetRingAligned", {"iters": iterations,
-                    "dx": read.delta_x, "dy": read.delta_y})
-            return True
-        ctx.sleeper(settle_s)
-    ctx.log("WidgetRingTimeout", {"iters": iterations, "degraded": degrade})
-    return degrade
-
-
-def _hold_for(delta_px: float, ring_r: float, gain_s_per_px: float,
-              min_press: float, max_press: float) -> float:
-    """Proportional press seconds for a pixel error, normalised by ring radius.
-    Distinct from align._press_for (normalises by abs(offset)). Guards ring_r
-    against 0 so a degenerate median read can't div-by-zero."""
-    return max(min_press, min(max_press,
-               gain_s_per_px * delta_px / max(ring_r, 1.0)))
-
-
-def _correct_widget_ring(sender, read, *, gain_s_per_px, min_press, max_press):
-    """One dominant-axis micro-correction. Per-axis deadzone is read.deadzone_px.
-    delta_y>0 (ring below widget) -> pitch DOWN; delta_x>0 -> yaw RIGHT. NO
-    inversion (the OPPOSITE of compass.py's pre-inverted offset_y).
-
-    Returns (action, hold) for the press sent, or None when the dominant axis
-    sits inside the deadzone — the WidgetRingIter telemetry records it."""
-    dx, dy = read.delta_x, read.delta_y
-    if abs(dx) >= abs(dy):
-        if abs(dx) > read.deadzone_px:
-            hold = _hold_for(abs(dx), read.ring_radius_px, gain_s_per_px,
-                             min_press, max_press)
-            action = "YawRightButton" if dx > 0 else "YawLeftButton"
-            sender.press(action, hold=hold)
-            return action, hold
-    else:
-        if abs(dy) > read.deadzone_px:
-            hold = _hold_for(abs(dy), read.ring_radius_px, gain_s_per_px,
-                             min_press, max_press)
-            action = "PitchDownButton" if dy > 0 else "PitchUpButton"
-            sender.press(action, hold=hold)
-            return action, hold
-    return None
 
 
 def _scoop_window_rate(samples: list, now: float,
@@ -1190,8 +395,8 @@ def step_scoop_refuel(
     poll_s: float = 0.5,
 ) -> bool:
     """Arrival pit stop (spec 2026-06-06-scoop-refuel-design, operator design
-    council-ratified): fly straight into the arrival star — the hyperspace
-    exit pose is already nose-into-star — until the ScoopingFuel flag shows,
+    council-ratified): fly straight into the arrival star â€” the hyperspace
+    exit pose is already nose-into-star â€” until the ScoopingFuel flag shows,
     keep closing until the observed rate hits `standoff_frac` of the equipped
     scoop's table max, then cut throttle and drink until full.
 
@@ -1210,7 +415,7 @@ def step_scoop_refuel(
     capacity = getattr(ship, "capacity_t", None) if ship is not None else None
     max_rate = getattr(ship, "scoop_max_rate_t_s", None) if ship is not None else None
     if not capacity or not max_rate:
-        # No Loadout seen, no scoop fitted, or unknown scoop module — never
+        # No Loadout seen, no scoop fitted, or unknown scoop module â€” never
         # guess a rate (g1).
         ctx.log("ScoopRefuelSkipped", {"reason": "no_ship_fuel_facts",
                                        "capacity": capacity,
@@ -1234,7 +439,7 @@ def step_scoop_refuel(
         return True
     # Stale-arrival gate (2026-06-07 council, the 11:57Z incident): the whole
     # step assumes the fresh-hyperspace-exit nose-into-star pose. A restart
-    # N minutes after FSDJump is pointed nowhere — flying it at the star is
+    # N minutes after FSDJump is pointed nowhere â€” flying it at the star is
     # the dive the gate exists to prevent. age is derived from the FSDJump
     # event's OWN journal timestamp (see _jump_age), so a stale restart reads
     # stale. None PROCEEDS: unknown age fails toward current working behavior
@@ -1279,7 +484,7 @@ def step_scoop_refuel(
 
     while True:
         if ctx.should_abort():
-            # Operator panic or smack-preempt: stop pressing keys NOW — the
+            # Operator panic or smack-preempt: stop pressing keys NOW â€” the
             # established in-step contract (no exit tap; on a smack the ship
             # is in normal space anyway, and on panic the operator owns it).
             return _finish("abort", ok=False, zero_throttle=False)
@@ -1326,7 +531,7 @@ def step_scoop_refuel(
             if not scooping and rate == 0.0:
                 if reapproached:
                     # Second stall: don't burn the rest of the budget parked
-                    # outside the band — fail out to the climb-out.
+                    # outside the band â€” fail out to the climb-out.
                     return _finish("stalled", ok=False)
                 ctx.log("ScoopStall", {"fuel": fuel})
                 if not step_set_throttle(ctx, pct=approach_pct):
@@ -1348,18 +553,6 @@ def step_scoop_refuel(
 # no step uses a wall-clock as a success/failure gate.
 
 
-def _dest_is_named_station(st: Any) -> bool:
-    """True iff Status.Destination is a locked BODY with a non-symbolic name —
-    the station the route-complete decision already identified. Used to confirm
-    a target press actually landed on the station (the T-then-fallback path)."""
-    dest = getattr(st, "destination", None) if st is not None else None
-    if dest is None:
-        return False
-    if getattr(dest, "body", 0) == 0:
-        return False                       # an FSD route hop / star, not a body
-    name = (getattr(dest, "name", "") or "").strip()
-    return bool(name) and not name.startswith("$")
-
 
 def step_dock_target_station(
     ctx: StepContext, *, settle_s: float = 0.4, verify_reads: int = 4,
@@ -1371,7 +564,7 @@ def step_dock_target_station(
     that the lock is the station (a named, non-star body). If T didn't land on
     the station (it wasn't aligned ahead), fall back to the Contacts nav-panel
     macro: selecting the station contact self-targets it. We reuse
-    request_docking for that selection walk — it ALSO targets the station, and
+    request_docking for that selection walk â€” it ALSO targets the station, and
     requesting out of range only earns a harmless DockingDenied(Distance) that
     step_dock_request handles, so running it here is safe.
 
@@ -1379,7 +572,7 @@ def step_dock_target_station(
     fallback, like the other macros)."""
     # ALREADY-LOCKED guard (2026-06-08 Robigo live test: "station WAS targeted,
     # first thing it did was untarget"). At a route terminus the station is
-    # ALREADY the locked Destination — dispatch_route_complete only runs the
+    # ALREADY the locked Destination â€” dispatch_route_complete only runs the
     # dock flow when it is. SelectTarget locks whatever is ahead of the reticle,
     # and the ship arrives nose-on to the arrival STAR, not the station, so a
     # blind T toggles the existing lock OFF. Check state FIRST and skip the press
@@ -1401,7 +594,7 @@ def step_dock_target_station(
         ctx.sleeper(settle_s)
     # T missed (the station wasn't aligned ahead) -> nav-panel Contacts
     # fallback. Selecting the station contact targets it; this is the same
-    # macro that requests docking, but we run only far enough to lock — the
+    # macro that requests docking, but we run only far enough to lock â€” the
     # full request macro is harmless here (out of range it just denies, and
     # step_dock_request gates on the no-fire zone before requesting anyway),
     # so we use the dedicated Contacts target path.
@@ -1431,7 +624,7 @@ def step_dock_sc_assist(ctx: StepContext, *, settle_s: float = 0.4,
     BodyType=Station.
 
     Gate "arrived at station" on SupercruiseExit (with status.in_supercruise
-    going False as the state fallback — the drop puts the ship in normal
+    going False as the state fallback â€” the drop puts the ship in normal
     space). `max_approach_s` is a FAIL backstop only (SC-assist transit can be
     minutes); the decision input is the event/flag, never the clock.
 
@@ -1476,10 +669,10 @@ def step_dock_approach(ctx: StepContext, *, approach_pct: int = 25,
     the 7.5km docking request range.
 
     After dock_sc_assist drops the ship, we are in normal space at a VARIABLE
-    distance (operator-confirmed ~10km, "not always the same") — always OUTSIDE
+    distance (operator-confirmed ~10km, "not always the same") â€” always OUTSIDE
     the 7.5km no-fire zone. There is no distance field in Status.json, so we
     CANNOT know when we hit exactly 7.5km from a counter. The ONLY signal is:
-      - PRIMARY: ReceiveText "$STATION_NoFireZone_entered;" — the station
+      - PRIMARY: ReceiveText "$STATION_NoFireZone_entered;" â€” the station
         broadcasts this the instant the ship crosses inside 7.5km (live-
         verified 2026-06-07 by the operator from his own journal).
         Dispatched into _no_fire_zone_entered by the FlowRunner and read here
@@ -1490,11 +683,11 @@ def step_dock_approach(ctx: StepContext, *, approach_pct: int = 25,
         the flag was set before we cleared it. We clear it on arm, so the ONLY
         way the flag can already be True is if the event arrived in the backlog
         catch-up between _clear_no_fire_zone and the first poll. This is the
-        "already in range on restart" edge case — proceed immediately.
+        "already in range on restart" edge case â€” proceed immediately.
 
     WHY normal-space throttle (not re-engaging SC-assist):
     SC-assist at station distance would try to fly OUT of normal space and
-    re-enter SC, then re-drop — making the approach far longer and
+    re-enter SC, then re-drop â€” making the approach far longer and
     re-introducing the same variable-dropout problem for another cycle. A
     normal-space throttle in the direction of the station (SC-assist drops you
     pointed at the station) is fast, simple, and terminates on the journal
@@ -1508,13 +701,13 @@ def step_dock_approach(ctx: StepContext, *, approach_pct: int = 25,
     RAM GUARD: 25% is the minimum throttle; the approach terminates the instant
     the in-range signal fires, so the window inside the zone is minimal before
     the request goes out and the ADC takes over. No manual deceleration is
-    needed — the stop is passive.
+    needed â€” the stop is passive.
 
     `max_approach_s` is a FAIL backstop only (house rule: never a success gate).
     Without event/status wiring (unit tests) the approach returns True (no-op).
     """
     # SCENE GUARD (2026-06-11 adversarial review): this is a NORMAL-SPACE
-    # closing leg — the no-fire-zone broadcast can only ever arrive in normal
+    # closing leg â€” the no-fire-zone broadcast can only ever arrive in normal
     # space, so running it in supercruise would burn 25% at nothing until the
     # watchdog. Reachable via the retry lane: a required fail BEFORE
     # dock_sc_assist (target/blind-maneuver/orient) retries from THIS step
@@ -1568,7 +761,7 @@ def step_dock_approach(ctx: StepContext, *, approach_pct: int = 25,
                     ctx.log("DockApproachDone", {"reason": "nfz_entered_event"})
                     in_range = True
                     break
-                # Some OTHER ReceiveText (NPC comms, mission update, etc.) —
+                # Some OTHER ReceiveText (NPC comms, mission update, etc.) â€”
                 # continue closing; poll the flag on the next loop iteration.
 
         if not in_range:
@@ -1589,7 +782,7 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.4,
     request macro and gates on the outcome:
       - DockingGranted -> True (the ADC takes over to the pad).
       - DockingDenied Reason=Distance -> False (step_dock_approach did not
-        close far enough — rare; re-approach via on_required_fail retry_from).
+        close far enough â€” rare; re-approach via on_required_fail retry_from).
       - DockingDenied any other reason -> False (bot cannot resolve
         NoSpace/TooLarge/Hostile/Offences; retries exhaust on_required_fail
         and then abort to human).
@@ -1604,7 +797,7 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.4,
     # a denial earned by THIS request. The dispatcher clears the stash on
     # grant/dock but not when a new request begins, and
     # step_dock_target_station's Contacts fallback deliberately runs the
-    # request macro out of range — earning a Distance denial that would
+    # request macro out of range â€” earning a Distance denial that would
     # otherwise false-fail this in-range request before its (latency-delayed)
     # grant arrives (B1/D1). Mirrors the dispatcher's clear-on-grant pattern.
     clear = getattr(ctx, "clear_docking_denied", None)
@@ -1618,7 +811,7 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.4,
     # Distance -> retryable fail; other denial -> a failed step that the
     # procedure's on_required_fail loop retries (3x) before aborting.
     # status.docked is the state fallback (the ADC may have already docked
-    # by the time we poll — event-gates-need-state-check).
+    # by the time we poll â€” event-gates-need-state-check).
     start = ctx.clock()
     while ctx.clock() - start <= max_wait_s:
         if ctx.should_abort():
@@ -1672,7 +865,7 @@ def step_dock_await_docked(ctx: StepContext, *, poll_s: float = 0.8,
     """Wait for the Advanced Docking Computer to land the ship on the pad.
 
     Gate on the Docked journal event, with status.docked (Status Flags bit 0)
-    as the state fallback — the ADC may have docked before this step's first
+    as the state fallback â€” the ADC may have docked before this step's first
     poll (event-gates-need-state-check: the flag may already be true with no
     fresh event). `max_wait_s` is a FAIL backstop only (the ADC's pad transit
     is queue-variable). Without event/status wiring the step passes."""
@@ -1702,7 +895,7 @@ def step_dock_await_docked(ctx: StepContext, *, poll_s: float = 0.8,
 
 # Starport Services icon row, post-Docked. The panel auto-opens on STARPORT
 # SERVICES with the top icon row (Refuel|Repair|Restock|Lower-ship) GRAYED for
-# ~2s after landing — a press-TIMING settle (NOT a success gate; documented as
+# ~2s after landing â€” a press-TIMING settle (NOT a success gate; documented as
 # such per house rule). Each service then fires ONE journal event carrying a
 # Cost, which we verify. Operator-walked nav from the panel default:
 #   W (UI_Up)  -> Refuel icon  -> Space (UI_Select) -> RefuelAll
@@ -1720,13 +913,13 @@ def step_station_services(ctx: StepContext, *, settle_s: float = 0.4,
                           verify_s: float = 8.0) -> bool:
     """Run the auto-opened Starport Services: refuel, repair, rearm.
 
-    The icon row is grayed ~2s after Docked — `services_settle_s` is a PRESS-
+    The icon row is grayed ~2s after Docked â€” `services_settle_s` is a PRESS-
     TIMING settle (it waits for the UI to become interactive), explicitly NOT
     a success/failure gate (house rule). Each service is verified by its OWN
     journal event (RefuelAll/RepairAll/BuyAmmo, each carrying a Cost): we
     press, then wait `verify_s` for that event. A service that does not fire
     its event is logged and the sequence CONTINUES (a full tank emits no
-    RefuelAll, a pristine hull no RepairAll — these are no-ops, not failures);
+    RefuelAll, a pristine hull no RepairAll â€” these are no-ops, not failures);
     the step succeeds as long as the macro ran. BEST-EFFORT by design: a
     terminus dock is complete with or without a paid service.
 
@@ -1734,7 +927,7 @@ def step_station_services(ctx: StepContext, *, settle_s: float = 0.4,
     if not _ensure_cockpit_focus_allow_panel(ctx):
         return False
     # Press-timing settle: let the grayed icon row become interactive. This is
-    # NOT a gate — there is no per-icon enabled flag in Status; the settle is
+    # NOT a gate â€” there is no per-icon enabled flag in Status; the settle is
     # the documented exception (a press-timing wait, then press-and-verify).
     ctx.sleeper(services_settle_s)
     ran_any = False
@@ -1769,12 +962,12 @@ def step_auto_launch(ctx: StepContext, *, settle_s: float = 0.4,
     operator spec 2026-06-09): read which docked-menu item is highlighted,
     SEEK the cursor onto AUTO LAUNCH (UI_Down from SERVICES above it, UI_Up
     from DISEMBARK below it), re-read to CONFIRM, and only then UI_Select.
-    FAIL CLOSED — without a confirmed AUTO_LAUNCH highlight the select is
+    FAIL CLOSED â€” without a confirmed AUTO_LAUNCH highlight the select is
     never pressed (a NONE read means the menu is not up / an unknown row; a
     blind select there is an unknown UI action). This exists because the
     cursor's home position is NOT guaranteed: the operator's live walk found
     AUTO LAUNCH one S from home, the post-services scene leaves it elsewhere,
-    and GuiFocus stays 0 throughout (the menu is invisible to Status) — the
+    and GuiFocus stays 0 throughout (the menu is invisible to Status) â€” the
     detector is the only confirmation possible.
 
     BLIND legacy path when the grabber is unwired (unit tests / CV
@@ -1782,7 +975,7 @@ def step_auto_launch(ctx: StepContext, *, settle_s: float = 0.4,
     operator-walked macro, unchanged.
 
     Undocked fires immediately on a good select; the docking computer then
-    flies the ship out. Completion (clear of the station) is QUEUE-VARIABLE —
+    flies the ship out. Completion (clear of the station) is QUEUE-VARIABLE â€”
     NEVER gated on a timer; the FsdMassLocked-clear gate in the next step owns
     'clear to jump'. Gate on the Undocked journal event, with status.docked
     going False as the state fallback (event-gates-need-state-check).
@@ -1796,7 +989,7 @@ def step_auto_launch(ctx: StepContext, *, settle_s: float = 0.4,
     if getattr(ctx, "station_menu_grabber", None) is not None:
         # CV-guided seek-and-confirm. Detector rows top->bottom:
         # SERVICES / AUTO_LAUNCH / DISEMBARK.
-        from ..vision.station_menu import AUTO_LAUNCH, DISEMBARK, SERVICES
+        from ed_vision.station_menu import AUTO_LAUNCH, DISEMBARK, SERVICES
         for _ in range(max(1, max_seek)):
             item = _read_menu_item(ctx)
             if item == AUTO_LAUNCH:
@@ -1882,7 +1075,7 @@ def step_dock_blind_maneuver(ctx: StepContext, *, burn_s: float = 7.0,
     2026-06-09, GATEWALK_TRIGGERS 'DOCK BLIND-MANEUVER' + REFERENCE_LOGIC
     '# destination reached'): at a station/carrier terminus the ship sits
     parked nose-on at the arrival star; before SC-assisting to the station,
-    pitch AWAY from the star (down — the spec says 'any random direction',
+    pitch AWAY from the star (down â€” the spec says 'any random direction',
     down is the fixed pick) then burn at 100% to put distance between hull
     and star. The same maneuver doubles as the SC-assist-disengaged recovery.
 
@@ -1890,13 +1083,13 @@ def step_dock_blind_maneuver(ctx: StepContext, *, burn_s: float = 7.0,
     (ship_sizes: L=7s / M=4s / S=3s, unknown -> 4s MEDIUM default, logged
     loudly so the operator sees the table miss). `pitch_override_s` > 0
     bypasses the table (procedure-file knob for live tuning). `burn_s` is the
-    operator's fixed 7s throttle leg. Both are TRAJECTORY-PACING durations —
-    blind by design, per spec — not success gates; the gates around this step
+    operator's fixed 7s throttle leg. Both are TRAJECTORY-PACING durations â€”
+    blind by design, per spec â€” not success gates; the gates around this step
     are dock_target_station (lock verified) before and dock_sc_assist
     (SupercruiseExit at the station) after.
 
     Refuses (fail closed) when status is wired and the ship is NOT in
-    supercruise — this maneuver only makes sense in the SC arrival scene.
+    supercruise â€” this maneuver only makes sense in the SC arrival scene.
     Leaves throttle at 100: orient_compass runs next while the ship coasts
     away (the arrival flow orients at full throttle the same way), and
     SC-assist takes speed control when engaged."""
@@ -1906,7 +1099,7 @@ def step_dock_blind_maneuver(ctx: StepContext, *, burn_s: float = 7.0,
         return False
     if not _ensure_cockpit_focus(ctx):
         return False
-    from ..ship_sizes import pitch_s_for_ship, size_for_ship
+    from ed_core.ship_sizes import pitch_s_for_ship, size_for_ship
     ship = ctx.ship_supplier()
     if pitch_override_s > 0:
         pitch_s = float(pitch_override_s)
@@ -1931,7 +1124,7 @@ def step_dock_blind_maneuver(ctx: StepContext, *, burn_s: float = 7.0,
 # ===================== DOCKED-MENU DETECTOR STEPS =======================
 # Two steps over vision.station_menu.detect_menu_item (the highlighted docked-
 # menu item read off the solid orange bar). NOT yet wired to dispatch triggers
-# (when undock/service actually fire in run_live) — that's a follow-up; these
+# (when undock/service actually fire in run_live) â€” that's a follow-up; these
 # just exist, are registered, and are callable. Both read the live menu via
 # ctx.station_menu_grabber and fail CLOSED when it is unwired.
 
@@ -1947,7 +1140,7 @@ _MENU_KEY_ACTION = {
     "S": "UI_Down",
 }
 
-# The docked-services pit-stop macro (operator spec — fire EVERY time on the pad
+# The docked-services pit-stop macro (operator spec â€” fire EVERY time on the pad
 # with the menu up; this OVERRIDES the council's verify-each-service flow). Blind
 # fixed sequence: W, SPACE, D, SPACE, D, SPACE, S with a full second between
 # EVERY keystroke (the panel's grayed-icon settle + cursor-move latency).
@@ -1962,13 +1155,13 @@ def _read_menu_item(ctx: StepContext) -> "str | None":
     if grab is None:
         return None
     try:
-        from ..vision.station_menu import NONE, detect_menu_item, region_rect
+        from ed_vision.station_menu import NONE, detect_menu_item, region_rect
         frame = grab()
         item = detect_menu_item(frame)
         # CV debug detail layer: outline the menu region with the verdict.
         # The station grabber is full-frame, so box the detector region (with
         # the matched row token as the label) rather than the whole screen.
-        from ..vision.debug_overlay import get_debug_sink
+        from ed_vision.debug_overlay import get_debug_sink
         sink = get_debug_sink()
         if sink is not None:
             h = getattr(frame, "shape", (0,))[0]
@@ -1977,7 +1170,7 @@ def _read_menu_item(ctx: StepContext) -> "str | None":
                          verdict=("miss" if item == NONE else "hit"),
                          label=f"station_menu {item}")
         return item
-    except Exception as e:  # noqa: BLE001 — a bad frame must not crash the step
+    except Exception as e:  # noqa: BLE001 â€” a bad frame must not crash the step
         ctx.log("MenuDetectError", {"err": type(e).__name__})
         return None
 
@@ -1985,7 +1178,7 @@ def _read_menu_item(ctx: StepContext) -> "str | None":
 def step_confirm_menu_item(ctx: StepContext, *, expected: str) -> bool:
     """UNDOCK SAFETY GATE: PASS only if the live docked menu's highlighted item
     is exactly `expected` (e.g. 'AUTO_LAUNCH' before pressing UI_Select to leave
-    the pad). FAIL CLOSED otherwise — wrong item, menu not up (NONE), or no
+    the pad). FAIL CLOSED otherwise â€” wrong item, menu not up (NONE), or no
     grabber wired. This never presses a key; it only reads + verifies, so a
     caller can gate the select press on it."""
     detected = _read_menu_item(ctx)
@@ -2007,19 +1200,19 @@ def step_station_services_macro(ctx: StepContext, *, keystroke_gap_s: float = 1.
     macro EVERY time, BLIND.
 
     `menu_settle_s` is the operator-specced post-Docked UI-materialize wait
-    ("WAIT 2 s for the services menu to fully materialize" — a press-timing
+    ("WAIT 2 s for the services menu to fully materialize" â€” a press-timing
     DURATION, not a success gate; the gate is DOCKED + the detector below).
 
-    ENTRY GATE: the docked menu must be up — detector != NONE, re-read up to
+    ENTRY GATE: the docked menu must be up â€” detector != NONE, re-read up to
     `menu_reads` times `keystroke_gap_s` apart (absorbs a slow menu fade-in;
     the DECISION input is the detector, never the clock). A NONE on every read
     (menu not up) or an unwired grabber fails closed (we never blind-fire a UI
     macro into an unknown scene). Then the fixed sequence W, SPACE, D, SPACE,
     D, SPACE, S is sent through self.sender (so NullSender logs every
     keystroke in tests / the gate-walk), with self.sleeper(keystroke_gap_s)
-    between EVERY keystroke. No per-key verification by design — that's the
+    between EVERY keystroke. No per-key verification by design â€” that's the
     whole point of the override."""
-    from ..vision.station_menu import NONE as MENU_NONE
+    from ed_vision.station_menu import NONE as MENU_NONE
     ctx.sleeper(menu_settle_s)
     detected = None
     for attempt in range(max(1, menu_reads)):
@@ -2051,7 +1244,7 @@ def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
     is NOT a desync to back out of here. Status unwired -> True (legacy)."""
     # Nothing to verify without status, and the panel auto-opens on Docked, so
     # we deliberately do NOT press UI_Back (that would close Services). Always
-    # proceed — the services macro starts from the auto-opened panel.
+    # proceed â€” the services macro starts from the auto-opened panel.
     return True
 
 
@@ -2062,262 +1255,47 @@ def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
 # scoop_refuel is deliberately NOT here: its taps are SetSpeed keys, no UI
 # panel state, and the watchdog must stay live through the whole scoop.
 # dock_target_station / dock_request / station_services drive blind multi-key
-# UI macros (nav panel Contacts, request-docking, Starport Services) — they
+# UI macros (nav panel Contacts, request-docking, Starport Services) â€” they
 # OWN input the same way sc_assist_orbit / nav_panel_target do. dock_sc_assist
 # also runs the SC-assist UI macro. dock_await_docked sends no keys (pure
 # wait) so it stays out.
 # body_tour is DELIBERATELY ABSENT from this set: the interpreter wraps the
 # WHOLE step in ctx.exclusive_guard() for any action in here, and the tour is
-# a multi-minute loop — a whole-step exclusive hold would freeze the heat
+# a multi-minute loop â€” a whole-step exclusive hold would freeze the heat
 # watchdog for the entire tour. step_body_tour instead self-guards each
 # per-body lock + each station-drop re-engage and RELEASES the guard during
 # the AutoScan wait + dwell, so the watchdog runs BETWEEN bodies (D6).
 # station_services_macro is the operator's blind W/SPACE/D/... pit-stop
-# sequence — a stray heatsink keypress mid-sequence would desync the panel
+# sequence â€” a stray heatsink keypress mid-sequence would desync the panel
 # cursor exactly like the other UI macros (2026-06-09 reviewer must-fix).
-# dock_blind_maneuver holds a multi-second pitch + burn — a concurrent
+# dock_blind_maneuver holds a multi-second pitch + burn â€” a concurrent
 # DeployHeatSink press mid-hold is harmless to the UI but the exclusive wrap
 # keeps the watchdog from interleaving with a deliberate blind trajectory.
 # confirm_menu_item stays OUT: it reads the screen and presses nothing.
-INPUT_EXCLUSIVE_ACTIONS = frozenset({
-    "sc_assist_orbit", "nav_panel_target",
-    "dock_target_station", "dock_sc_assist", "dock_approach", "dock_request",
-    "station_services", "auto_launch",
-    "station_services_macro", "dock_blind_maneuver",
-})
+# Actions that own input exclusively (the heat watchdog pauses for their
+# duration) are flagged at registration via register_step(.., input_exclusive=
+# True) in the block below; the merged core table accumulates them into
+# INPUT_EXCLUSIVE_ACTIONS. Set membership is byte-identical to the pre-reorg
+# frozenset: {sc_assist_orbit, nav_panel_target, dock_target_station,
+# dock_sc_assist, dock_approach, dock_request, station_services, auto_launch,
+# station_services_macro, dock_blind_maneuver}.
 
-def _body_tour_identity_target(ctx: StepContext, tried: set):
-    """IDENTITY targeting helper (task #45): read the NAVIGATION panel and return
-    the next UNEXPLORED in-system body — one not in the journal scanned-set and
-    not already tried this tour. Its `row_index` drives the nav-panel cursor
-    walk. Returns None when none remain. FAIL-OPEN: any read/OCR error (no
-    tesseract, bad frame, uncalibrated region) is logged and returns None, which
-    ends the tour and lets the jump resume — never raises into the loop."""
-    try:
-        from ..vision.navpanel_reader import next_unexplored
-        frame = ctx.nav_panel_grabber()
-        _, scanned = ctx.autoscan_supplier()
-        system = ctx.current_system_supplier()
-        bodies = ctx.nav_panel_reader.parse(frame, system)
-        return next_unexplored(bodies, set(scanned) | tried)
-    except Exception as e:  # fail-open: OCR/env/frame issues never block the jump
-        ctx.log("BodyTourReadFail", {"err": type(e).__name__})
-        return None
+# step_body_tour + _body_tour_identity_target live in ed_explore.steps_body_tour.
+# No longer re-exported here (Phase-1 reorg: sideways ed_autojump->ed_explore import removed).
 
 
-def step_body_tour(
-    ctx: StepContext, *,
-    settle_s: float = 0.4,
-    k_start: int = 1,                    # skip row 0 = just-orbited arrival star (criterion 2)
-    consecutive_nonbody_stop: int = 3,   # "past the bodies" heuristic
-    poll_s: float = 0.5,
-) -> bool:
-    """OPT-IN body tour (spec body_tour). Between arrival's star orbit and
-    target_next_route, SC-assist-orbit the arrival system's bodies one at a
-    time, each gated on ITS AutoScan, then fall through to the unchanged jump.
-
-    PURE-ORBIT MODEL (M1): SC-assist toward a BODY orbits it in supercruise —
-    no drop. The ship never leaves supercruise during the tour, so the resume
-    jump is always from supercruise (D7). The ONLY way the ship drops is if a
-    toured row turns out to be a STATION/POI (D2) — handled by re-engaging.
-
-    BEST-EFFORT, fail-open-to-jump: EVERY internal failure path returns True
-    (or advances a row). step_body_tour can NEVER return False, so the arrival
-    lane always reaches target_next_route -> engage_jump. The tour cannot
-    prevent the jump (mirrors sc_assist_orbit / scoop_refuel).
-
-    Caps/dwell/timeout/flag come from ctx (config single source of truth, the
-    widget_ring_enabled precedent); the arrival.toml step carries no params.
-    NOT in INPUT_EXCLUSIVE_ACTIONS — self-guards each per-body lock so the
-    heat watchdog runs between bodies (D6)."""
-    # 1. OFF short-circuit (criterion 1) — before ANY supplier read or keypress.
-    if not ctx.body_tour_enabled:
-        ctx.log("BodyTourSkipped", {"reason": "disabled"})
-        return True
-
-    # Fresh per-`with` context manager around each per-body macro (PD3): the
-    # guard is a FACTORY (ctx.exclusive_guard()), NOT a context manager itself.
-    def _excl():
-        return (ctx.exclusive_guard() if ctx.exclusive_guard is not None
-                else contextlib.nullcontext())
-
-    # 2. Advisory honk log (PD5) — read the latch, log it, NEVER block.
-    ctx.log("BodyTourFssState",
-            {"fss_discovered": ctx.fss_discovered_supplier()})
-
-    # 2b. MIN-BODY GATE (operator 2026-06-08): only tour a system whose honk
-    # BodyCount >= body_tour_min_bodies (0 = tour every system). Skips small
-    # systems so the tour fires only on substantial ones.
-    min_bodies = ctx.body_tour_min_bodies
-    if min_bodies > 0 and ctx.fss_body_count_supplier() < min_bodies:
-        ctx.log("BodyTourSkippedFewBodies",
-                {"body_count": ctx.fss_body_count_supplier(), "min": min_bodies})
-        return True
-
-    max_bodies = ctx.body_tour_max_bodies
-    max_rows = ctx.body_tour_max_rows
-    dwell_s = ctx.body_tour_dwell_s
-    orbit_timeout_s = ctx.body_tour_orbit_timeout_s
-
-    # IDENTITY mode (task #45): read the panel + target the next UNEXPLORED body
-    # by name when the reader+grabber are wired; else the legacy blind row walk.
-    identity_mode = (ctx.nav_panel_reader is not None
-                     and ctx.nav_panel_grabber is not None)
-    tried: set[str] = set()      # body names already attempted this tour (timed
-                                 # out or scanned) so identity selection advances
-                                 # instead of re-picking a stuck body forever.
-
-    row = k_start
-    bodies_toured = 0
-    consecutive_nonbody = 0
-    while True:
-        # ---- exhaustion / abort exits ------------------------------------
-        if ctx.should_abort():
-            ctx.log("BodyTourAborted", {"row": row})
-            return True
-        if row >= max_rows:
-            break
-        if bodies_toured >= max_bodies:
-            break
-        if consecutive_nonbody >= consecutive_nonbody_stop:
-            ctx.log("BodyTourNonBodyStop",
-                    {"row": row, "consecutive": consecutive_nonbody})
-            break
-
-        # ---- IDENTITY target selection (task #45) ------------------------
-        # Read the NAVIGATION panel, pick the next in-system body not yet in the
-        # scanned-set OR already tried this tour. None => no unexplored bodies
-        # left (clean end). Any read failure fails OPEN -> end tour, jump resumes.
-        if identity_mode:
-            target = _body_tour_identity_target(ctx, tried)
-            if target is None:
-                ctx.log("BodyTourNoUnexplored", {"toured": bodies_toured})
-                break
-            row = target.row_index
-            tried.add(target.name)
-            ctx.log("BodyTourTarget", {"row": row, "body": target.name})
-
-        # ---- snapshot latches BEFORE locking (mirrors target_next_route) --
-        seq0, seen0 = ctx.autoscan_supplier()
-        scex0 = ctx.scex_seq_supplier()
-        drop0 = ctx.drop_seq_supplier()
-
-        # ---- combined lock+engage (D3), guard wraps focus + macro (PD8) ---
-        with _excl():
-            if not _ensure_cockpit_focus(ctx):
-                ctx.log("BodyTourFocusFail", {"row": row})
-                return True                # focus desync -> end tour, jump resumes
-            try:
-                from ..executor.navpanel import engage_supercruise_assist_row
-                engage_supercruise_assist_row(
-                    ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s,
-                    row=row, pin_to_top=True, pin_hold_s=4.0)
-            except KeyError:
-                ctx.log("BodyTourBindMissing", {"row": row})
-                return True                # best-effort -> end tour, jump resumes
-        # guard RELEASED here -> heat watchdog runs during the gate + dwell.
-
-        # ---- first-row local-star identity skip (criterion 2 layer 2) -----
-        # Blind-walk only: identity mode already skips the scanned arrival star
-        # via the scanned-set cross-ref, and its `row` is a panel index, not the
-        # k_start cursor, so this positional skip must not fire there.
-        if not identity_mode and row == k_start:
-            st = ctx.status_supplier()
-            system = ctx.current_system_supplier()
-            if _destination_is_local_star(st, system) is True:
-                ctx.log("BodyTourSkipLocalStar", {"row": row, "system": system})
-                consecutive_nonbody += 1
-                row += 1
-                continue
-
-        # ---- per-body GATE (D1 + PD1 + PD6 + PD7) -------------------------
-        start = ctx.clock()
-        outcome = "timeout"
-        while True:
-            if ctx.should_abort():
-                outcome = "abort"
-                break
-            # PUMP the hub so _apply_state advances the latches. The waiter
-            # RETURN VALUE IS IGNORED — only the hub poll advances state
-            # (exactly how target_next_route pumps event_waiter). Unwired
-            # (unit tests) -> sleep, letting scripted suppliers advance.
-            if ctx.event_waiter is not None:
-                ctx.event_waiter("Scan", poll_s)
-            else:
-                ctx.sleeper(poll_s)
-            # PD7: the "dropped" outcome keys on SupercruiseExit, NOT the drop
-            # (the drop fires ~5s BEFORE the exit; re-engaging on the drop
-            # would no-op while still in SC, then the ship drops anyway).
-            if ctx.scex_seq_supplier() > scex0:
-                outcome = "dropped"
-                break
-            seq, seen = ctx.autoscan_supplier()
-            if seq > seq0:                  # PD6: ANY new AutoScan since snapshot (loose v1 gate)
-                outcome = "scanned"
-                break
-            if ctx.clock() - start > orbit_timeout_s:   # backstop ONLY
-                outcome = "timeout"
-                break
-
-        # ---- outcome handling --------------------------------------------
-        if outcome == "abort":
-            ctx.log("BodyTourAborted", {"row": row})
-            return True
-        if outcome == "scanned":
-            _, seen = ctx.autoscan_supplier()
-            new = seen - seen0
-            if not new:
-                # Already-seen body (e.g. the arrival star auto-scanned on
-                # hyperspace exit): not a fresh body, no dwell. De-dup (D5).
-                ctx.log("BodyTourAlreadySeen", {"row": row})
-                consecutive_nonbody += 1
-            else:
-                ctx.log("BodyTourBodyScanned",
-                        {"row": row, "new": sorted(new)})
-                bodies_toured += 1
-                consecutive_nonbody = 0
-                ctx.sleeper(dwell_s)        # pacing, NOT a gate
-        elif outcome == "dropped":
-            # Station/POI hit (M2/D2): SupercruiseExit fired -> the ship is
-            # NOW in real space. Re-engage SC inside the guard (PD8).
-            ctx.log("BodyTourStationDrop", {"row": row, "drop_seq": drop0})
-            with _excl():
-                ok = step_engage_supercruise(ctx, presses=3, between_press_s=8.0)
-            ctx.log("BodyTourReengage", {"ok": ok, "row": row})
-            if not ok:
-                # Stranded at a station; engage_jump's Status gate + the smack/
-                # preempt machinery own the abnormal scene. End the tour.
-                return True
-            consecutive_nonbody += 1        # station does NOT count a body
-        else:  # "timeout"
-            ctx.log("BodyTourBodyTimeout", {"row": row})
-            consecutive_nonbody += 1
-
-        row += 1
-
-    ctx.log("BodyTourComplete",
-            {"bodies_toured": bodies_toured, "rows_examined": row - k_start})
-    return True
-
-
-STEP_REGISTRY.update({
-    "sc_assist_orbit": step_sc_assist_orbit,
-    "nav_panel_target": step_nav_panel_target,
-    "orient_compass": step_orient_compass,
-    "pitch_compass": step_pitch_compass,
-    "hold_alignment": step_hold_alignment,
-    "orient_widget_ring": step_orient_widget_ring,
-    "scoop_refuel": step_scoop_refuel,
-    "body_tour": step_body_tour,
-    "dock_target_station": step_dock_target_station,
-    "dock_sc_assist": step_dock_sc_assist,
-    "dock_approach": step_dock_approach,
-    "dock_request": step_dock_request,
-    "dock_await_docked": step_dock_await_docked,
-    "station_services": step_station_services,
-    "auto_launch": step_auto_launch,
-    "wait_masslock_clear": step_wait_masslock_clear,
-    "confirm_menu_item": step_confirm_menu_item,
-    "station_services_macro": step_station_services_macro,
-    "dock_blind_maneuver": step_dock_blind_maneuver,
-})
+register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
+register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
+register_step("scoop_refuel", step_scoop_refuel)
+# body_tour is registered by ed_explore.steps_body_tour on import (surface #3).
+register_step("dock_target_station", step_dock_target_station, input_exclusive=True)
+register_step("dock_sc_assist", step_dock_sc_assist, input_exclusive=True)
+register_step("dock_approach", step_dock_approach, input_exclusive=True)
+register_step("dock_request", step_dock_request, input_exclusive=True)
+register_step("dock_await_docked", step_dock_await_docked)
+register_step("station_services", step_station_services, input_exclusive=True)
+register_step("auto_launch", step_auto_launch, input_exclusive=True)
+register_step("wait_masslock_clear", step_wait_masslock_clear)
+register_step("confirm_menu_item", step_confirm_menu_item)
+register_step("station_services_macro", step_station_services_macro, input_exclusive=True)
+register_step("dock_blind_maneuver", step_dock_blind_maneuver, input_exclusive=True)

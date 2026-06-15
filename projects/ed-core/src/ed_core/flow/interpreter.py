@@ -9,7 +9,8 @@ from typing import Any, Callable, Optional
 
 from .context import StepContext
 from .model import Procedure
-from .steps import INPUT_EXCLUSIVE_ACTIONS, STEP_REGISTRY
+# G12: read the MERGED core step table (surface #3), never a domain step module.
+from .step_registry import INPUT_EXCLUSIVE_ACTIONS, STEP_REGISTRY
 
 
 @dataclass

@@ -5,8 +5,8 @@ import types
 
 import pytest
 
-from ed_autojump.config import Config
-from ed_autojump.vision.capture import (
+from ed_core.config import Config
+from ed_vision.capture import (
     GdiGrabber,
     ScreenGrabber,
     _gdi_capture_box,

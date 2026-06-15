@@ -12,7 +12,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from ed_autojump.vision import navpanel_icons as ni
+from ed_vision import navpanel_icons as ni
 
 FIX = Path(__file__).resolve().parents[1] / "fixtures" / "navpanel"
 REGION = FIX / "tyriedgoea_kn-o_b47-1_region.png"   # 410x330 crop of the NAV list

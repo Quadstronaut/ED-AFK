@@ -38,10 +38,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ── locations (DECIDED — do not relocate) ───────────────────────────────────
+# ── locations ───────────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent                      # projects/ed-autojump
-DATA_DIR = PROJECT_ROOT / "data"
+# Phase-1 reorg: the receivetext catalog is a perception reference and now lives
+# with ed-vision (projects/ed-vision/src/ed_vision/data/). The harvest sidecar
+# state file stays alongside it.
+WORKSPACE_ROOT = PROJECT_ROOT.parent                  # projects/
+DATA_DIR = WORKSPACE_ROOT / "ed-vision" / "src" / "ed_vision" / "data"
 CATALOG_PATH = DATA_DIR / "receivetext_catalog.json"
 STATE_PATH = DATA_DIR / ".harvest_state.json"
 

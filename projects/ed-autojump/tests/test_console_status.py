@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from ed_autojump.console_status import ConsoleStatusWriter, OverlayTee
+from ed_core.console_status import ConsoleStatusWriter, OverlayTee
 
 
 # ---------------------------------------------------------------------------

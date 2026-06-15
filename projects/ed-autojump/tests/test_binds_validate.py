@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.binds_validate import (
+from ed_core.binds_validate import (
     REQUIRED_ACTIONS,
     BindsValidationError,
     validate_live_binds,
@@ -136,7 +136,7 @@ def test_shipped_live_binds_passes():
 
 def test_shipped_live_binds_has_split_fsd_keys():
     """The granular FSD split: Hyperspace=Key_K, Supercruise=Key_J."""
-    from ed_autojump.keys import parse_binds
+    from ed_core.keys import parse_binds
 
     binds = parse_binds(_REPO_BINDS)
     assert binds.get("Hyperspace").key == "Key_K"

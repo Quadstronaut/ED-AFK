@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 from ed_autojump.flow import StepContext, load_procedures, run_procedure
 from ed_autojump.flow.steps import step_orient_widget_ring
-from ed_autojump.vision.widget_ring import WidgetRingRead
-from ed_autojump.vision.compass import CompassRead
+from ed_vision.widget_ring import WidgetRingRead
+from ed_vision.compass import CompassRead
 from tests.flow import FakeSender
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"

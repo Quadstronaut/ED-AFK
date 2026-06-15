@@ -7,9 +7,9 @@ process dying. The interpreter now turns a step raise into a normal step
 failure; KeyboardInterrupt still propagates so panic/Ctrl+C work.
 """
 
-from ed_autojump.flow.context import StepContext
-from ed_autojump.flow.interpreter import run_procedure
-from ed_autojump.flow.model import Procedure, Step
+from ed_core.flow.context import StepContext
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.model import Procedure, Step
 
 
 def _ctx():

@@ -8,7 +8,7 @@ import types
 
 import pytest
 
-from ed_autojump.launcher.audio_wait import (
+from ed_core.launcher.audio_wait import (
     wait_for_ed_audio,
     _default_pycaw_probe,
     _peak_from_sessions,
@@ -224,7 +224,7 @@ def test_meter_probe_defaults_to_pycaw_probe_when_omitted(monkeypatch):
         calls.append(1)
         return None  # no session → drives the timeout path
     monkeypatch.setattr(
-        "ed_autojump.launcher.audio_wait._default_pycaw_probe", fake_default
+        "ed_core.launcher.audio_wait._default_pycaw_probe", fake_default
     )
     clock = _FakeClock()
     ok = wait_for_ed_audio(

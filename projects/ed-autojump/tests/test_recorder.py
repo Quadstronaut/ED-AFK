@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from ed_autojump.journal import parse_event
-from ed_autojump.recorder import Recorder, default_session_path
-from ed_autojump.state import State
+from ed_core.journal import parse_event
+from ed_core.recorder import Recorder, default_session_path
+from ed_core.state import State
 
 
 def _fixed_clock() -> datetime:

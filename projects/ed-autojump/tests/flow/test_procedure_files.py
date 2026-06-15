@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ed_autojump.flow.loader import load_procedures, validate_procedure
+from ed_core.flow.loader import load_procedures, validate_procedure
 from ed_autojump.flow.steps import STEP_REGISTRY
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"

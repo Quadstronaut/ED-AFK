@@ -11,8 +11,8 @@ A fake Results stands in for the real thing (its tensors expose the same
 
 import numpy as np
 
-from ed_autojump.vision.ultralytics_reader import _result_to_detections
-from ed_autojump.vision.yolo import decode_compass
+from ed_vision.ultralytics_reader import _result_to_detections
+from ed_vision.yolo import decode_compass
 
 NAMES = {0: "compass", 1: "navpoint", 2: "navpoint-behind"}
 

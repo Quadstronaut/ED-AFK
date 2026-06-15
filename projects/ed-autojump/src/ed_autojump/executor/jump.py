@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 from ..fsd.danger import is_dangerous
-from ..journal.events import FSDTarget
+from ed_core.journal.events import FSDTarget
 
 
 def should_refuse_target(

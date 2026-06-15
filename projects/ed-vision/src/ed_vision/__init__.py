@@ -1,4 +1,8 @@
 """
+ed-vision — pure perception for the ED-AFK bot. Bottom leaf of the workspace
+DAG: frames in, measurements out. Sends no keys, runs no maneuver, and imports
+nothing else in the workspace.
+
 Vision subsystem — reads the in-cockpit nav compass so the bot can orient
 the ship toward the next jump target before engaging the FSD.
 
@@ -25,3 +29,7 @@ require onnxruntime/opencv/dxcam. Heavy imports are deferred into the
 backends that need them, so a bot built without the [vision] extra still
 imports and runs (vision simply stays disabled).
 """
+
+from __future__ import annotations
+
+__version__ = "0.2.0"

@@ -8,9 +8,9 @@ skips_to target_next_route (the Robigo fast-resume path, unchanged).
 """
 from pathlib import Path
 
-from ed_autojump.flow.context import StepContext
-from ed_autojump.flow.interpreter import run_procedure
-from ed_autojump.flow.loader import load_procedures
+from ed_core.flow.context import StepContext
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.loader import load_procedures
 from tests.flow import FakeSender
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"

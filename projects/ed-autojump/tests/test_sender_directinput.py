@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from ed_autojump.keys import BindsFile, parse_binds, scancode_for
+from ed_core.keys import BindsFile, parse_binds, scancode_for
 
 
 # A binds preset with a vanilla key (J), a modifier-combo, and an extended
@@ -95,13 +95,13 @@ def test_constructor_raises_if_upstream_pydirectinput(monkeypatch):
     # NB: no scancode_keyDown attribute
     monkeypatch.setitem(sys.modules, "pydirectinput", bad)
     # Defer import to inside the test so the fake is in place first.
-    from ed_autojump.keys.sender import DirectInputSender
+    from ed_core.keys.sender import DirectInputSender
     with pytest.raises(RuntimeError, match="pydirectinput-rgx"):
         DirectInputSender(binds=None)
 
 
 def test_press_dispatches_scancode_in_correct_order(fake_pdi, tmp_path):
-    from ed_autojump.keys.sender import DirectInputSender
+    from ed_core.keys.sender import DirectInputSender
     s = DirectInputSender(binds=_binds(tmp_path))
     s.press("HyperSuperCombination", hold=0.0)
     # No modifier → just down then up of Key_J (0x24).
@@ -111,7 +111,7 @@ def test_press_dispatches_scancode_in_correct_order(fake_pdi, tmp_path):
 
 
 def test_press_with_modifier_orders_mod_outside_key(fake_pdi, tmp_path):
-    from ed_autojump.keys.sender import DirectInputSender
+    from ed_core.keys.sender import DirectInputSender
     s = DirectInputSender(binds=_binds(tmp_path))
     s.press("ActionWithMod", hold=0.0)
     # Order must be: mod down, key down, key up, mod up.
@@ -123,7 +123,7 @@ def test_press_with_modifier_orders_mod_outside_key(fake_pdi, tmp_path):
 
 
 def test_press_extended_key_wraps_in_scancode_sequence(fake_pdi, tmp_path):
-    from ed_autojump.keys.sender import DirectInputSender
+    from ed_core.keys.sender import DirectInputSender
     s = DirectInputSender(binds=_binds(tmp_path))
     s.press("ScrollMenuUp", hold=0.0)
     # Extended key (UpArrow) → both down and up args are [0xE0, 0x48].
@@ -136,7 +136,7 @@ def test_press_extended_key_wraps_in_scancode_sequence(fake_pdi, tmp_path):
 def test_press_raw_supports_arbitrary_scancode(fake_pdi):
     """For menu navigation — Enter (0x1C), Escape (0x01) — not in any
     binds, sender must still dispatch them on demand."""
-    from ed_autojump.keys.sender import DirectInputSender
+    from ed_core.keys.sender import DirectInputSender
     s = DirectInputSender(binds=None)
     s.press_raw(0x1C, hold=0.0)  # Enter
     assert fake_pdi.calls == [_PdiCall("down", 0x1C), _PdiCall("up", 0x1C)]
@@ -144,7 +144,7 @@ def test_press_raw_supports_arbitrary_scancode(fake_pdi):
 
 def test_press_raw_extended_wraps_scancode_sequence(fake_pdi):
     """Arrow keys, page-up/down, R-Ctrl/Alt — extended scancodes."""
-    from ed_autojump.keys.sender import DirectInputSender
+    from ed_core.keys.sender import DirectInputSender
     s = DirectInputSender(binds=None)
     s.press_raw(0x50, extended=True, hold=0.0)  # DownArrow
     assert fake_pdi.calls[0].arg == [0xE0, 0x50]
@@ -154,7 +154,7 @@ def test_press_raw_extended_wraps_scancode_sequence(fake_pdi):
 def test_release_all_replays_keyup_for_every_pressed(fake_pdi, tmp_path):
     """Emergency release — every key the sender has ever pressed must
     receive a keyUp, even if its press path already released it."""
-    from ed_autojump.keys.sender import DirectInputSender
+    from ed_core.keys.sender import DirectInputSender
     s = DirectInputSender(binds=_binds(tmp_path))
     s.press("HyperSuperCombination", hold=0.0)
     s.press("ScrollMenuUp", hold=0.0)
@@ -170,7 +170,7 @@ def test_release_all_replays_keyup_for_every_pressed(fake_pdi, tmp_path):
 
 def test_press_without_binds_raises_for_named_action(fake_pdi):
     """press(action_name) requires binds. press_raw(scancode) does not."""
-    from ed_autojump.keys.sender import DirectInputSender
+    from ed_core.keys.sender import DirectInputSender
     s = DirectInputSender(binds=None)
     with pytest.raises(RuntimeError, match="no binds"):
         s.press("HyperSuperCombination")
