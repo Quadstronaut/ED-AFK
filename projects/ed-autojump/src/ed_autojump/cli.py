@@ -225,6 +225,13 @@ def _parser() -> argparse.ArgumentParser:
     sub_navov.add_argument("--rows", type=int, default=12,
                            help="nav-list rows to scan/label (default 12)")
 
+    # ed-autojump cv-debug — LIVE context-aware CV overlay (reacts to the UI).
+    sub.add_parser(
+        "cv-debug",
+        help="live context-aware CV overlay: nav-panel boxes+labels when the "
+             "panel is open, compass/sun/widget when forward; logs UI changes",
+    )
+
     return p
 
 
@@ -500,8 +507,11 @@ def cmd_run(args) -> int:
     if console is not None:
         print("console: live status mirror ON (stdout)")
 
-    # CV debug boxes (DEFAULT ON, opt-out — operator directive 2026-06-13):
-    # always draw what every named grabber looks at, green hit / red miss.
+    # CV debug boxes (DEFAULT OFF, opt-in — operator directive 2026-06-14,
+    # supersedes the 2026-06-13 default-on rule). Opt in via the launcher VISION
+    # toggle, which persists ED_AUTOJUMP_OVERLAY_CV_DEBUG=1 to projects/
+    # ed-autojump/.env (local, gitignored); or cv_debug=true in config.local.toml.
+    # When on, draws what every named grabber looks at, green hit / red miss.
     # Registered globally so vision call sites find it. Fail-soft: needs EDMC.
     if edmc is not None and cfg.overlay.cv_debug:
         import os as _os
@@ -861,6 +871,13 @@ def cmd_navpanel_overlay(args) -> int:
     return run_navpanel_overlay(cfg, n_rows=args.rows)
 
 
+def cmd_cv_debug(args) -> int:
+    """Live context-aware CV overlay that reacts to the current UI (GuiFocus)."""
+    cfg = load_config(args.config if args.config.is_file() else None)
+    from .vision.debug_overlay import run_cv_debug
+    return run_cv_debug(cfg)
+
+
 def cmd_doctor(args) -> int:
     from .doctor import format_results, overall_status, run_all_checks
 
@@ -949,6 +966,7 @@ def main(argv: list[str] | None = None) -> int:
         "calibrate-compass": cmd_calibrate_compass,
         "calibrate-overlay": cmd_calibrate_overlay,
         "navpanel-overlay": cmd_navpanel_overlay,
+        "cv-debug": cmd_cv_debug,
     }
     return dispatch[cmd](args)
 
