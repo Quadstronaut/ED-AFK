@@ -187,8 +187,12 @@ $script:MainItems = @(
     @{ Key = 'quit';     Label = 'Quit';     Tag = '';         Live = $true }
 )
 
-# Settings rows. Only toggle/cycle/action/back are navigable; header/blank/soon
-# are decoration. RUN group is fully wired today; FEATURES is a placeholder.
+# Settings rows. Only toggle/envtoggle/cycle/action/back are navigable;
+# header/blank/soon are decoration. RUN + VISION groups are wired today;
+# FEATURES is still a placeholder.
+#   toggle    -> RUN flags; flow into Get-CliArgs (CLI args).
+#   envtoggle -> persistent config opt-in written to $ProjectRoot\.env via
+#                Set-DotEnvKey. NEVER touches Get-CliArgs. EnvKey names the var.
 $script:SettingsRows = @(
     @{ Kind = 'header'; Label = 'RUN' },
     @{ Kind = 'toggle'; Key = 'Monitor';   Label = 'Monitor-Only   (log only, no key presses)' },
@@ -197,8 +201,11 @@ $script:SettingsRows = @(
     @{ Kind = 'cycle';  Key = 'Duration';   Label = 'Duration' },
     @{ Kind = 'action'; Key = 'Calibrate'; Label = 'Calibrate compass (steering vision)' },
     @{ Kind = 'blank' },
+    @{ Kind = 'header'; Label = 'VISION' },
+    @{ Kind = 'envtoggle'; EnvKey = 'ED_AUTOJUMP_OVERLAY_CV_DEBUG'; Label = 'CV debug overlay (boxes + labels where the CV looks)' },
+    @{ Kind = 'blank' },
     @{ Kind = 'header'; Label = 'FEATURES' },
-    @{ Kind = 'soon';   Label = 'Ship / Script / Vision toggles' },
+    @{ Kind = 'soon';   Label = 'Ship / Script toggles' },
     @{ Kind = 'blank' },
     @{ Kind = 'back';   Label = 'Back to menu' }
 )
@@ -274,6 +281,94 @@ function Get-CliArgs([hashtable]$s) {
     if ([bool]$s.Record) { $a += "--record" }
     if ([bool]$s.LogVisited) { $a += "--visited-log" } else { $a += "--no-visited-log" }
     return , $a
+}
+
+# --- .env opt-in helpers (CV debug overlay) --------------------------------
+# The VISION toggle persists ED_AUTOJUMP_OVERLAY_CV_DEBUG into
+# $ProjectRoot\.env -- a local, gitignored file the bot's config loader reads
+# (_load_dotenv -> _apply_env_overrides). This NEVER flows through Get-CliArgs:
+# it is config, not a CLI flag. config.py's .env parser is mirrored exactly
+# below (KEY=VALUE, '#' comments, optional surrounding quotes; a REAL env var
+# of the same name WINS, matching the bot's "key not in environ" rule).
+
+function ConvertTo-EnvBool([string]$raw) {
+    # Mirror config.py: truthy {1,true,yes,on}, falsy {0,false,no,off}; anything
+    # else (or empty) -> $null so the caller can fall through to the next source.
+    if ($null -eq $raw) { return $null }
+    $v = $raw.Trim().Trim("'").Trim('"').ToLowerInvariant()
+    if ('1', 'true', 'yes', 'on' -contains $v) { return $true }
+    if ('0', 'false', 'no', 'off' -contains $v) { return $false }
+    return $null
+}
+
+function Get-DotEnvValue([string]$path, [string]$key) {
+    # First non-comment KEY=VALUE line whose key matches; else $null. Mirrors
+    # config.py _load_dotenv parsing (strip, skip blank/'#'/no-'=', partition on
+    # first '=', strip surrounding quotes).
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    foreach ($raw in [System.IO.File]::ReadAllLines($path)) {
+        $line = $raw.Trim()
+        if (-not $line) { continue }
+        if ($line.StartsWith('#')) { continue }
+        $eq = $line.IndexOf('=')
+        if ($eq -lt 1) { continue }
+        $k = $line.Substring(0, $eq).Trim()
+        if ($k -eq $key) {
+            $val = $line.Substring($eq + 1).Trim()
+            return $val.Trim("'").Trim('"')
+        }
+    }
+    return $null
+}
+
+function Get-CvDebugEnv([string]$projectRoot, [string]$key = 'ED_AUTOJUMP_OVERLAY_CV_DEBUG') {
+    # Effective state of the CV debug overlay opt-in, [bool]. Self-contained:
+    # the key name defaults inline so the helper has no module-scope dependency.
+    # Precedence (matches the bot): real env var > .env key > $false (default off).
+    $envRaw = [System.Environment]::GetEnvironmentVariable($key)
+    $fromEnv = ConvertTo-EnvBool $envRaw
+    if ($null -ne $fromEnv) { return $fromEnv }
+    $dotPath = Join-Path $projectRoot '.env'
+    $fromDot = ConvertTo-EnvBool (Get-DotEnvValue $dotPath $key)
+    if ($null -ne $fromDot) { return $fromDot }
+    return $false
+}
+
+function Set-DotEnvKey([string]$path, [string]$key, [string]$value) {
+    # Idempotently set KEY=value in a .env file: replace the FIRST non-comment
+    # line whose trimmed key equals $key, else append. Preserve every other line
+    # verbatim (comments, blanks, unrelated keys, order). Create the file if
+    # absent. Write UTF-8 with NO BOM (config.py reads UTF-8 -- a BOM would
+    # corrupt the first key). PS 5.1's Out-File/Set-Content default to UTF-16 or
+    # BOM'd UTF-8, so we use .NET WriteAllLines with a no-BOM UTF8Encoding.
+    $lines = @()
+    if (Test-Path -LiteralPath $path) {
+        $lines = @([System.IO.File]::ReadAllLines($path))
+    }
+    $newLine = "$key=$value"
+    $done = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        $trimmed = $line.Trim()
+        if (-not $trimmed) { continue }
+        if ($trimmed.StartsWith('#')) { continue }
+        $eq = $trimmed.IndexOf('=')
+        if ($eq -lt 1) { continue }
+        $k = $trimmed.Substring(0, $eq).Trim()
+        if ($k -eq $key) {
+            $lines[$i] = $newLine
+            $done = $true
+            break
+        }
+    }
+    if (-not $done) { $lines += $newLine }
+
+    $parent = Split-Path -Parent $path
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($path, [string[]]$lines, $utf8NoBom)
 }
 
 function Draw-Lines($lines, [int]$top, [int]$W) {
@@ -373,6 +468,12 @@ function Build-SettingsLines([int]$sel, [hashtable]$s, [bool]$vis, $nav) {
                 $box = if ([bool]$s[$r.Key]) { '[x]' } else { '[ ]' }
                 & $add ("    {0} {1}" -f $box, $r.Label) $sl $false
             }
+            'envtoggle' {
+                # Display the EFFECTIVE current value (real env var > .env > off).
+                $on = Get-CvDebugEnv $ProjectRoot
+                $box = if ($on) { '[x]' } else { '[ ]' }
+                & $add ("    {0} {1}" -f $box, $r.Label) $sl $false
+            }
             'cycle' {
                 $lab = $script:DurationPresets[$s.DurationIndex].Label
                 & $add ("    {0,-14} < {1} >" -f $r.Label, $lab) $sl $false
@@ -410,7 +511,7 @@ function Invoke-SettingsMenu([hashtable]$s, [bool]$visionOn) {
     $vis = $visionOn
     $nav = @()
     for ($i = 0; $i -lt $script:SettingsRows.Count; $i++) {
-        if ($script:SettingsRows[$i].Kind -in 'toggle', 'cycle', 'action', 'back') { $nav += $i }
+        if ($script:SettingsRows[$i].Kind -in 'toggle', 'envtoggle', 'cycle', 'action', 'back') { $nav += $i }
     }
     $sel = 0
     $W = [Math]::Min(70, [Console]::BufferWidth - 1)
@@ -437,6 +538,17 @@ function Invoke-SettingsMenu([hashtable]$s, [bool]$visionOn) {
 
         switch ($row.Kind) {
             'toggle' { $s[$row.Key] = -not [bool]$s[$row.Key] }
+            'envtoggle' {
+                # Flip the persistent .env opt-in. Read effective state, invert,
+                # write explicit =1 / =0 (=0 self-documents the opt-out). A real
+                # env var of the same name overrides what we wrote until cleared,
+                # so the redrawn box reflects the true effective value, not blindly
+                # what we just persisted.
+                $cur = Get-CvDebugEnv $ProjectRoot
+                $newVal = if ($cur) { '0' } else { '1' }
+                $dotPath = Join-Path $ProjectRoot '.env'
+                Set-DotEnvKey $dotPath $row.EnvKey $newVal
+            }
             'cycle' {
                 $n = $script:DurationPresets.Count
                 if ($do -eq 'dec') { $s.DurationIndex = ($s.DurationIndex - 1 + $n) % $n }
