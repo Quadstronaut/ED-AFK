@@ -402,3 +402,141 @@ def run_navpanel_overlay(cfg: Any, *, n_rows: int = 12,
         writer.close()
     print("done.")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# cv-debug — LIVE context-aware CV overlay (reacts to the current UI)
+# ---------------------------------------------------------------------------
+
+def run_cv_debug(cfg: Any, *, refresh_s: float = 0.4) -> int:
+    """LIVE context-aware CV debug overlay. Reads Status.json GuiFocus and draws
+    the relevant detector boxes for the CURRENT UI: nav-panel icon boxes+labels
+    (at the LOCATED icon positions) when the left/NAV panel is open; compass /
+    sun / widget regions when forward in the cockpit; station-menu at station
+    services. Logs every UI (GuiFocus) change. Read-only + fail-soft. Keep ELITE
+    foreground; press q to quit."""
+    ov = getattr(cfg, "overlay", None)
+    if ov is None or not getattr(ov, "enabled", False):
+        print("[overlay].enabled is false — enable the overlay first.")
+        return 1
+    try:
+        import keyboard
+    except Exception as e:  # noqa: BLE001
+        print(f"`keyboard` unavailable ({e})."); return 1
+
+    import json
+    import os
+    import cv2
+    import numpy as np
+    from ..overlay import OverlayWriter
+    from ..vision import navpanel_icons as ni
+    from ..vision.capture import ScreenGrabber
+
+    calib_dir = Path(os.path.expandvars(cfg.paths.calibration_dir))
+    win_w, win_h = tuple(cfg.cv.target_resolution)
+    transform = ScreenToOverlay.load(calib_dir, win_w, win_h)
+    backend = getattr(cfg.vision, "capture_backend", "gdi")
+    try:
+        grab = ScreenGrabber((0, 0, 0, 0), backend=backend).grab
+    except Exception as e:  # noqa: BLE001
+        print(f"capture unavailable ({e})."); return 1
+
+    status_path = Path(cfg.paths.journal_dir_expanded()) / "Status.json"
+
+    def gui_focus():
+        try:
+            return int(json.loads(status_path.read_text(encoding="utf-8")).get("GuiFocus", -1))
+        except Exception:  # noqa: BLE001
+            return -1
+
+    def _orange(a, lo=True):
+        b = a[:, :, 0].astype("int32"); g = a[:, :, 1].astype("int32"); r = a[:, :, 2].astype("int32")
+        if lo:
+            return (r > 100) & ((r - b) > 45) & ((r - g) > 10)
+        return (r > 120) & ((r - b) > 55) & ((r - g) > 15)
+
+    def nav_rows(f):
+        col = _orange(f[420:880, 1150:1300], lo=False).sum(axis=1)
+        ys = np.where(col > 3)[0]; out = []
+        if len(ys):
+            s = p = ys[0]
+            for y in ys[1:]:
+                if y - p > 6: out.append((s + p) // 2 + 420); s = y
+                p = y
+            out.append((s + p) // 2 + 420)
+        return out
+
+    def nav_icon_x(f, cy):
+        strip = (_orange(f[cy-15:cy+15, 488:790], lo=True).astype(np.uint8)) * 255
+        strip = cv2.morphologyEx(strip, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        n, _, stats, _ = cv2.connectedComponentsWithStats(strip, connectivity=8)
+        comps = sorted([tuple(stats[i]) for i in range(1, n) if stats[i][4] >= 45], key=lambda s: s[0])
+        for i, (x, y, w, h, area) in enumerate(comps):
+            if not (9 <= w <= 30 and 9 <= h <= 28):
+                continue
+            nxt = comps[i + 1][0] if i + 1 < len(comps) else 10**9
+            return 488 + x if nxt - (x + w) >= 6 else None
+        return None
+
+    writer = OverlayWriter(ov); writer.start()
+    print("connecting to EDMCOverlay...")
+    deadline = time.monotonic() + max(5.0, float(ov.connect_timeout_s))
+    while time.monotonic() < deadline and not writer.connected:
+        time.sleep(0.25)
+    if not writer.connected:
+        print("EDMCOverlay unreachable — is ED running + EDMCOverlay installed?")
+        writer.close(); return 1
+    sink = CvDebugSink(writer, transform, ttl_s=max(2.0, refresh_s * 5))
+
+    GUI = {0: "cockpit/forward", 1: "right (internal) panel", 2: "left/NAV (external) panel", 3: "comms",
+           4: "role", 5: "station services", 6: "galaxy map", 7: "system map",
+           8: "orrery", 9: "FSS", 10: "DSS", 11: "codex", -1: "?"}
+    print("LIVE context-aware CV debug. Navigate ED; q to quit.")
+    last_mode = last_gf = None
+    try:
+        while True:
+            if keyboard.is_pressed("q"):
+                break
+            gf = gui_focus()
+            frame = grab()
+            if frame is None:
+                time.sleep(refresh_s); continue
+            h, w = frame.shape[:2]
+            rows = nav_rows(frame)
+            if len(rows) >= 3:                            # NAV/left panel (content-detected)
+                mode = "nav-panel"
+                for j, cy in enumerate(rows):
+                    ix = nav_icon_x(frame, cy)
+                    if ix is None:
+                        continue
+                    v, sc = ni.classify_icon_scored(frame[cy-14:cy+15, ix-2:ix+28])
+                    verdict = "hit" if v == ni.STAR else None
+                    label = ("STAR" if v == ni.STAR else "obj") + f" {sc:.2f}"
+                    sink.box(f"nav{j}", (ix - 3, cy - 16, 32, 33), verdict=verdict, label=label)
+            elif gf == 5:                                 # station services
+                mode = "station-menu"
+                try:
+                    from ..vision import station_menu as sm
+                    sink.box("station_menu", sm.region_rect(h), verdict=None, label="station-menu")
+                except Exception:  # noqa: BLE001
+                    pass
+            else:                                          # cockpit / forward
+                mode = "forward"
+                reg = tuple(getattr(cfg.vision, "region", (0, 0, 0, 0)))
+                if reg != (0, 0, 0, 0):
+                    sink.box("compass", reg, verdict=None, label="compass")
+                wc = tuple(getattr(cfg.vision, "widget_crop", (0, 0, 0, 0)))
+                if wc != (0, 0, 0, 0):
+                    sink.box("widget", wc, verdict=None, label="widget")
+                sink.box("sun", (0, 0, w, int(2.0 / 3.0 * h)), verdict=None, label="sun")
+            if mode != last_mode or gf != last_gf:
+                extra = f" ({len(rows)} rows)" if mode == "nav-panel" else ""
+                print(f"  UI GuiFocus={gf} ({GUI.get(gf, '?')}) -> drawing {mode}{extra}", flush=True)
+                last_mode, last_gf = mode, gf
+            time.sleep(refresh_s)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        writer.close()
+    print("done.")
+    return 0
