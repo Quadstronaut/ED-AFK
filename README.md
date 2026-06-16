@@ -96,9 +96,10 @@ flowchart LR
 ```
 
 A live `FSDJump` event runs the `arrival` procedure; a fresh load sitting at a
-star runs `startup`; an emergency drop inside a star's exclusion zone
-(`SupercruiseExit` with `BodyType: Star`) runs `smack_recovery`; a route that
-ends at a station runs the `dock` lane. Replayed backlog events only update
+star runs `startup`; a forced too-close drop at a star or planet runs
+`smack_recovery` — but only when the HUD escape vector confirms a real smack
+(the entry is CV-gated and fails closed); a route that ends at a station runs
+the `dock` lane. Replayed backlog events only update
 state — they never press a key. The interpreter walks each procedure
 top-to-bottom, tracking per-step success, and any failed `required` step aborts
 the run **without ever throttling forward or jumping**.
@@ -129,18 +130,27 @@ The procedures shipped on `master` (all editable in
 
 - **`arrival`** — runs on every live `FSDJump`. Zero throttle, optional fuel
   pit-stop, lock the arrival star via the identity-verified nav-panel macro,
-  orbit with SC-assist to clear the geometry, lock the next route hop (with
-  danger-class verification), burn clear, coarse-orient via the nav compass,
-  fine-orient via the HUD widget ring, engage the jump, and hold alignment
-  through the FSD spool. Honk runs in parallel.
+  orbit with SC-assist to clear the geometry, optionally run the in-system
+  **autoexplore tour** (best-effort; inert until the nav-panel reader is
+  calibrated), lock the next route hop (with danger-class verification), burn
+  clear, coarse-orient via the nav compass, fine-orient via the HUD widget ring,
+  then the **StartJump-gated clearance loop**: press the jump and, if the FSD
+  reports the destination obscured (no `StartJump` fires), pitch off the
+  obstructing body and retry until it commits — this replaced the old blind
+  13 s "clear the star" wait and the separate hold-alignment step. Honk runs in
+  parallel.
 - **`startup`** — fresh load in normal space at a star: a direct-jump first try
   with a full SC-assist orbit recovery lane behind it.
 - **`sc_resume`** — fast resume when the ship is already in supercruise and
   clear of the star (no orbit get-around). *Note: this lane is the back end of
   open defect #2 below — it can throttle a nose-on-star ship into the star.*
-- **`smack_recovery`** — reflex escape after dropping inside a star's exclusion
-  zone: star astern, wait out the cooldown, ride the escape vector out, then
-  orient and jump. *Has an open pitch-flip defect (#3 below).*
+- **`smack_recovery`** — reflex escape after a forced too-close drop at a star
+  or planet. Entry is now **CV-gated and fail-closed**: a drop triggers recovery
+  only when the HUD escape vector confirms a real smack (blue = star, purple =
+  planet); a deliberate drop with no vector is left alone. The detector ships as
+  a stub that abstains until calibration frames land, so recovery does not
+  auto-fire today. The maneuver — body astern, wait the cooldown, ride the
+  escape vector out, orient, jump — still has an open pitch-flip defect (#3 below).
 - **`route_complete_park`** — park in a holding orbit at a route that ends at a
   system/star.
 - **`dock` / `dock_resume`** — the docking lane (target the station, SC-assist
@@ -189,10 +199,13 @@ startup / sc_resume / smack_recovery / route_complete_park), the docking lane
 Spansh route auto-plotting (`--route-plot`), and game launch via MinEdLauncher.
 The architecture is real and well-tested *offline*.
 
-**What is genuinely not built:** FSS (full-spectrum-scan) and DSS (detailed
-surface scan) remain framework stubs. The two older "phase status" tables that
-used to live in these READMEs are retired — they predate the docking work and
-under-described it.
+**What is genuinely not built / scaffolded:** FSS (full-spectrum-scan) and DSS
+(detailed surface scan) remain framework stubs. The new **in-system autoexplore**
+tour is built and wired best-effort into the arrival lane, but ships **inert** —
+it fails closed (sends no keys) until the nav-panel reader is calibrated against
+a real frame, and the four game-truth gaps it depends on are stubbed pending
+operator input. `ed-combat` and `ed-trading` are Phase-1 scaffolds that register
+nothing yet.
 
 **What is NOT live-tested:** large parts of the loop are unit- and
 replay-tested only. The fuel-scoop pit-stop (`scoop_refuel`) and several flows
@@ -211,9 +224,14 @@ unattended operation today.
    prevention) currently catches it.
 3. **`smack_recovery` can mis-flip.** The pitch-astern step has falsely reported
    "done" without actually flipping the ship, corrupting the escape sequence.
+   *Smack **determination** is now CV-gated and fail-closed (it no longer fires
+   on a benign drop), but the recovery **maneuver** itself is unchanged.*
 4. **Wall-clock gates remain** in `pitch_compass` (30 s) and `orient_widget_ring`
    (18 s), and `wait_cooldown_clear` is unbounded — reliability edges that
-   matter more for an unattended user than for a supervising hobbyist.
+   matter more for an unattended user than for a supervising hobbyist. *The blind
+   13 s "clear the star/station" waits in `arrival` and `dock_resume` are now
+   retired, replaced by the event-gated StartJump clearance loop; `sc_resume` and
+   `startup` still carry the old tail.*
 
 **Hard requirements and constraints:** Windows only; PC *Elite Dangerous:
 Odyssey* only (no console); the game must be running and in foreground focus;
@@ -238,12 +256,13 @@ the truth, not the pitch.
 
 | | Shipped (alpha, see caveats above) | Not built / future |
 |---|---|---|
-| **Flight** | A→B loop: arrive → honk → scoop → orient → jump | Hi-res near-realtime compass vision (smoother turns) |
-| **Safety** | Fail-closed jump gate (danger-class filter, status flags) | FSS keyboard sweep / FSS CV-assisted |
-| **Config** | Editable TOML procedures + step library | DSS 6-direction surface scan |
+| **Flight** | A→B loop: arrive → honk → scoop → orient → jump; StartJump-gated jump clearance (no blind waits) | Hi-res near-realtime compass vision (smoother turns) |
+| **Safety** | Fail-closed jump gate (danger-class filter, status flags); CV-gated star/planet smack determination | FSS keyboard sweep / FSS CV-assisted |
+| **Exploration** | In-system autoexplore tour — built + wired, **inert until calibrated** | DSS 6-direction surface scan |
+| **Config** | Editable TOML procedures + step library | |
 | **Docking** | `dock` / `dock_resume` lane — `dock_approach` merged; **not yet live-tested end-to-end** | Ships *without* SC-assist / Advanced Docking Computer |
 | **Routing** | Spansh auto-plotting (`--route-plot`) | |
-| **Launch** | Game launch via MinEdLauncher, menu navigation | |
+| **Launch** | Game launch via MinEdLauncher, menu navigation; self-healing venv | |
 
 ---
 
@@ -258,13 +277,20 @@ ED-AFK/
 │   ├── ACTION_MEGASHEET.md    <- authoritative per-step audit (gates, defects)
 │   ├── shared/                <- cross-tool reference (journal events, FSD, star classes)
 │   └── superpowers/specs/     <- design specs (incl. the procedure-interpreter design)
-└── projects/
-    └── ed-autojump/           <- first tool: the exploration harness
-        ├── LICENSE            <- AGPL-3.0 (the shippable distribution)
-        ├── config.toml        <- runtime config (vision region, nav knobs, ...)
-        ├── procedures/        <- the editable step-list TOML files live here
-        ├── src/ed_autojump/   <- journal/ status/ keys/ vision/ executor/ ...
-        └── tests/             <- offline unit + interpreter + procedure-validation tests
+└── projects/                 <- a layered workspace; the dependency DAG points
+    │                            strictly DOWN (ed-vision <- ed-core <- domains),
+    │                            enforced by a static import-edge gate
+    ├── ed-core/               <- engine: dispatcher, interpreter, step registry,
+    │                             boot-scene determination, shared flight primitives
+    ├── ed-vision/             <- pure perception (frames in, measurements out; no keys)
+    ├── ed-autojump/           <- the exploration harness (the shippable, AGPL-3.0 tool)
+    │   ├── LICENSE            <- AGPL-3.0 (the shippable distribution)
+    │   ├── config.toml        <- runtime config (vision region, nav knobs, ...)
+    │   ├── procedures/        <- the editable step-list TOML files live here
+    │   └── src/ed_autojump/   <- flow steps, CLI, the jump loop
+    ├── ed-explore/            <- in-system exploration (body tour + the autoexplore tour)
+    ├── ed-combat/             <- combat domain (Phase-1 scaffold)
+    └── ed-trading/            <- trading domain (Phase-1 scaffold)
 ```
 
 ---
