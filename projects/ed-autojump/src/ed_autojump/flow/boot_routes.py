@@ -293,6 +293,17 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
                 "reads": reads,
                 "station_found": is_station,
                 "station": station_name if is_station else None})
+        # A. StationSettleExhausted telemetry: cap-exhaust with no station found
+        # is a PARK (not a dock-promotion). Observability only — never gates an
+        # action. Guard on _should_abort() so a concurrent abort can't emit a
+        # false-positive exhaustion record (the real exit was abort, not settle).
+        if not is_station and not runner._should_abort():
+            if runner.record is not None:
+                runner.record("StationSettleExhausted", {
+                    "reads": reads,
+                    "settle_s": runner._route_complete_settle_s,
+                    "arrival_addr": arrival_addr,
+                })
 
     if is_station:
         # Run the real dock flow (procedures/dock.toml): approach under SC
@@ -375,24 +386,54 @@ def _route_sc_exit(runner: Any, ev: Any) -> Optional[str]:
 def _route_nav_route(runner: Any, ev: Any) -> Optional[str]:
     """Event route for NavRoute while docked (pit-stop resume).
 
-    PIT-STOP resume (station-dock feature): a NEW route plotted WHILE
-    docked means the station was a pit stop, not the terminus -- the
-    bot must launch and resume. Gate on a non-empty route (an empty
-    NavRoute is a clear, not a new plot). The _apply_state NavRoute
-    branch has already cached the new final waypoint; here we run the
-    resume procedure. Absent a new route, the bot stays docked (terminus).
+    PIT-STOP resume (station-dock feature): a NEW route plotted WHILE docked
+    means the station was a pit stop, not the terminus — the bot must launch
+    and resume. Gate on a non-empty route (an empty NavRoute is a clear, not
+    a new plot).
+
+    D5 SAME-SYSTEM GUARD: compares the second waypoint's system_address (int,
+    REQUIRED on NavRouteWaypoint per navroute.py:20) against the docked system
+    address (stored from the Docked event's SystemAddress field). If the first
+    onward hop is the SAME system as we are currently docked in, the route is
+    a re-plot to a same-system destination — suppress dock_resume to avoid a
+    needless relaunch. Guard fails OPEN (proceeds) when either address is None
+    (missing Docked.system_address or a single-waypoint route), preserving
+    today's relaunch behavior as the fail-safe.
+
+    Name comparison is NEVER used (empty string / procedural duplicate traps).
     """
     if not runner._docked:
         return None
     nr = runner._navroute_state()
     route = getattr(nr, "route", None) if nr is not None else None
-    if route:
-        if runner.record is not None:
-            runner.record("DockPitStopResume",
-                        {"station": runner._docked_station})
-        runner._run("dock_resume")
-        return "dock_resume"
-    return None
+    if not route:
+        return None
+
+    # D5: check second waypoint against docked system. route[0] IS the
+    # current system by NavRoute invariant; route[1] is the first actual hop.
+    # If len(route) <= 1 there is no onward hop — fall through to relaunch
+    # (empty or origin-only route won't fire target_next_route anyway).
+    if len(route) >= 2:
+        docked_addr = getattr(runner, "_docked_system_addr", None)
+        second_addr = getattr(route[1], "system_address", None)
+        # Guard: both addresses known AND they match => same-system re-plot.
+        # None on either side => fail open (relaunch, the safe default).
+        if (docked_addr is not None
+                and second_addr is not None
+                and second_addr == docked_addr):
+            if runner.record is not None:
+                runner.record("DockResumeSuppressed", {
+                    "reason": "same_system_replot",
+                    "docked_addr": docked_addr,
+                    "second_addr": second_addr,
+                })
+            return None
+
+    if runner.record is not None:
+        runner.record("DockPitStopResume",
+                    {"station": runner._docked_station})
+    runner._run("dock_resume")
+    return "dock_resume"
 
 
 # ---------------------------------------------------------------------------

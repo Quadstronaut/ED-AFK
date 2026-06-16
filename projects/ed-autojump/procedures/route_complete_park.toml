@@ -41,4 +41,10 @@ steps = [
   # Guarded SC-assist orbit (best-effort, fails closed on a bad scene). This is
   # the parked end state.
   { action = "sc_assist_orbit" },                    # macro  | 4 EXCLUSIVE — guarded SC-assist orbit
+  # Non-required ORBITING DESTINATION HUD confirm (D4). Returns False when the
+  # ed-vision hud_sc_indicators detector is not yet wired (D3 dependency not
+  # landed). required=false: a False is non-blocking — route_complete_park stays
+  # best-effort until fixtures are captured and the detector lands. When the
+  # grabber IS wired, a True logs RouteCompleteOrbitConfirmed (observability).
+  { action = "confirm_orbiting" },                   # vision | 5 non-required — D4 orbit confirm (D3-dependent)
 ]
