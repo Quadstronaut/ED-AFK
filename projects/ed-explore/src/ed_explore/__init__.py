@@ -25,3 +25,5 @@ def activate() -> None:
         return
     _activated = True
     from . import steps_body_tour as _bt  # noqa: F401 — registers body_tour step
+    from . import steps_explore as _se  # noqa: F401 — registers explore step
+    from . import steps_strand_recovery as _ssr  # noqa: F401 — registers station_strand_recovery step
