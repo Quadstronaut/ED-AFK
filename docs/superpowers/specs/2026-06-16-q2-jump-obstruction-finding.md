@@ -29,6 +29,12 @@ the station + arrival star (system: near SS Automotua / Shinrarta Dezhra area; t
       a real journal event, not a blind timer; reuses the existing pitch-star-off maneuver. No
       new CV strictly required (CV would make it faster/cleaner).
 
-Recommended: (b) as the ship-safe baseline (no CV dependency), with (a) as the optimization
-once the jump-ring detector is calibrated. Pin: `jump_obstructed_dashed_ring.png` (DASHED/obstructed
-class). STILL NEEDED: the SOLID/clear class frame (same widget, unobstructed target).
+**CHOSEN (operator-confirmed 2026-06-16): option (b), CV-free.** The operator named the clean
+simplification: the **absence of a `StartJump` event** after pressing jump IS the obstruction
+signal — no CV, no calibration. Loop: press jump → bounded-poll for `StartJump` → if it does NOT
+fire, pitch anti-star + fly clear a moment → retry → repeat until `StartJump` fires. The retry MUST
+move (pitch off the star), not re-press in place (operator: "if I didn't move it would still be
+obstructed"). Gates on a real journal event; reuses the existing pitch-star-off maneuver. No new CV.
+- **(a) the jump-ring CV is DEMOTED to a maybe-later optimization** (jump the instant the ring goes
+  solid vs over-flying). NOT needed for correctness; no SOLID/clear calibration frame is required.
+  `jump_obstructed_dashed_ring.png` kept as reference only.
