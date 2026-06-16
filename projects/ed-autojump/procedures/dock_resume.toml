@@ -38,9 +38,7 @@ steps = [
   # Normal route flow: lock the next system, clear, orient, jump.
   { action = "target_next_route", required = true },          # gated  | 3 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },                     # tap    | 4 burn
-  { action = "wait", s = 13.0 },                              # wait   | 5 clear the station — TRAJECTORY PACING, not a gate
-  { action = "orient_compass", required = true },             # vision | 6a coarse align to the hop
-  { action = "orient_widget_ring", required = true },         # vision | 6b fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },                # gated  | 7 FSD jump
-  { action = "hold_alignment", required = true },             # vision | 8 hold cone until StartJump — event/state-gated, no clock
+  { action = "orient_compass", required = true },             # vision | 5a coarse align to the hop
+  { action = "orient_widget_ring", required = true },         # vision | 5b fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump_clearance", required = true },      # gated  | 6 FSD jump + clearance loop (replaces wait@5 + engage_jump@7 + hold_alignment@8)
 ]

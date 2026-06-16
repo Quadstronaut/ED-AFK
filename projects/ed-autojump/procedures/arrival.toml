@@ -90,9 +90,7 @@ steps = [
   { action = "station_strand_recovery" },             # macro  | 5c PIN-C: wired strand-recovery after explore drop
   { action = "target_next_route", required = true },                # gated  | 6 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },           # tap    | 7 burn
-  { action = "wait", s = 13.0 },                    # wait   | 8 clear the star — TRAJECTORY PACING, not a gate
-  { action = "orient_compass", required = true },        # vision | 9a coarse align to the hop
-  { action = "orient_widget_ring", required = true },    # vision | 9b fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },           # gated  | 10 FSD jump
-  { action = "hold_alignment", required = true },        # vision | 11 hold cone until StartJump — event/state-gated, no clock
+  { action = "orient_compass", required = true },        # vision | 8a coarse align to the hop
+  { action = "orient_widget_ring", required = true },    # vision | 8b fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump_clearance", required = true }, # gated  | 9 FSD jump + clearance loop (replaces wait@8 + engage_jump@10 + hold_alignment@11)
 ]
