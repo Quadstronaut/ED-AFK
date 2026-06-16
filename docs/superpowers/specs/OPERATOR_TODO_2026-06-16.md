@@ -24,6 +24,20 @@ with a clear interface + a TODO marker; fill these and the stubs become live.
    escape vector PRESENT = smacked; color = body (blue=star, purple=planet); no vector = deliberate
    drop. Anything else that distinguishes a smack from a deliberate drop?
 
+## Smack — additional confirmations (LOW priority; safe defaults already coded, confirm when free)
+6. **Escape-vector PERSISTENCE (OQ1).** After a smack-drop completes, does the escape vector STAY on the
+   HUD/compass or clear? For how long / what clears it? Matters for restart-while-smacked: if it clears,
+   a cold restart can't CV-confirm a smack → it safely abstains (no auto-recovery). Default today = abstain
+   on restart (safe, but won't auto-recover a restart-while-smacked).
+7. **Planet-smack recovery mechanic (OQ6).** Does the existing STAR `smack_recovery` dance (nav-panel
+   row-0 lock → pitch-180 body-astern → FsdCooldown gate → escape-vector charge → 13s clear) work
+   UNCHANGED for a PLANET, or is any step star-specific? Default = reuse the star procedure for planets,
+   flagged as a risk until you confirm.
+8. **Planet preempt OK? (OQ5).** Widening the mid-scene smack-preempt to planets means a *deliberate*
+   planet drop will ABORT a live arrival/dock scene (re-dispatch then continues benign — no recovery).
+   Acceptable, or does a real planet-approach flow get disrupted? Default = wide preempt + narrow CV-gated
+   recovery (safe, but may briefly abort a benign planet scene).
+
 ## Already answered — thank you (no action)
 - Q2 jump obstruction: HUD-only, stars+planets block, stations don't. CV-free StartJump-loop chosen.
 - STARSMACK fires only on a real star-smack; planet-smack is the separate purple-vector case.
