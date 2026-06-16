@@ -1,22 +1,30 @@
 # OPERATOR TODO — game-truth gaps Operator fills (2026-06-16)
 
-These are the ONLY blockers between the autonomous councils and testable autoexploration.
-Everything else is being built tonight. NO answer was guessed — each gap below is STUBBED in code
-with a clear interface + a TODO marker; fill these and the stubs become live.
+All 4 councils LANDED (C1-C4) + the stale-editable fix. NO answer was guessed — every gap is STUBBED
+fail-closed with a TODO. Operator answered 1/2/3 on 2026-06-16 (applied below); only the FRAMES remain.
 
-## Autoexploration (unblocks the test you wanted)
-1. **Body KIND per nav-panel row (OPEN-3).** In the NAVIGATION tab list, can you tell a row's TYPE
-   *before* selecting it — an icon or text marking planet/moon/star (=ORBIT) vs station/outpost/POI/
-   nav-beacon/carrier (=DROP)? Or do you only learn the type after SC-assist (orbit vs drop)?
-   (Stub currently defaults every row to ORBIT-conservative.)
-2. **DROP-target visited signal.** When SC-assist DROPS you at a station/outpost/POI/nav-beacon
-   (a drop, not an orbit), which journal event fires? (SupercruiseDestinationDrop? ApproachSettlement?
-   Docked? ApproachBody?) — needed to mark drop-targets visited.
-3. **SET FILTERS GuiFocus.** Open the nav panel → SET FILTERS sub-screen, and tell me the Status.json
-   `GuiFocus` number there.
-4. **Nav-panel calibration frame.** A screenshot of the NAVIGATION tab with a few bodies listed
-   (ideally an UNEXPLORED system) — so I can calibrate the reader's region + row/column crops
-   (current region is an estimate, so reads are unreliable until calibrated).
+## Autoexploration
+
+### RESOLVED by Operator (2026-06-16) — applied as game-truth, not guessed
+1. **Body kind / selection (was OPEN-3).** The per-row marker is EXPLORED vs UNEXPLORED (unexplored =
+   a small box inside a hollow box), NOT a kind icon. Stars self-explore via the honk, so the tour
+   targets UNEXPLORED PLANETS/MOONS — all the ORBIT case. So `classify_kind -> ORBIT` (current default)
+   is CORRECT and the DROP branch is intentionally unused for autoexplore. Selection runs off the journal
+   scan-set (next_unexplored), which already skips honked stars. STUB-1 resolved (doc only, no behavior change).
+2. **DROP-target visited signal.** No special signal needed — SC-assist drops automatically at a targeted
+   station unless a body blocks the path (edge case); the journal shows `SupercruiseExit body_type = Station`
+   (vs Star). Claude scrapes the exact field from REAL logs (no guess). Secondary, since the tour is
+   planets/moons (ORBIT). STUB-2 direction set.
+3. **SET FILTERS GuiFocus.** There is NO special filter screen — it is part of the left/NAV panel,
+   GuiFocus = 2 (already known). FOLLOW-ON (code, not operator): the council's automated SET-FILTERS pass
+   (step_explore S0) is over-built — Operator sets nav filters manually; the bot just reads the panel. S0 must
+   be SIMPLIFIED so it does not perpetually self-block the tour (today S0 fails closed -> tour never runs).
+
+### REMAINING autoexplore blocker (operator — frames)
+4. **Nav-panel calibration frame.** One screenshot of the NAVIGATION tab with a few bodies listed (ideally
+   an UNEXPLORED system showing the box-in-hollow-box markers) — to calibrate the reader's region + row/
+   column crops. THE last blocker for the tour to actually run. Operator grabs one next time in-game (not
+   launching now). Until then the reader is calibration-pending and step_explore fail-closes (no keypresses).
 
 ## Smack (your correction)
 5. **Escape-vector frames** for `detect_escape_vector`: (a) a BLUE star-smack escape vector, (b) a
