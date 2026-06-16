@@ -4,6 +4,8 @@ Covers the primitives (PINs 1-7) + the 11 scene templates, with special
 attention to the two Stage-1 fixes applied to gen-opus-2 (council wf_10093608-303):
   FIX 1 — STARSMACK no longer leaks a smacked+cooldown-cleared ship to NO_ROUTE.
   FIX 2 — _event_name no longer trusts a .get() capability (SEC-4 spoof closed).
+  proc-field check — every template carries proc: str|None mirroring _STATE_TO_PROC;
+    no `act` attribute survives; the three run-state proc strings are exact.
 Exit 0 iff every check passes. Run with the workspace venv python.
 """
 from __future__ import annotations
@@ -22,7 +24,9 @@ from ed_core.boot.scenes import (
     DetermineContext,
     C_SERIES_SCENES,
     scene_for,
+    scene_by_state,
 )
+from ed_autojump.flow.boot_routes import _STATE_TO_PROC
 
 _fails: list[str] = []
 
@@ -109,12 +113,28 @@ check("poll: max_reads<=0 -> reads 0, matched False", r.reads == 0 and r.matched
 check("scenes: exactly 11 templates", len(C_SERIES_SCENES) == 11)
 check("scenes: one per state", {t.state for t in C_SERIES_SCENES} == set(CSeriesState))
 
-_raised = False
-try:
-    C_SERIES_SCENES[0].act()
-except NotImplementedError as exc:
-    _raised = "[Phase-2 CV/action pending]" in str(exc)
-check("scenes: act() raises NotImplementedError(Phase-2 marker)", _raised)
+# proc-field check: every template carries proc: str|None; no `act` attribute remains
+check("scenes: every template has proc attr (str|None)",
+      all(hasattr(t, "proc") and (t.proc is None or isinstance(t.proc, str))
+          for t in C_SERIES_SCENES))
+check("scenes: no template has act attr (fork-logic trap gone)",
+      all(not hasattr(t, "act") for t in C_SERIES_SCENES))
+check("scenes: module has no _act_pending",
+      not hasattr(__import__("ed_core.boot.scenes", fromlist=["_act_pending"]), "_act_pending"))
+check("scenes: module has no _PHASE2",
+      not hasattr(__import__("ed_core.boot.scenes", fromlist=["_PHASE2"]), "_PHASE2"))
+# proc mirrors the live _STATE_TO_PROC (T5 — cross-module conformance, INV8)
+_proc_mirror_ok = True
+for _state in CSeriesState:
+    _kind, _payload = _STATE_TO_PROC[_state]
+    _tmpl = scene_by_state(_state)
+    if _kind == "run":
+        if _tmpl is None or _tmpl.proc != _payload:
+            _proc_mirror_ok = False
+    else:
+        if _tmpl is None or _tmpl.proc is not None:
+            _proc_mirror_ok = False
+check("scenes: proc mirrors live _STATE_TO_PROC for all 11 states", _proc_mirror_ok)
 
 
 def ctx(**kw):
