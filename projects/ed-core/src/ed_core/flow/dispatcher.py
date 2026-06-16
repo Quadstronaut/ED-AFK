@@ -278,6 +278,13 @@ class FlowRunner:
         self._docking_denied_reason: Optional[str] = None
         self._docked: bool = False
         self._docked_station: Optional[str] = None
+        # D5 same-system replot guard (boot_routes._route_nav_route): the
+        # system_address of the station where the ship is docked. Sourced from
+        # the Docked event's SystemAddress field (Optional[int]). None when not
+        # docked or when the Docked event lacked the field (fleet carrier / edge
+        # mode). The guard in _route_nav_route fails OPEN on None -- today's
+        # relaunch behavior as the safe default.
+        self._docked_system_addr: Optional[int] = None
         # True once the station has broadcast "$STATION_NoFireZone_entered;"
         # via ReceiveText â€” the live-verified (2026-06-07 operator journal)
         # signal that the ship is inside the 7.5km docking request range.
@@ -659,6 +666,7 @@ class FlowRunner:
                 self._docked = True
                 self._docked_station = (
                     (getattr(ev, "station_name", "") or "").strip() or None)
+                self._docked_system_addr = getattr(ev, "system_address", None)  # D5 guard
             if name == "FSDJump":
                 # Stale-arrival instrument (2026-06-07 council): the FSDJump's
                 # OWN ISO8601 timestamp parsed to an AWARE-UTC datetime. Works
@@ -758,8 +766,10 @@ class FlowRunner:
             self._docked = True
             self._docking_denied_reason = None
             self._docked_station = (getattr(ev, "station_name", "") or "").strip() or None
+            self._docked_system_addr = getattr(ev, "system_address", None)  # D5 guard
         elif name == "Undocked":
             self._docked = False
+            self._docked_system_addr = None  # D5 guard: clear on departure
         elif name == "LoadGame":
             # Ship field is Optional[str] on LoadGame (absent in some modes).
             ship = getattr(ev, "ship", None)

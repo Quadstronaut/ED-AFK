@@ -1284,6 +1284,45 @@ def _ensure_cockpit_focus_allow_panel(ctx: StepContext) -> bool:
 # No longer re-exported here (Phase-1 reorg: sideways ed_autojump->ed_explore import removed).
 
 
+def step_confirm_orbiting(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
+    """Non-required observability step: confirm the ORBITING DESTINATION HUD
+    prompt is visible (SC-assist engaged and orbiting). Returns False when no
+    HUD grabber is wired (D3 dependency not yet landed — route_complete_park
+    stays best-effort). required=false so a False is non-blocking.
+
+    When the hud_grabber IS wired: match the 'ORBITING DESTINATION' center
+    prompt template from hud_sc_indicators.json. A match logs
+    RouteCompleteOrbitConfirmed; a miss logs RouteCompleteOrbitUnconfirmed.
+    Either way, returns the match result (False on miss/no-grabber, True on
+    confirmed). The procedure continues either way — this is observability only.
+
+    CONTRACT (round-2 pin): no grabber -> returns False (satisfiable test);
+    required=false -> False is non-blocking. Do NOT set required=true here."""
+    hud_grabber = getattr(ctx, "hud_grabber", None)
+    if hud_grabber is None:
+        ctx.log("RouteCompleteOrbitUnconfirmed",
+                {"reason": "no_hud_grabber"})
+        return False
+    # D3 dependency: hud_sc_indicators detector. When the ed-vision matcher
+    # lands (separate council), wire it here. Until then this branch is dead
+    # because hud_grabber stays None in the live context (_make_context does
+    # not inject it yet).
+    try:
+        frame = hud_grabber()
+        from ed_vision.hud_sc_indicators import detect_orbiting
+        found = detect_orbiting(frame)
+    except Exception as exc:  # noqa: BLE001 — grabber/detector errors must not abort
+        ctx.log("RouteCompleteOrbitUnconfirmed",
+                {"reason": "detector_error", "err": type(exc).__name__})
+        return False
+    if found:
+        ctx.log("RouteCompleteOrbitConfirmed", {})
+        return True
+    ctx.log("RouteCompleteOrbitUnconfirmed", {"reason": "hud_miss"})
+    return False
+
+
+register_step("confirm_orbiting", step_confirm_orbiting)
 register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
 register_step("scoop_refuel", step_scoop_refuel)
