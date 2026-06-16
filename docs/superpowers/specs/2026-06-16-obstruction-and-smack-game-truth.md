@@ -23,3 +23,13 @@ A "smack" = a FORCED drop from getting too close to a massive body (HUD `Droppin
   vector PRESENT = smacked; color = body type (BLUE=star, PURPLE=planet). A deliberate drop shows no
   escape vector. → needs a CV escape-vector detector (blue/purple) — **TODO: operator frames** (blue
   star-smack vector; purple planet-smack vector; a deliberate-drop no-vector case).
+
+## Hyperspace jump: after StartJump, STOP all input (FSD auto-aligns)
+Operator-provided 2026-06-16. **SYSTEM-TRANSITION (hyperspace jump) ONLY** — does NOT apply to the
+real-space -> supercruise transition. The moment the FSD begins spooling / counting down (the
+`StartJump` event), micro-adjustments are no longer needed: **ALL ship input may STOP once the jump
+has triggered, and the FSD AUTO-ALIGNS the ship to the destination before the jump.** Therefore any
+post-StartJump alignment steps (hold_alignment / orient after StartJump) on a HYPERSPACE jump are
+REDUNDANT — the flow should cease input at StartJump and let the FSD take over. Reinforces
+full-throttle-through-jump (never touch throttle after engaging). The SC-engage (supercruise entry)
+and in-SC maneuvers still need their own gating; this fact is the HYPERSPACE-jump leg only.
