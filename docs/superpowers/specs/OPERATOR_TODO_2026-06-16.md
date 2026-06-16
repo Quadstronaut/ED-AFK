@@ -38,6 +38,18 @@ with a clear interface + a TODO marker; fill these and the stubs become live.
    Acceptable, or does a real planet-approach flow get disrupted? Default = wide preempt + narrow CV-gated
    recovery (safe, but may briefly abort a benign planet scene).
 
+## Jump flow / clearance loop (C1) — confirmations (safe defaults coded)
+9. **Pitch direction to clear an obstruction (OQ2).** When a jump is obstructed and the bot pitches off
+   the blocking body to retry, which way? Default coded = pitch DOWN (your existing fixed pick). Does that
+   hold for a planet's dark side / a glaring star, or must it be body-aware?
+10. **Arrival "let orbit acquire" 13s wait (OQ3).** arrival.toml has a 13s settle AFTER sc-assist orbit
+    that is an orbit-ACQUISITION wait, not a jump-clearance wait. Killing it (per "kill the 13s waits") may
+    change when the next-hop target locks. I'm HOLDING this one's deletion pending your call — the genuine
+    jump-clearance 13s waits ARE being killed. Keep it, or is orbit-acquire reliably done sooner?
+11. **Scope: sc_resume.toml + startup.toml have the SAME blind-wait jump tail (OQ4).** Your kill list named
+    dock_resume + arrival only. Want the same clearance step in sc_resume + startup too (consistent), or
+    leave them? startup's tail has a retry_anchor (step 19) that needs careful re-homing if we touch it.
+
 ## Already answered — thank you (no action)
 - Q2 jump obstruction: HUD-only, stars+planets block, stations don't. CV-free StartJump-loop chosen.
 - STARSMACK fires only on a real star-smack; planet-smack is the separate purple-vector case.
