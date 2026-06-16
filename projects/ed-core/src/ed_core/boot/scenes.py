@@ -178,30 +178,37 @@ def _det_exploration(ctx: DetermineContext) -> bool:
     )
 
 
-def _det_starsmack(ctx: DetermineContext) -> Optional[bool]:
-    """Telemetry gate (smacked AND fsd_cooldown) enters STARSMACK.
+def _det_starsmack(ctx: DetermineContext) -> bool:
+    """A star-drop (SupercruiseExit BodyType=Star) enters STARSMACK.
 
-    The CV-confirm of "the drop was really at a star" (glare-robust — see
-    OPEN QUESTION 1 / memory smack-compass-glare) is Phase-2. When the
-    telemetry gate holds, we enter (True). When `smacked` is set but the
-    cooldown evidence is ABSENT, the star-vs-not decision needs CV we don't
-    have here -> return None (CV-pending, honest abstention, INV7). Clean
-    not-smacked -> False.
+    Telemetry CANNOT distinguish a smack from a deliberate star-drop — both are
+    SupercruiseExit BodyType=Star with no distinguishing journal or cooldown
+    signal (verified; see memory smack-journal-blind-vision-discriminator). So
+    the DETERMINATION enters STARSMACK on `smacked` alone (the necessary
+    telemetry trigger). The Phase-2 action uses the 'ALIGN WITH ESCAPE VECTOR'
+    CV to confirm a real smack and fail-closed to ARRIVAL when there is no
+    escape vector (a benign drop).
+
+    The cooldown bit is NOT gated on here: it is not a reliable discriminator
+    (both a smack and a deliberate drop set it briefly), and gating on it left a
+    None gap that leaked a smacked-but-cooldown-cleared ship to NO_ROUTE/idle
+    (the prior route_back defect). Returning a plain bool (never None) closes
+    that fallthrough; NO_ROUTE/PARKED/STARTUP also carry a `not smacked` guard
+    as defense-in-depth.
     """
-    if ctx.smacked and ctx.fsd_cooldown:
-        return True
-    if ctx.smacked and not ctx.fsd_cooldown:
-        return None  # CV-pending: cooldown cleared, need glare-robust CV
-    return False
+    return ctx.smacked
 
 
 def _det_no_route(ctx: DetermineContext) -> bool:
-    # Normal-space, empty route, exploration off: nothing to fly, never plotted.
+    # Normal-space, empty route, exploration off, NOT smacked: nothing to fly,
+    # never plotted. The `not smacked` guard keeps a smacked ship out of idle
+    # (STARSMACK owns it) even if scene priority is ever reordered.
     return (
         ctx.route_empty
         and not ctx.docked
         and not ctx.in_supercruise
         and not ctx.exploration_mode
+        and not ctx.smacked
     )
 
 
@@ -216,12 +223,14 @@ def _det_resume(ctx: DetermineContext) -> bool:
 
 
 def _det_parked(ctx: DetermineContext) -> bool:
-    # Terminal idle: empty route, not in SC, not docked, no divergence to chase.
+    # Terminal idle: empty route, not in SC, not docked, no divergence, NOT
+    # smacked (a smacked ship belongs in STARSMACK, never parked idle).
     return (
         ctx.route_empty
         and not ctx.in_supercruise
         and not ctx.docked
         and not ctx.diverged
+        and not ctx.smacked
     )
 
 
@@ -250,9 +259,9 @@ C_SERIES_SCENES: tuple[SceneTemplate, ...] = (
         state=CSeriesState.STARSMACK,
         determine=_det_starsmack,
         act=_act_pending,
-        gate="last SC drop = star + FSD cooldown (bit 18)",
-        action_sketch=f"{_PHASE2} align escape-vector dot, burn out",
-        fail_closed="ARRIVAL (cooldown cleared, no smack CV)",
+        gate="last SC drop = star (SupercruiseExit BodyType=Star)",
+        action_sketch=f"{_PHASE2} confirm escape-vector CV, align dot, burn out",
+        fail_closed="ARRIVAL (escape-vector CV negative -> benign drop)",
     ),
     SceneTemplate(
         state=CSeriesState.ARRIVAL,

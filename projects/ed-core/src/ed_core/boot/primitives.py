@@ -27,7 +27,7 @@ from typing import Any, Callable, Iterable, Optional
 class PollResult:
     """Outcome of a bounded poll (LP3).
 
-    The four terminal conditions are mutually distinguishable:
+    The terminal conditions are mutually distinguishable:
       - matched=True                          -> predicate fired (value set)
       - aborted=True, reads=0                  -> abort before the first read
       - aborted=True, reads>0                  -> abort after some reads
@@ -108,34 +108,25 @@ def _event_name(ev: Any) -> Optional[str]:
     """Resolve a journal event's NAME from data — dict OR typed model (PIN 3).
 
     Resolution order, data-only:
-      1. dict-like: ev['event'] / ev.get('event')   (raw journal line)
-      2. typed model: ev.event attribute            (parse_event() output)
+      1. raw dict (journal line):  ev['event']
+      2. typed model:              ev.event attribute
 
-    NEVER type(ev).__name__: a class literally named `FSDJump` exists in
-    ed_core.journal.events. A name-from-type path lets an instance of that class
-    with event=None spoof a ghost arrival. We read the DATA, so a typed FSDJump
-    whose .event is None resolves to None and does NOT count. A real typed
-    FSDJump has the Literal["FSDJump"] .event and counts.
+    Exactly the spec's "typed model OR raw dict" contract — no wider capability
+    trust. An arbitrary object that merely exposes a `.get('event')` method (a
+    Mock, a non-dict mapping) is NOT treated as a journal line (closes the SEC-4
+    spoof). And NEVER type(ev).__name__: a class literally named `FSDJump` exists
+    in ed_core.journal.events; we read the .event DATA (not the type name), so a
+    ghost FSDJump whose .event is None resolves to None and does NOT count. A
+    real typed FSDJump carries the Literal["FSDJump"] .event and counts.
 
     Returns None when no event name is present in the data.
     """
-    # 1. Mapping / dict-like (raw journal line). Check by capability, not type,
-    #    so dict subclasses and other mappings work too.
+    # 1. Raw dict journal line (isinstance covers dict subclasses too).
     if isinstance(ev, dict):
         name = ev.get("event")
         return name if isinstance(name, str) and name else None
-    get = getattr(ev, "get", None)
-    if callable(get):
-        try:
-            name = get("event")
-        except (TypeError, KeyError):
-            name = None
-        if isinstance(name, str) and name:
-            return name
-        # fall through: object exposes .get but no usable 'event' key
 
-    # 2. Typed model attribute. This is a DATA read (the value of the .event
-    #    field), NOT type(ev).__name__. A ghost FSDFump(event=None) -> None.
+    # 2. Typed model attribute — a DATA read of .event, NOT type(ev).__name__.
     name = getattr(ev, "event", None)
     return name if isinstance(name, str) and name else None
 
