@@ -14,6 +14,8 @@ from typing import Any, Optional
 
 from ed_core.flow.dispatcher import _CLEAR_JOIN_WINDOW_S
 from ed_core.flow.registry import register_classifier_rule, register_event_route
+from ed_core.boot.scenes import DetermineContext, scene_for, CSeriesState
+from ed_core.boot.primitives import ArrivalLatch, fsd_cooldown_blocked
 
 _activated = False
 
@@ -42,21 +44,108 @@ def _is_parked_terminal(runner: Any, st: Any) -> bool:
     return _destination_is_local_star(st, runner._current_system) is True
 
 # ---------------------------------------------------------------------------
+# C-series determination layer — new helpers (E1)
+# ---------------------------------------------------------------------------
+
+# _ensure_latch: lazy runner attribute — no FlowRunner.__init__ edit needed.
+# Explicit None-check (not `getattr(...) or ArrivalLatch()`) avoids a false-y
+# trap if ArrivalLatch ever defines __bool__.
+def _ensure_latch(runner: Any) -> ArrivalLatch:
+    latch = getattr(runner, "_arrival_latch", None)
+    if latch is None:
+        latch = ArrivalLatch()
+        runner._arrival_latch = latch
+    return latch
+
+
+def build_determine_context(runner: Any) -> DetermineContext:
+    """Bind runner telemetry into a DetermineContext for scene_for.
+
+    st is read ONCE and reused for both status= and fsd_cooldown= — closes
+    a torn-read on a single-threaded loop. events=() always: no events buffer
+    exists (LBF1), so reconstruct_arrival_from_journal(()) == False and
+    _det_arrival is always False from telemetry; ARRIVAL is latch-driven only.
+    """
+    st = runner._latest_status
+    nr = runner._navroute_state()
+    route = getattr(nr, "route", None) if nr is not None else None
+    return DetermineContext(
+        status=st,
+        events=(),                                       # EMPTY — no events buffer (LBF1/AC11)
+        route_empty=not bool(route),                     # None / [] -> True
+        arrival_latch=_ensure_latch(runner),             # SAME instance E3 arms
+        exploration_mode=bool(getattr(runner, "_exploration_mode", False)),
+        fsd_cooldown=fsd_cooldown_blocked(st),           # reads same st, not runner._latest_status
+        smacked=bool(runner._smacked),
+        paused=bool(getattr(runner, "_paused", False)),
+        diverged=bool(getattr(runner, "_diverged", False)),
+    )
+
+
+def _idle_side_effect(runner: Any, state: CSeriesState, label: Any) -> None:
+    """Emit the named idle record/overlay for idle-mapped C-series states.
+
+    DOCKED: noop (legacy 'nothing to escape', returns None with no side-effect).
+    PARKED: record ParkedIdleNormalSpace — DISTINCT from the in-SC legacy
+            RouteCompleteIdleOnRestart (AC6/PIN 1).
+    NO_ROUTE: reproduce legacy lines verbatim (record + fail-soft overlay).
+    """
+    if state is CSeriesState.DOCKED:
+        return                                           # noop — legacy 'nothing to escape'
+    if state is CSeriesState.PARKED:
+        if runner.record is not None:
+            runner.record("ParkedIdleNormalSpace",       # PIN 1 — NOT RouteCompleteIdleOnRestart
+                          {"system": runner._current_system})
+        return
+    if state is CSeriesState.NO_ROUTE:
+        if runner.record is not None:
+            runner.record("NoRouteOnStartup", {"system": runner._current_system})
+        if runner.overlay is not None:
+            try:
+                runner.overlay.event("[NO ROUTE] Plot a route and relaunch")
+                runner.overlay.status("No route plotted. Idle.")
+            except Exception:                            # noqa: BLE001 — overlay is fail-soft
+                pass
+        return
+
+
+# Total, frozen scene->action mapping. Asserted total at import (AC3).
+# Three value kinds:
+#   ("run",      "<proc>")  -> runner._run(proc); return proc  [per-state guards apply]
+#   ("idle",     <label>)   -> _idle_side_effect then return None
+#   ("fallback", None)      -> _classify_startup_legacy(runner, st)
+_STATE_TO_PROC: dict[CSeriesState, tuple] = {
+    CSeriesState.STARTUP:     ("run",      "startup"),
+    CSeriesState.STARSMACK:   ("run",      "smack_recovery"),   # GUARDED: AND fsd_cooldown (AC7)
+    CSeriesState.ARRIVAL:     ("run",      "arrival"),          # GUARDED: A-LATCH consume (AC4)
+    CSeriesState.DOCKED:      ("idle",     None),               # noop — no record/overlay
+    CSeriesState.PARKED:      ("idle",     "ParkedIdleNormalSpace"),
+    CSeriesState.NO_ROUTE:    ("idle",     "NoRouteOnStartup"),
+    CSeriesState.TRAVERSAL:   ("fallback", None),               # Robigo fast-resume guard (AC8)
+    CSeriesState.REFUEL:      ("fallback", None),
+    CSeriesState.EXPLORATION: ("fallback", None),
+    CSeriesState.PAUSE:       ("fallback", None),
+    CSeriesState.RESUME:      ("fallback", None),
+}
+assert set(_STATE_TO_PROC) == set(CSeriesState), \
+    "_STATE_TO_PROC must be total over all CSeriesState"
+
+# ---------------------------------------------------------------------------
 # Boot classifier (surface #1)
 # ---------------------------------------------------------------------------
 
-def classify_startup(runner: Any) -> Optional[str]:
-    """Classify the current boot state and return a procedure name, or None.
+def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
+    """Legacy cold-start classifier — verbatim body of the original
+    classify_startup, minus the hoisted prologue (_startup_done guard, st read,
+    st-None guard, _startup_done=True). Those four lines live in the new
+    classify_startup front-end and must NOT be duplicated here.
 
-    Converted from FlowRunner._maybe_startup; 'self' -> 'runner' throughout.
-    FRESH_ARRIVAL_WINDOW_S kept as a local constant per spec (A2 B1 check).
+    st is a parameter: the caller already read runner._latest_status once;
+    legacy does not re-read it (no torn-read, no double-consume).
+
+    FRESH_ARRIVAL_WINDOW_S=30.0 is the sole arrival-vs-sc_resume discriminator
+    and survives ONLY here — it is removed from the primary C-series path (AC8).
     """
-    if runner._startup_done:
-        return None
-    st = runner._latest_status
-    if st is None:
-        return None
-    runner._startup_done = True
     if getattr(st, "docked", False):
         return None  # docked on load -> nothing to escape
     if getattr(st, "in_supercruise", False):
@@ -157,6 +246,54 @@ def classify_startup(runner: Any) -> Optional[str]:
         return None
     runner._run("startup")
     return "startup"
+
+
+def classify_startup(runner: Any) -> Optional[str]:
+    """C-series front-end classifier. Routes via scene_for + _STATE_TO_PROC,
+    falls back to _classify_startup_legacy on any abstention or exception.
+
+    Hoisted prologue (one-shot guard + st read) is shared with legacy: legacy
+    receives st as a parameter and does NOT re-set _startup_done (AC9/PIN-SHOT).
+    The try/except ship-safety guard ensures any exception in the new path
+    degrades to legacy behavior and never crash-parks the live loop.
+    """
+    if runner._startup_done:                             # PRESERVED one-shot guard
+        return None
+    st = runner._latest_status
+    if st is None:                                       # PRESERVED: no status -> wait
+        return None
+    runner._startup_done = True                          # PIN-SHOT: consume on EVERY path
+
+    try:
+        ctx = build_determine_context(runner)            # E1
+        tmpl = scene_for(ctx)                            # None or a SceneTemplate
+        if tmpl is None:
+            return _classify_startup_legacy(runner, st)  # no scene -> legacy
+        kind, payload = _STATE_TO_PROC[tmpl.state]       # total -> no KeyError (AC3)
+        if kind == "fallback":
+            return _classify_startup_legacy(runner, st)
+        if kind == "idle":
+            _idle_side_effect(runner, tmpl.state, payload)
+            return None
+        # kind == "run" — per-state primary-path guards
+        if tmpl.state is CSeriesState.ARRIVAL:
+            if not _ensure_latch(runner).consume():      # A-LATCH: live-armed-only (AC4/AC5)
+                return _classify_startup_legacy(runner, st)
+        if tmpl.state is CSeriesState.STARSMACK:
+            if not fsd_cooldown_blocked(st):             # PIN 4: keep legacy AND-cooldown (AC7)
+                return _classify_startup_legacy(runner, st)
+        runner._run(payload)
+        return payload
+    except Exception as exc:                             # noqa: BLE001
+        # Ship-safety: any exception in the new path falls back to legacy.
+        # Never crash-park the live loop on a determination error.
+        try:
+            if runner.record is not None:
+                runner.record("ClassifyStartupDeterminationError",
+                              {"error": repr(exc)})
+        except Exception:                                # noqa: BLE001
+            pass
+        return _classify_startup_legacy(runner, st)
 
 # ---------------------------------------------------------------------------
 # Event route helpers (surface #2)
@@ -352,6 +489,7 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
 def _route_fsd_jump(runner: Any, ev: Any) -> Optional[str]:
     """Event route for FSDJump."""
     runner._jumps += 1
+    _ensure_latch(runner).arm()                          # E3: LP1 — live FSDJump IS the arrival
     if runner.overlay is not None:
         system = getattr(ev, "star_system", None) or getattr(ev, "StarSystem", None)
         try:
