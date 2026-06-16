@@ -275,10 +275,35 @@ def bounded_poll(
     )
 
 
+# ---------------------------------------------------------------------------
+# Smack determination — escape-vector token -> body kind (INV3 mapping)
+# ---------------------------------------------------------------------------
+
+def classify_smack(vector_token: str) -> Optional[str]:
+    """Map an escape-vector CV token to a smack body kind, or None to ABSTAIN.
+
+    This is the ONLY place the color-to-body mapping is encoded (INV3):
+      'blue'   -> 'star'    (blue escape vector  => star-smack)
+      'purple' -> 'planet'  (purple escape vector => planet-smack)
+      'none'   -> None      (no vector => deliberate drop, NOT a smack)
+      anything else -> None (unknown token => fail-closed abstain, INV9)
+
+    Total and fail-closed: every possible input returns a value (never raises).
+    A None return means 'do not recover' — the caller must NOT dispatch
+    smack_recovery when this returns None.
+    """
+    if vector_token == "blue":
+        return "star"
+    if vector_token == "purple":
+        return "planet"
+    return None   # "none", unknown, or anything else -> abstain
+
+
 __all__ = [
     "PollResult",
     "ArrivalLatch",
     "reconstruct_arrival_from_journal",
     "fsd_cooldown_blocked",
     "bounded_poll",
+    "classify_smack",
 ]
