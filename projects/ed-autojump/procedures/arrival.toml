@@ -86,7 +86,8 @@ steps = [
   # can NEVER block the jump, and stays in supercruise the whole time (resume jump
   # is from SC). Far-star automatic skip: step 3's skip_to="target_next_route"
   # vaults steps 4+5+5b on a far star, so the tour runs ONLY on the close-star path.
-  { action = "body_tour" },                          # macro  | 5b NEW opt-in tour; OFF == no-op, resumes in SC
+  { action = "explore" },                             # macro  | 5b autoexplore tour (C4); OFF == no-op inert, resumes in SC
+  { action = "station_strand_recovery" },             # macro  | 5c PIN-C: wired strand-recovery after explore drop
   { action = "target_next_route", required = true },                # gated  | 6 lock the NEXT SYSTEM in route
   { action = "set_throttle", pct = 100 },           # tap    | 7 burn
   { action = "wait", s = 13.0 },                    # wait   | 8 clear the star — TRAJECTORY PACING, not a gate
