@@ -195,17 +195,31 @@ if (-not (Test-Path $venvPython)) {
     }
 }
 
-# Probe the install via exit code only. Deliberately NO stderr redirect and NO
-# bare `import`: under $ErrorActionPreference='Stop', PowerShell 5.1 wraps a
-# redirected native-stderr line in a terminating NativeCommandError -- which used
-# to kill this script whenever the repo folder moved and the venv's editable path
-# went stale. find_spec prints nothing and the reinstall re-writes the editable
-# path, so a moved repo self-heals.
-& $venvPython -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ed_autojump') else 1)"
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[launch] ed_autojump not importable (fresh venv, or the repo moved) -- (re)installing editable..."
+# Probe the install: ed_autojump must be importable AND resolve INSIDE this
+# project tree. Exit codes: 0 = good; 1 = not importable (fresh venv / moved
+# repo); 2 = importable but resolving OUT OF TREE. (2) is the stale-editable
+# trap: a `pip install -e` once run from a council/agent worktree baked that
+# worktree's absolute path into __editable__.ed_autojump.pth, so ed_autojump kept
+# importing a FROZEN out-of-tree snapshot -- importable, so the old find_spec-only
+# check passed, and the bot ran OLD code no matter what was committed to the live
+# tree (cost days, 2026-06-16). Treat (2) like (1) and reinstall so the editable
+# path self-heals to $ProjectRoot. Deliberately NO stderr redirect / NO bare
+# `import` (PS 5.1 wraps a redirected native-stderr line in a terminating
+# NativeCommandError that would kill this script). Path is passed via env to
+# dodge backslash-in-string quoting.
+$env:EDAFK_PROJECT_ROOT = $ProjectRoot
+& $venvPython -c "import importlib.util as u, sys, os; root=os.path.normcase(os.path.abspath(os.environ['EDAFK_PROJECT_ROOT'])); s=u.find_spec('ed_autojump'); sys.exit(1) if (s is None or not s.origin) else sys.exit(0 if os.path.normcase(os.path.abspath(s.origin)).startswith(root) else 2)"
+$probeCode = $LASTEXITCODE
+$env:EDAFK_PROJECT_ROOT = ''
+if ($probeCode -ne 0) {
     $pkgSpec = $ProjectRoot + "[dev,hotkey,vision]"
-    & $venvPython -m pip install -e $pkgSpec
+    if ($probeCode -eq 2) {
+        Write-Host "[launch] ed_autojump resolves OUT OF TREE (stale editable .pth from a worktree) -- repointing editable to the live tree..."
+        & $venvPython -m pip install -e $pkgSpec --force-reinstall --no-deps
+    } else {
+        Write-Host "[launch] ed_autojump not importable (fresh venv, or the repo moved) -- (re)installing editable..."
+        & $venvPython -m pip install -e $pkgSpec
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Error "pip install failed"
         exit 2
