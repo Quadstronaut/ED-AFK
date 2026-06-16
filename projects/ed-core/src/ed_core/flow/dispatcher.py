@@ -178,8 +178,26 @@ class FlowRunner:
 
         self._event_times: dict[str, float] = {}
         # True while the journal's last SC transition is SupercruiseExit at a
-        # Star (see _record_event_time) â€” restart-while-smacked routing.
+        # massive body (Star OR Planet — widened from Star-only by BUG C fix).
+        # Two-stage design: wide preempt (Star+Planet scene-abort) + narrow
+        # CV-gated recovery (_route_sc_exit fail-closed). A benign planet drop
+        # that preempts a live scene does NOT trigger smack_recovery — re-dispatch
+        # passes through the CV gate which abstains on a 'none' token.
+        # Downstream consumers (STARSMACK scene + smack_recovery dispatch) MUST
+        # re-confirm via the CV gate (_route_sc_exit) before recovering — this
+        # latch alone is NOT an authorization to run smack_recovery.
         self._smacked = False
+        # CV-confirmed smack body kind set by _route_sc_exit after a positive
+        # detect_escape_vector result. None = not yet confirmed / cold start.
+        # Read by build_determine_context (boot_routes) and smack_recovery steps.
+        self._smack_kind = None
+        # Injected escape-vector frame grabber (Optional[Callable[[], Any]]).
+        # Wired exactly like frame_grabber / station_menu_grabber: set at
+        # construction time or by activate(); UNWIRED (None) by default so
+        # _route_sc_exit abstains until the operator calibrates the CV (INV2).
+        # Exposed as a runner attribute so boot_routes._route_sc_exit can read
+        # it without importing a domain module into the core engine.
+        self._escape_vector_grabber = None
         # Witchspace latch (hyperspace loading screen). SET on a Hyperspace
         # StartJump (JumpType=="Hyperspace"), CLEARED on FSDJump (~18s window,
         # journal-confirmed). While set the interpreter PAUSES every step â€”
@@ -593,36 +611,47 @@ class FlowRunner:
             # diagnostics tell a fresh hyperspace arrival from an N-minute
             # loiter â€” both scenes read in_supercruise=true.
             self._event_times["jump"] = self.clock()
-        if name == "SupercruiseExit" and getattr(ev, "body_type", None) == "Star":
-            self._event_times["drop"] = self.clock()
-            # Mid-procedure preemption: a star smack invalidates the scene
-            # arrival/startup are flying â€” flag the CURRENT run to abort at
-            # its next poll. The smack event itself is already queued for
-            # run_live, which dispatches smack_recovery right after the
-            # preempted procedure returns. (Backlog replay can't trip this:
-            # no procedure runs before catch-up, so _running_proc is None.)
+        # BUG C fix: widen preempt to Star OR Planet (INV5 — planet-smack coverage).
+        # TWO-STAGE DESIGN: this preempt is CONSERVATIVE-WIDE (aborts the current
+        # scene on ANY Star/Planet drop, including deliberate). The subsequent
+        # re-dispatch goes through the CV-gated _route_sc_exit, which is the
+        # fail-closed decision point — a benign drop that preempts a scene does
+        # NOT result in smack_recovery (the CV abstains on a 'none' token).
+        # Never mistake the wide preempt for the recovery authorization.
+        if name == "SupercruiseExit" and getattr(ev, "body_type", None) in ("Star", "Planet"):
+            # Mid-procedure preemption: a smack (Star or Planet) invalidates the
+            # scene arrival/startup are flying. Flag the CURRENT run to abort at
+            # its next poll. The smack event itself is already queued for run_live,
+            # which dispatches _route_sc_exit right after the preempted proc returns.
+            # (Backlog replay can't trip this: no procedure runs before catch-up,
+            # so _running_proc is None.)
             if self._running_proc in _PREEMPT_ON_SMACK:
                 self._preempt = "star_smack"
                 if self.record is not None:
                     self.record("PreemptRequested",
                                 {"procedure": self._running_proc,
                                  "reason": "star_smack"})
-        # Flight-scene tracker (2026-06-06 13:41): smacked = the journal's
-        # LAST supercruise transition is a star drop. Fed by backlog AND live
-        # events (the tail replays from the top on attach), so a bot
-        # restarted while the ship sits smacked in normal space knows it â€”
-        # the live SupercruiseExit dispatch never fires for backlog events.
+        # Flight-scene tracker: smacked = the journal's LAST supercruise transition
+        # is a drop at a massive body (Star OR Planet — widened from Star-only).
+        # Fed by backlog AND live events (tail replays from top on attach), so a
+        # bot restarted while sitting smacked in normal space knows it.
+        # NOTE: _smacked = True alone does NOT authorize smack_recovery; downstream
+        # consumers MUST re-confirm via the CV gate in _route_sc_exit (INV1).
+        # Clear _smack_kind on any SC transition so a stale CV result from a prior
+        # drop does not bleed into a fresh restart.
         if name == "SupercruiseExit":
-            self._smacked = getattr(ev, "body_type", None) == "Star"
+            self._smacked = getattr(ev, "body_type", None) in ("Star", "Planet")
+            self._smack_kind = None  # cleared; re-confirmed by _route_sc_exit CV gate
         elif name in ("SupercruiseEntry", "FSDJump"):
             self._smacked = False
+            self._smack_kind = None
         elif name == "Location" and getattr(ev, "docked", False):
             # Respawn/restart repair (GATEWALK gap #1, the Tortooga incident):
             # a death/rebuy respawn emits Location(Docked=true) with NO
             # Undocked/FSDJump in between, so the pre-death smack latch
-            # survived into a docked scene and startup routed wrong. A docked
-            # ship is by definition not sitting smacked at a star.
+            # survived into a docked scene and startup routed wrong.
             self._smacked = False
+            self._smack_kind = None
 
         # Witchspace latch â€” SET on a Hyperspace StartJump, CLEARED on FSDJump.
         # Supercruise StartJumps (JumpType=="Supercruise") must NOT set it.

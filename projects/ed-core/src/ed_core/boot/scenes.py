@@ -67,9 +67,22 @@ class DetermineContext:
     arrival_latch: ArrivalLatch = field(default_factory=ArrivalLatch)
     exploration_mode: bool = False        # operator/launcher exploration flag
     fsd_cooldown: bool = False            # derived: fsd_cooldown_blocked(status)
-    smacked: bool = False                 # last SC drop was a star
+    smacked: bool = False                 # last SC drop was at a massive body (Star or Planet)
     paused: bool = False                  # LP4 cooperative pause flag
     diverged: bool = False                # LP4 log/state divergence (resume)
+
+    # Shape (i) — CV-confirmed smack body kind (OQ7 resolved).
+    # None = unknown / abstain (CV not wired or not yet read at classify time).
+    # 'star' | 'planet' = CV-confirmed via escape-vector color.
+    #
+    # NOTE: build_determine_context in boot_routes.py has NO frame at classify
+    # time, so it leaves this field at its default (None). That means the C-series
+    # classify path NEVER enters STARSMACK from bare telemetry — it abstains.
+    # The live CV gate lives in _route_sc_exit (the event-route path), which
+    # DOES have a frame and sets runner._smack_kind before latch and dispatch.
+    # Shape (i), smack_kind unset at classify time -> abstain; the live CV gate
+    # lives in _route_sc_exit.
+    smack_kind: Optional[str] = None     # None=unknown/abstain, 'star'/'planet'=CV-confirmed
 
     # --- telemetry accessors (fail-closed; None status -> conservative) ---
 
@@ -170,25 +183,33 @@ def _det_exploration(ctx: DetermineContext) -> bool:
     )
 
 
-def _det_starsmack(ctx: DetermineContext) -> bool:
-    """A star-drop (SupercruiseExit BodyType=Star) enters STARSMACK.
+def _det_starsmack(ctx: DetermineContext) -> Optional[bool]:
+    """Enter STARSMACK only when the escape-vector CV has CONFIRMED a smack.
 
-    Telemetry CANNOT distinguish a smack from a deliberate star-drop — both are
-    SupercruiseExit BodyType=Star with no distinguishing journal or cooldown
-    signal (verified; see memory smack-journal-blind-vision-discriminator). So
-    the DETERMINATION enters STARSMACK on `smacked` alone (the necessary
-    telemetry trigger). The Phase-2 action uses the 'ALIGN WITH ESCAPE VECTOR'
-    CV to confirm a real smack and fail-closed to ARRIVAL when there is no
-    escape vector (a benign drop).
+    Shape (i) — CV fact threaded into DetermineContext.smack_kind (OQ7 resolved):
+      ctx.smack_kind == 'star' or 'planet'  -> True  (CV-confirmed smack)
+      ctx.smack_kind is None AND ctx.smacked -> None  (CV-PENDING abstain, INV7)
+      ctx.smack_kind is None AND not ctx.smacked -> False
 
-    The cooldown bit is NOT gated on here: it is not a reliable discriminator
-    (both a smack and a deliberate drop set it briefly), and gating on it left a
-    None gap that leaked a smacked-but-cooldown-cleared ship to NO_ROUTE/idle
-    (the prior route_back defect). Returning a plain bool (never None) closes
-    that fallthrough; NO_ROUTE/PARKED/STARTUP also carry a `not smacked` guard
-    as defense-in-depth.
+    INVARIANT (INV1, BUG B fix): a bare SupercruiseExit with no escape-vector
+    CV evidence MUST NOT cause smack_recovery — returning None here ensures
+    scene_for() treats this as 'not routed here' (honest abstention, INV7).
+
+    At classify time (build_determine_context), smack_kind is ALWAYS None
+    because no frame is available — so this NEVER returns True from cold
+    telemetry. The live CV gate is _route_sc_exit (the event-route path),
+    which acquires a frame, calls detect_escape_vector + classify_smack, and
+    sets runner._smack_kind before updating runner._smacked. The C-series
+    classify path inherits that confirmed kind on a HOT restart only.
+
+    Game-truth: blue escape vector = star-smack, purple = planet-smack.
+    (Operator-witnessed; docs/superpowers/specs/2026-06-16-obstruction-and-smack-game-truth.md)
     """
-    return ctx.smacked
+    if ctx.smack_kind in {"star", "planet"}:
+        return True                   # CV-confirmed smack -> enter STARSMACK
+    if ctx.smacked:
+        return None                   # drop happened but CV has not confirmed -> abstain
+    return False
 
 
 def _det_no_route(ctx: DetermineContext) -> bool:
@@ -249,8 +270,8 @@ C_SERIES_SCENES: tuple[SceneTemplate, ...] = (
         state=CSeriesState.STARSMACK,
         determine=_det_starsmack,
         proc="smack_recovery",
-        gate="last SC drop = star (SupercruiseExit BodyType=Star)",
-        fail_closed="ARRIVAL (escape-vector CV negative -> benign drop)",
+        gate="escape-vector CV confirmed smack (blue=star / purple=planet); ABSTAINS on bare telemetry",
+        fail_closed="ARRIVAL (escape-vector CV unwired or negative -> benign drop; INV1 fail-closed)",
     ),
     SceneTemplate(
         state=CSeriesState.ARRIVAL,

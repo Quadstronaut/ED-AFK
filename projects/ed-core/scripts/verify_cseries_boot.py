@@ -141,13 +141,22 @@ def ctx(**kw):
     return DetermineContext(**kw)
 
 
-# FIX 1: smacked + cooldown cleared + empty route -> STARSMACK (NOT NO_ROUTE)
+# FIX 1 (updated for BUG B / C3 redesign): smacked alone is no longer sufficient
+# to enter STARSMACK — _det_starsmack now requires CV confirmation (smack_kind).
+# Without smack_kind, it abstains (None) so scene_for does NOT select STARSMACK
+# (INV1/BUG B fix). With smack_kind set, STARSMACK IS selected.
 s = scene_for(ctx(status=None, route_empty=True, smacked=True, fsd_cooldown=False))
-check("scenes FIX1: smacked+cooldown-cleared+empty-route -> STARSMACK",
-      s is not None and s.state is CSeriesState.STARSMACK)
-# smacked + route present -> still STARSMACK (not falling through to a held None)
+check("scenes FIX1: smacked+no-cv+empty-route -> abstain (NOT STARSMACK, BUG B fix)",
+      s is None or s.state is not CSeriesState.STARSMACK)
 s = scene_for(ctx(status=None, route_empty=False, smacked=True, fsd_cooldown=False))
-check("scenes FIX1: smacked+route-present -> STARSMACK",
+check("scenes FIX1: smacked+no-cv+route-present -> abstain (NOT STARSMACK, BUG B fix)",
+      s is None or s.state is not CSeriesState.STARSMACK)
+# CV-confirmed smack DOES enter STARSMACK (the positive path still works):
+s = scene_for(ctx(status=None, route_empty=True, smacked=True, smack_kind="star"))
+check("scenes FIX1: smacked+smack_kind=star -> STARSMACK selected",
+      s is not None and s.state is CSeriesState.STARSMACK)
+s = scene_for(ctx(status=None, route_empty=True, smacked=True, smack_kind="planet"))
+check("scenes FIX1: smacked+smack_kind=planet -> STARSMACK selected",
       s is not None and s.state is CSeriesState.STARSMACK)
 # non-smacked empty-route normal-space -> NO_ROUTE (guard didn't break the normal case)
 s = scene_for(ctx(status=None, route_empty=True, smacked=False, exploration_mode=False))

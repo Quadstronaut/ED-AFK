@@ -69,6 +69,13 @@ def build_determine_context(runner: Any) -> DetermineContext:
     st = runner._latest_status
     nr = runner._navroute_state()
     route = getattr(nr, "route", None) if nr is not None else None
+    # smack_kind: thread any CV-confirmed kind from the runner if present.
+    # On a fresh classify call right after a live _route_sc_exit set it,
+    # this propagates the confirmed kind to the C-series scene layer (Shape i).
+    # On cold start (no live SC exit since restart) this defaults to None,
+    # so _det_starsmack abstains and STARSMACK is never entered from bare telemetry.
+    smack_kind = getattr(runner, "_smack_kind", None)
+
     return DetermineContext(
         status=st,
         events=(),                                       # EMPTY — no events buffer (LBF1/AC11)
@@ -79,6 +86,7 @@ def build_determine_context(runner: Any) -> DetermineContext:
         smacked=bool(runner._smacked),
         paused=bool(getattr(runner, "_paused", False)),
         diverged=bool(getattr(runner, "_diverged", False)),
+        smack_kind=smack_kind,                           # Shape (i): None at classify time -> abstain
     )
 
 
@@ -225,9 +233,19 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
 
     if runner._smacked and getattr(st, "fsd_cooldown", False):
         # Restart while SMACKED (normal space, last SC transition was a
-        # star drop, FSD cooldown STILL burning): smack_recovery owns this.
-        runner._run("smack_recovery")
-        return "smack_recovery"
+        # massive-body drop, FSD cooldown STILL burning).
+        # OQ1 (pre-resolved): abstain when no CV-confirmed smack_kind is present.
+        # On a cold restart the escape vector may have already cleared from the HUD,
+        # so the CV cannot be read — the determination MUST abstain (no recovery).
+        # The existing flow (arrival/startup continuation) proceeds unchanged.
+        smack_kind = getattr(runner, "_smack_kind", None)
+        if smack_kind in ("star", "planet"):
+            runner._run("smack_recovery")
+            return "smack_recovery"
+        # No CV confirmation -> abstain. Fall through to route/startup logic.
+        if runner.record is not None:
+            runner.record("SmackDeterminationAbstained",
+                          {"reason": "restart_no_cv", "fsd_cooldown": True})
     # EMPTY-ROUTE GUARD (2026-06-08 council, Wolf 359 fresh-login defect):
     # a normal-space fresh login with NO plotted route fell through to
     # startup, which flailed against a non-existent route.
@@ -513,10 +531,88 @@ def _route_fsd_jump(runner: Any, ev: Any) -> Optional[str]:
 
 
 def _route_sc_exit(runner: Any, ev: Any) -> Optional[str]:
-    """Event route for SupercruiseExit at a Star."""
-    if getattr(ev, "body_type", None) != "Star":
+    """Event route for SupercruiseExit at a Star or Planet.
+
+    Routes ALL smack determination through the escape-vector CV, FAIL-CLOSED.
+    Decision table (spec section 2):
+      Station body_type        -> early return None, never a smack.
+      Star/Planet, grabber None -> ABSTAIN (SmackDeterminationAbstained{cv_unwired}).
+      Star/Planet, token 'none' -> deliberate drop (SmackDeterminationNegative).
+      Star  + token 'blue'     -> StarSmackConfirmed  -> smack_recovery, kind='star'.
+      Planet + token 'purple'  -> PlanetSmackConfirmed -> smack_recovery, kind='planet'.
+      body/color mismatch      -> SmackDeterminationMismatch, ABSTAIN.
+      unknown token            -> SmackDeterminationAbstained{unknown_token}, ABSTAIN.
+
+    INV1: a bare SupercruiseExit with no CV evidence is NOT a smack and MUST
+    NOT dispatch smack_recovery. INV2: grabber None (CV unwired) == abstain.
+    INV5: planet-smack is first-class — no longer silently dropped (BUG A fix).
+    """
+    from ed_vision.escape_vector import detect_escape_vector, NONE as EV_NONE
+    from ed_core.boot.primitives import classify_smack
+
+    body_type = getattr(ev, "body_type", None)
+
+    # INV6: Station is never a smack — early return, no determination record.
+    if body_type not in ("Star", "Planet"):
         return None
+
+    # Check the injected escape-vector grabber (Optional[Callable[[], Any]],
+    # default None). Wired exactly like frame_grabber / station_menu_grabber:
+    # the attribute is set on the runner at construction time or by the
+    # operator's activate() hook; UNWIRED by default so determination abstains
+    # until the operator calibrates the CV (INV2).
+    grabber = getattr(runner, "_escape_vector_grabber", None)
+
+    if grabber is None:
+        # CV UNWIRED -> ABSTAIN. Never fire smack_recovery without CV evidence.
+        if runner.record is not None:
+            runner.record("SmackDeterminationAbstained",
+                          {"reason": "cv_unwired", "body_type": body_type})
+        return None
+
+    # Acquire a frame and classify.
+    frame = grabber()
+    token = detect_escape_vector(frame)
+    route = classify_smack(token)
+
+    if token == EV_NONE:
+        # Deliberate drop — no escape vector means NOT smacked.
+        if runner.record is not None:
+            runner.record("SmackDeterminationNegative",
+                          {"body_type": body_type, "token": token})
+        return None
+
+    # Mismatch check: color must agree with journal body_type (OQ2 default:
+    # FAIL-CLOSED abstain + record; never guess which signal wins, INV9).
+    expected_body = {"star": "Star", "planet": "Planet"}.get(route) if route else None
+    if route is not None and expected_body != body_type:
+        if runner.record is not None:
+            runner.record("SmackDeterminationMismatch",
+                          {"body_type": body_type, "token": token})
+        return None
+
+    if route is None:
+        # Unknown token -> fail-closed abstain.
+        if runner.record is not None:
+            runner.record("SmackDeterminationAbstained",
+                          {"reason": "unknown_token", "body_type": body_type,
+                           "token": token})
+        return None
+
+    # CV-confirmed smack. Set the drop time and thread body kind into the
+    # runner so recovery can read it (e.g. for a future color-aware CV step).
     runner._event_times["drop"] = runner.clock()
+    runner._smack_kind = route   # 'star' | 'planet' — read by smack_recovery steps
+
+    if route == "star":
+        if runner.record is not None:
+            runner.record("StarSmackConfirmed",
+                          {"body_type": body_type, "token": token})
+    else:
+        if runner.record is not None:
+            runner.record("PlanetSmackConfirmed",
+                          {"body_type": body_type, "token": token})
+
     runner._run("smack_recovery")
     return "smack_recovery"
 
