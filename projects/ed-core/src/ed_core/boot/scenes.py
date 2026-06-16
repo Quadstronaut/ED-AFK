@@ -5,9 +5,9 @@ Spec: docs/superpowers/specs/2026-06-15-cseries-boot-determination-spec.md (§3)
 Each of the 11 C-series states is a SceneTemplate carrying:
   - determine(ctx) -> bool | None : telemetry verdict. None == CV-PENDING
     (honest abstention; never a fabricated CV guess — INV7).
-  - act(...)                       : ALWAYS raises NotImplementedError with the
-    exact marker "[Phase-2 CV/action pending]" — the action/CV body is Phase-2
-    and NOTHING here touches the ship (INV6).
+  - proc: str | None              : the live RUN-procedure name this scene maps
+    to (mirrors boot_routes._STATE_TO_PROC), or None for idle/fallback/no-
+    standalone-proc. INERT DATA — never invoked here (INV1/INV6).
   - fail_closed                    : a named fallback branch (§3 table).
 
 LAYERING: ed_core (rank 1). Imports stdlib + ed_core.boot.primitives only.
@@ -28,8 +28,6 @@ from ed_core.boot.primitives import (
     reconstruct_arrival_from_journal,
     fsd_cooldown_blocked,
 )
-
-_PHASE2 = "[Phase-2 CV/action pending]"
 
 
 # ---------------------------------------------------------------------------
@@ -100,19 +98,13 @@ class DetermineContext:
 
 @dataclass(frozen=True)
 class SceneTemplate:
-    """One C-series scene: determine + (inert) act + named fail-closed branch."""
+    """One C-series scene: determine + inert proc metadata + named fail-closed branch."""
 
     state: CSeriesState
     determine: Callable[[DetermineContext], Optional[bool]]
-    act: Callable[..., None]
+    proc: Optional[str]      # live procedure name (mirrors _STATE_TO_PROC); None = idle/fallback/no-standalone-proc
     fail_closed: str
     gate: str = ""          # human-readable named gate (spec §3)
-    action_sketch: str = ""  # marked [Phase-2 CV/action pending]
-
-
-def _act_pending(*_args: Any, **_kwargs: Any) -> None:
-    """Every scene's action body. Phase-2. NOTHING here touches the ship."""
-    raise NotImplementedError(_PHASE2)
 
 
 # ---------------------------------------------------------------------------
@@ -242,89 +234,78 @@ C_SERIES_SCENES: tuple[SceneTemplate, ...] = (
     SceneTemplate(
         state=CSeriesState.PAUSE,
         determine=_det_pause,
-        act=_act_pending,
+        proc=None,                # routes to legacy classifier; no standalone proc
         gate="LP4 pause flag set",
-        action_sketch=f"{_PHASE2} cease dispatch, hold keys off",
         fail_closed="PARKED (cannot resume)",
     ),
     SceneTemplate(
         state=CSeriesState.RESUME,
         determine=_det_resume,
-        act=_act_pending,
+        proc=None,                # OPEN follow-on — re-derive has NO standalone live procedure; proc=None until built
         gate="unpause + log/state divergence (LP4)",
-        action_sketch=f"{_PHASE2} re-derive scene, re-enter",
         fail_closed="STARTUP (re-derive from scratch)",
     ),
     SceneTemplate(
         state=CSeriesState.STARSMACK,
         determine=_det_starsmack,
-        act=_act_pending,
+        proc="smack_recovery",
         gate="last SC drop = star (SupercruiseExit BodyType=Star)",
-        action_sketch=f"{_PHASE2} confirm escape-vector CV, align dot, burn out",
         fail_closed="ARRIVAL (escape-vector CV negative -> benign drop)",
     ),
     SceneTemplate(
         state=CSeriesState.ARRIVAL,
         determine=_det_arrival,
-        act=_act_pending,
+        proc="arrival",
         gate="FSDJump arrival latched (LP1) + in SC",
-        action_sketch=f"{_PHASE2} orbit get-around + target next hop",
         fail_closed="TRAVERSAL (no arrival evidence)",
     ),
     SceneTemplate(
         state=CSeriesState.REFUEL,
         determine=_det_refuel,
-        act=_act_pending,
+        proc=None,                # routes to legacy classifier; no standalone proc
         gate="ScoopingFuel flag / LowFuel in SC",
-        action_sketch=f"{_PHASE2} hold scoop until full",
         fail_closed="ARRIVAL (scoop window is part of arrival)",
     ),
     SceneTemplate(
         state=CSeriesState.DOCKED,
         determine=_det_docked,
-        act=_act_pending,
+        proc=None,                # idle, no live proc
         gate="Docked flag (bit 0)",
-        action_sketch=f"{_PHASE2} idle / await pit-stop resume",
         fail_closed="STARTUP (no status -> don't assume docked)",
     ),
     SceneTemplate(
         state=CSeriesState.TRAVERSAL,
         determine=_det_traversal,
-        act=_act_pending,
+        proc=None,                # routes to legacy classifier; no standalone proc
         gate="SC flag + route present + arrival not latched",
-        action_sketch=f"{_PHASE2} hold SC-assist toward next hop",
         fail_closed="STARTUP (lost supercruise)",
     ),
     SceneTemplate(
         state=CSeriesState.EXPLORATION,
         determine=_det_exploration,
-        act=_act_pending,
+        proc=None,                # OPEN follow-on — honk/FSS/body-tour has NO standalone live procedure yet (Council C bucket B/C); proc=None until built
         gate="SC + empty route + no latch + exploration_mode (PIN 5)",
-        action_sketch=f"{_PHASE2} honk / FSS / body tour",
         fail_closed="PARKED (mode off)",
     ),
     SceneTemplate(
         state=CSeriesState.STARTUP,
         determine=_det_startup,
-        act=_act_pending,
+        proc="startup",
         gate="first status seen, route non-empty, normal space",
-        action_sketch=f"{_PHASE2} align + throttle to first hop",
         fail_closed="NO_ROUTE (route absent)",
     ),
     SceneTemplate(
         state=CSeriesState.NO_ROUTE,
         determine=_det_no_route,
-        act=_act_pending,
+        proc=None,                # idle; side-effect label lives in boot_routes
         gate="empty route, normal space, exploration off",
-        action_sketch=f'{_PHASE2} idle + overlay "plot a route"',
         fail_closed="PARKED (terminal idle)",
     ),
     SceneTemplate(
         state=CSeriesState.PARKED,
         determine=_det_parked,
-        act=_act_pending,
+        proc=None,                # idle; side-effect label lives in boot_routes
         gate="empty route, not SC, not docked, no divergence",
-        action_sketch=f"{_PHASE2} idle, hold",
         fail_closed="(terminal; no further branch)",
     ),
 )
@@ -349,8 +330,8 @@ def scene_for(ctx: DetermineContext) -> Optional[SceneTemplate]:
     that cannot decide from telemetry does NOT hijack routing. Returns None when
     NOTHING matches (the engine then holds / re-derives next tick).
 
-    NOTE: this is determination ONLY. The caller does not act() here — act() is
-    Phase-2 and raises NotImplementedError.
+    NOTE: determination ONLY; the caller maps tmpl.state via the live _STATE_TO_PROC.
+    No action body exists here.
     """
     for tmpl in C_SERIES_SCENES:
         if tmpl.determine(ctx) is True:

@@ -9,7 +9,7 @@ imports NEITHER (stdlib only). It NEVER imports a domain package and NEVER calls
 register_*; nothing here is wired into live dispatch. (INV1/INV2.)
 
 NOTHING HERE TOUCHES THE SHIP. Determination is read-only over telemetry. The
-ACTION half (orbit, align, throttle, FSS) is Phase-2 (see scenes.act()).
+ACTION half (orbit, align, throttle, FSS) is Phase-2 (see scenes.SceneTemplate.proc / the live _STATE_TO_PROC map).
 """
 
 from __future__ import annotations
