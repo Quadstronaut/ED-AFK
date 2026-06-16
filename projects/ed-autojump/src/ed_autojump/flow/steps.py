@@ -160,6 +160,165 @@ register_step("engage_jump", step_engage_jump)
 # imported above and registered there. Re-exported here for callers.
 
 
+def step_engage_jump_clearance(
+    ctx: StepContext,
+    *,
+    poll_s: float = 0.8,
+    max_jump_polls: int = 12,
+    max_clear_attempts: int = 3,
+    pitch_dir: str = "down",
+    pitch_hold_s: float = 0.0,   # 0.0 -> ship-size table (same as dock_blind_maneuver)
+    clear_burn_s: float = 7.0,
+    retry_throttle_pct: int = 100,  # noqa: ARG001 — SetSpeed100 hardcoded per spec; kept for TOML knob
+) -> bool:
+    """Hyperspace-jump clearance loop (council-ratified, 2026-06-16).
+
+    REPLACES the blind ``wait s=13.0`` clear-the-star/station step AND the
+    ``engage_jump`` + ``hold_alignment`` pair in every hyperspace-jump tail it
+    is wired into (dock_resume.toml, arrival.toml — OQ4 scope).
+
+    CONTRACT (see _council_c1_jumpflow_spec.md):
+      C1  Press jump exactly as step_engage_jump does (Status-flag gate first;
+          SetSpeed100; Hyperspace bind). REUSES step_engage_jump's gate logic.
+      C2  BOUNDED-POLL for a HYPERSPACE StartJump by READ-COUNT (max_jump_polls),
+          never by wall-clock. Poll cadence via ctx.sleeper(poll_s) only.
+      C3  SUCCESS EDGE: ctx.in_witchspace() THEN status.fsd_jump (bit 30).
+          On confirmation -> return True immediately; no further input is sent.
+          The interpreter's in_witchspace pause enforces no-input through the
+          tunnel, so hold_alignment is NOT needed after this step.
+      C4  OBSTRUCTED EDGE: StartJump absent after max_jump_polls -> MOVE: pitch
+          away from the body, HARDCODE SetSpeed100 (NOT step_set_throttle per
+          spec boundaries), fly clear_burn_s, then RETRY from C1.
+      C5  Pitch duration uses the same ship-size table as step_dock_blind_maneuver
+          (pitch_s_for_ship). pitch_hold_s > 0 overrides the table.
+      C6  CEILING ABORT: max_clear_attempts move+retry cycles; ceiling with no
+          StartJump -> log EngageJumpClearanceAborted{reason:'obstruction_ceiling'}
+          and return False. Ceiling is a FAIL backstop, never a success path.
+      AC8 ABORT GRAFT: after the inner poll loop exits, an explicit should_abort()
+          check BEFORE any directional press guarantees no PitchButton is ever
+          sent after the operator requests a stop (safety-critical).
+    """
+    # --- pitch_dir whitelist (fail-closed on unknown) ---
+    pitch_button = {"down": "PitchDownButton", "up": "PitchUpButton"}.get(pitch_dir)
+    if pitch_button is None:
+        ctx.log("EngageJumpClearanceBadParam",
+                {"param": "pitch_dir", "value": pitch_dir})
+        return False
+
+    # --- Observability grafts: clamp and log non-integer / sub-1 inputs ---
+    effective_polls = max(1, int(max_jump_polls))
+    if effective_polls != max_jump_polls:
+        ctx.log("EngageJumpClearanceClamp",
+                {"max_jump_polls": max_jump_polls, "clamped": effective_polls})
+    attempts = max(1, int(max_clear_attempts))
+    if attempts != max_clear_attempts:
+        ctx.log("EngageJumpClearanceClamp",
+                {"max_clear_attempts": max_clear_attempts, "clamped": attempts})
+
+    # --- Pitch duration from ship-size table (mirrors step_dock_blind_maneuver) ---
+    from ed_core.ship_sizes import pitch_s_for_ship, size_for_ship
+    ship = ctx.ship_supplier()
+    if pitch_hold_s > 0:
+        pitch_s = float(pitch_hold_s)
+    else:
+        pitch_s = pitch_s_for_ship(ship)
+        if ship is None or size_for_ship(ship) is None:
+            ctx.log("ShipSizeUnknown", {"ship": ship, "default_pitch_s": pitch_s})
+
+    # --- Helper: dual hyperspace-committed signal (C3) ---
+    def _is_hyperspace_committed() -> bool:
+        if ctx.in_witchspace():
+            return True
+        st = ctx.status_supplier()
+        return st is not None and getattr(st, "fsd_jump", False)
+
+    # =====================================================================
+    # Main attempt loop (C4/C6)
+    # =====================================================================
+    for attempt in range(1, attempts + 1):
+
+        # --- Abort checkpoint 1: top of attempt ---
+        if ctx.should_abort():
+            return False
+
+        # --- C1: Status-flag gate (reuse step_engage_jump's exact logic) ---
+        st = ctx.status_supplier()
+        if st is not None and (
+            getattr(st, "docked", False)
+            or getattr(st, "fsd_charging", False)
+            or getattr(st, "fsd_cooldown", False)
+            or getattr(st, "fsd_mass_locked", False)
+            or getattr(st, "overheating", False)
+        ):
+            ctx.log("EngageBlocked", {"reason": "status_flag", "attempt": attempt})
+            return False
+
+        # --- C1: Press SetSpeed100 then Hyperspace ---
+        ctx.log("EngageJumpClearancePress", {"attempt": attempt})
+        if not _press(ctx, "SetSpeed100"):
+            return False
+        if not _press(ctx, "Hyperspace"):
+            return False
+
+        # --- C2/C3: BOUNDED-POLL for hyperspace StartJump ---
+        for poll_i in range(effective_polls):
+            if ctx.should_abort():
+                ctx.log("EngageJumpClearanceAborted",
+                        {"reason": "abort", "attempt": attempt})
+                return False
+            if _is_hyperspace_committed():
+                ctx.log("EngageJumpClearanceStarted", {"attempt": attempt,
+                                                        "poll": poll_i})
+                return True   # C3 success edge — cease all input
+            ctx.sleeper(poll_s)
+
+        # --- AC8 ABORT GRAFT: post-poll abort check BEFORE any directional press ---
+        if ctx.should_abort():
+            ctx.log("EngageJumpClearanceAborted",
+                    {"reason": "abort", "attempt": attempt})
+            return False
+
+        # --- C4: StartJump absent after max_jump_polls -> obstructed edge ---
+        ctx.log("EngageJumpClearanceObscured",
+                {"attempt": attempt, "polls": effective_polls})
+
+        # --- Abort checkpoint 2: post-poll, pre-pitch ---
+        if ctx.should_abort():
+            ctx.log("EngageJumpClearanceAborted",
+                    {"reason": "abort", "attempt": attempt})
+            return False
+
+        # --- C4 MOVE: pitch away from the obstructing body ---
+        ctx.log("EngageJumpClearanceMove",
+                {"pitch_dir": pitch_dir, "pitch_hold_s": pitch_s,
+                 "burn_s": clear_burn_s})
+        if not _press(ctx, pitch_button, hold_s=pitch_s):
+            return False
+
+        # --- Abort checkpoint 3: post-pitch, pre-burn ---
+        if ctx.should_abort():
+            ctx.log("EngageJumpClearanceAborted",
+                    {"reason": "abort", "attempt": attempt})
+            return False
+
+        # --- C4 MOVE: SetSpeed100 hardcoded (NOT step_set_throttle — spec boundary) ---
+        if not _press(ctx, "SetSpeed100"):
+            return False
+        # Trajectory-pacing burn — NOT a gate (same class as dock_blind_maneuver.burn_s)
+        ctx.sleeper(clear_burn_s)
+
+    # =====================================================================
+    # C6: Ceiling reached with no StartJump — named fail, routes on_required_fail
+    # =====================================================================
+    ctx.log("EngageJumpClearanceAborted",
+            {"reason": "obstruction_ceiling", "attempts": attempts})
+    return False
+
+
+register_step("engage_jump_clearance", step_engage_jump_clearance,
+              input_exclusive=True)
+
+
 # `wait_for_event` (timeout-gated passive wait) is DELETED, not deprecated:
 # a wall-clock timeout as a success/failure gate cancelled a healthy jump
 # twice (2026-06-01, 2026-06-06). Gates are journal events or Status.json
