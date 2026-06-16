@@ -60,3 +60,46 @@ DOCKED, STARTUP, ARRIVAL, REFUEL, TRAVERSAL, EXPLORATION, STARSMACK, NO-ROUTE, P
 PARKED. The 4 LOCKED PATTERNS (LP1 FSDJump arrival latch; LP2 cooldown bit-18 pause; LP3
 bounded-poll-with-ceiling; LP4 cooperative pause via loop-flag + RESUME re-derive, triggered by
 log/state divergence) are correct and carried forward verbatim into the re-run.
+
+---
+
+## RE-RUN 1 RESULT (council `wf_10093608-303`) — route_back → Stage 1, but VERY close
+
+The re-run with the 7 pins confirmed the pins fixed the prior Stage-0 under-specification — **the
+spec is now SOUND**. **gen-opus-2 is the proven build base:** the SOLE candidate clean on
+spec-conformance + concurrency + boundaries, conforms to the spec verbatim, and **INV1 (live-path
+byte-untouched) verified clean by the arbiter** (zero tracked-file modifications). It has exactly
+**2 localized build defects** left:
+
+1. **MAJOR (failure-recovery) — STARSMACK→NO_ROUTE fallthrough.** `_det_starsmack(smacked=True,
+   fsd_cooldown=False)` returns `None` (CV-pending abstention), so `scene_for` skips STARSMACK and
+   `_det_no_route` fires `True` for the same context → a smacked ship (cooldown already cleared)
+   routes to NO_ROUTE/idle instead of the STARSMACK escape. The STARSMACK fail-closed branch is a
+   doc string no code runs. **FIX:** guard `_det_no_route` / `_det_parked` / `_det_startup`
+   against `smacked=True`, and make the STARSMACK fail-closed branch executable (smacked +
+   cooldown-cleared → ARRIVAL/STARSMACK, never NO_ROUTE).
+2. **MINOR (security) — capability-trust in `_event_name`.** It trusts any object exposing
+   `.get('event')` (not `isinstance(ev, dict)`), so a non-dict mock with `.get()→'FSDJump'` injects
+   a false arrival. **FIX:** gate the dict branch on `isinstance(ev, dict)`.
+
+The other 3 candidates are non-viable (spec-conformance blockers: missing the determination-routing
+layer / `CSeriesState` not an `Enum`). **No merge needed — gen-opus-2 + these 2 surgical fixes is
+the whole path.**
+
+**gen-opus-2's artifacts are STASHED durably** (before worktree cleanup) at
+`docs/superpowers/specs/cseries_artifacts/`: `primitives.py`, `scenes.py`, `__init__.py`,
+`2026-06-15-cseries-boot-determination-spec.md`. (These have the 2 known defects — NOT wired,
+NOT moved into `projects/ed-core/src/ed_core/boot/` yet.)
+
+### Path to commit (fast)
+- **Option A (recommended):** apply the stash + the 2 fixes above → run the council's standalone
+  acceptance tests (T1–T8) + a STARSMACK-fallthrough repro (smacked=True, fsd_cooldown=False →
+  STARSMACK, not NO_ROUTE) + `whole_tree_import_check.py projects` (DAG) + the INV1 live-path
+  `git diff` empty check → move into `ed_core/boot/` + commit. ~10 min, no 4th council.
+- **Option B:** one more council round seeded with gen-opus-2 + the 2 fixes as additional pins for
+  the unanimous stamp. ~45 min.
+
+Given these are INERT Phase-2 templates (INV1-clean, not wired to live dispatch) and the fixes are
+surgical + executably-verifiable, Option A is the proportionate call. Open dissent to carry: the
+single-threaded ArrivalLatch invariant (PIN 6) is documented not enforced — honor it at Phase-2
+engine-loop wiring.
