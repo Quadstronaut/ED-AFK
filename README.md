@@ -184,4 +184,4 @@ Third-party attributions (full chain in `THIRD_PARTY_NOTICES.md`):
 
 ---
 
-a quadstronaut project of starhold.dev
+a 👨🏻‍🚀 Quadstronaut project of https://starhold.dev/
