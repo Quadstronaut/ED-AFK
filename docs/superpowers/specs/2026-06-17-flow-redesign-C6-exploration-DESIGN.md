@@ -1,0 +1,43 @@
+﻿<!-- C-council C6-exploration | task wch5bsydi | decision=route_back selected= | 2026-06-17 | DESIGN-ONLY (not built/wired) | ledger: .claude/council-ledger.jsonl -->
+
+## C6 EXPLORATION SCENE â€” design + runnable seam (gen-opus-1)
+
+DESIGN-ONLY for the flight path: no arrival.toml edit, no live STEP_REGISTRY wiring, no commit. The impl + acceptance suite exist to make the pure loop/termination/classification seam EXECUTABLE for Stage-2 review â€” an inert sibling of the wired path. Verified `ed_explore.activate()` registers `body_tour`+`explore` but NOT `nav_supercruise_unexplored`.
+
+### Files created (all absolute paths)
+
+1. `<repo-root>/.claude/worktrees/wf_a772b12a-a2c-2/docs/superpowers/specs/2026-06-17-c6-exploration-scene-design.md`
+   The deliverable doc: proposed `exploration.toml` sketch (NOT written to disk), the `nav_supercruise_unexplored` loop contract (L0..L6 state machine), the three-way classifier design, the selector-floor `sel` mechanics enforcing INV-3, ENTRY/EXIT reconciled with C2, the Â§F supersession statement, all 9 invariants, and the BLOCKED-ON-KYLE list (B1-B7).
+
+2. `<repo-root>/.claude/worktrees/wf_a772b12a-a2c-2/projects/ed-vision/src/ed_vision/navpanel_icon.py`
+   Three-way column-0 icon discriminator, split into PURE decision `classify_icon_features(IconFeatures)->{unexplored,system,body,unknown}` (green-field testable, no cv2) and CV layer `extract_icon_features` (calibration-pending behind B2, raises NotImplementedError) + `classify_row_icon` fail-closed wrapper. Fail-closed ordering: confidence floor first, then box-in-box (>=2 nested contours) before âœ¦ (point-symmetry) before filled-disc (centre fill), else "unknown". Resolves region via `resolve_nav_region` (INV-9).
+
+3. `<repo-root>/.claude/worktrees/wf_a772b12a-a2c-2/projects/ed-explore/src/ed_explore/steps_exploration.py`
+   `step_nav_supercruise_unexplored(ctx, *, settle_s, pin_hold_s, poll_s, sel_start=1, max_iterations=64) -> bool`. Downward-only selector floor `sel`; SC-assists each box-in-box via the existing `engage_supercruise_assist_row` macro; terminates on the first âœ¦ at/below the floor (boundary, never the top âœ¦); name-correlated AutoScan visit gate (PIN-A); abort-cooperative; best-effort True on every path. NOT registered at import â€” `register_exploration_step()` is an explicit, idempotent, test-only registrar.
+
+4. `<repo-root>/.claude/worktrees/wf_a772b12a-a2c-2/projects/ed-explore/tests/test_exploration.py` â€” T1-T8 + extras.
+
+5. `<repo-root>/.claude/worktrees/wf_a772b12a-a2c-2/projects/ed-vision/tests/test_navpanel_icon.py` â€” T9 (synthetic green-field + XFAIL real-frame).
+
+### Test result
+`29 passed, 1 xfailed` (the real-frame T9 variant correctly XFAIL behind B2). Existing `test_body_tour.py` (39 pass) unaffected; the only 2 red tests under the run (`test_navpanel_icons` full-frame STAR detection) are PRE-EXISTING on the clean main tree (the module's own documented `ROW0_CY` system-specific calibration caveat), not introduced here.
+
+### Key reconciliation discovered during grounding
+An existing `ed_vision/navpanel_icons.py` (plural) already ships a council-ratified TWO-way STAR/NON_STAR classifier with a MEASURED per-ship icon region (ICON_X0=506, W=50, ROW0_CY=511, pitch=37) and highlight/polarity invariance, validated on real 2-star frames. This PARTIALLY UNBLOCKS B1: the region + the âœ¦ oracle exist. C6's three-way classifier is documented as a strict extension that reuses that âœ¦ leg and adds only the box-in-box-vs-disc split within NON_STAR â€” the one piece still needing real UNEXPLORED frames (B2). The bug PIN-A is meant to catch surfaced live: `_scan_key` normalizes (uppercases) the target but the AutoScan set holds raw mixed-case names, so a naive `_scan_key(target) in (seen_after - seen0)` never matches â€” fixed by normalizing both sides of the delta (`_new_scan_keys`).
+
+## ASSUMPTIONS ()
+- B3 (selector resting position): assumed sel_start=1, the row just below the row-0 âœ¦ header, mirroring the arrival-star auto-select. Exposed as a kwarg so it retunes in one place once Operator confirms.
+- B5 (session cap): assumed max_iterations=64 is a pure safety BACKSTOP (logged as an anomaly when hit), NOT an operator-intended limit â€” the loop runs to the âœ¦ boundary every normal session.
+- B7 (per-body engage): the loop calls the existing blind engage_supercruise_assist_row macro (UI_Right->UI_Select) as the DESIGN PLACEHOLDER for C1's 'press SUPERCRUISE-ASSIST button ONCE via button-bar CV nav'. The loop contract is unchanged whichever wins; only the _engage body swaps.
+- B4 (orbit-vs-drop): assumed unexplored rows ORBIT (stay in SC) like bodies â€” the visit gate has NO drop/SupercruiseExit recovery branch. If unexplored rows DROP, a recovery branch must be added (mirrors explore's S6).
+- The wired nav-panel reader will gain a read_rows(frame, system) -> ExploreRow[] method that pairs each OCR row with its column-0 icon class BY ORDINAL. The current NavPanelReader only exposes .parse; the loop needs the icon-tagged rows including the âœ¦ header/boundary rows that .parse drops.
+- PIN-A correlation normalizes BOTH the target key and the scanned-set via _scan_key; the existing steps_explore.py idiom (_scan_key(target) in raw seen-delta) has the same latent case-mismatch and is assumed to be either dormant (already-normalized names live) or a parallel latent bug, not a contract I must preserve byte-for-byte.
+- The C6 step intentionally re-reads the panel every iteration (the NAVIGATION list re-sorts by distance as the ship moves); the selector is tracked by name-exclusion (E) + a monotone floor (sel), not a frozen row index.
+- Running the suite required PYTHONPATH-shadowing the worktree src over the main-tree editable install; this is a harness detail, not a code dependency â€” under a normal editable install of the worktree the modules resolve directly.
+
+## RISKS ()
+- @{lens=spec-conformance; note=The classifier's CV extractor (extract_icon_features) is NOT implemented â€” it raises NotImplementedError pending B2. So the THREE-way discrimination is only proven on SYNTHETIC IconFeatures, never on a real box-in-box frame. The brief's central deliverable (box-in-box vs âœ¦ discrimination) is DESIGNED + decision-tested but UNCALIBRATED; the real-frame gate is XFAIL. A reviewer wanting the discrimination demonstrated on a pixel will find only the decision table green.}
+- @{lens=boundaries; note=INV-3's downward-only guarantee rests on sel_start=1 being correct (B3 unconfirmed). If the panel actually opens with the cursor BELOW the in-system bodies, or the top âœ¦ is at a row >= sel_start in some layout, the floor logic could either skip real unexplored rows (a body above the floor is logged ExploreSkippedAboveFloor and dropped this session) or, in a pathological layout, never reach a box. The two pinned frames don't cover the selector-on-boundary case (that's exactly B2a).}
+- @{lens=failure-recovery; note=The visit gate has no orbit-vs-drop branch (B4). If SC-assist toward an unexplored row DROPS the ship into real space (SupercruiseExit) rather than orbiting, the gate just times out into the exclusion set and the loop advances â€” leaving the ship dropped in normal space with no re-engage, unlike body_tour/explore which DO recover station drops. Best-effort still returns True (jump not blocked) but the ship could be left mis-posed for the onward Traversal jump.}
+- @{lens=concurrency; note=The loop reads autoscan_supplier as a point-in-time snapshot at L5/L6 with no lock; if the FlowRunner's _apply_state mutates the scanned-set between the gate's success check and L6's recheck, the name could appear/vanish across the two reads. Mitigated by re-deriving _new_scan_keys both times, but the normalize-both-sides fix is load-bearing and untested against a live concurrent journal tail â€” only against scripted suppliers.}
+- @{lens=security; note=Low exposure (single-operator local tool, no external input), but the icon classifier's conf_floor=0.5 and the symmetry/fill thresholds are ASSERTED constants never measured on real frames. A miscalibrated threshold that reads a âœ¦ boundary as 'unknown' would make the loop walk PAST the boundary into the nearby-systems section, SC-assisting toward other star systems (wasted but bounded by max_iterations); the reverse â€” a box read as âœ¦ â€” terminates early, leaving bodies unexplored. Fail-closed protects against engaging on an unread row but not against a confidently-wrong threshold.}
