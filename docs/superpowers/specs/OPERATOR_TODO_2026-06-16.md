@@ -66,14 +66,48 @@ fail-closed with a TODO. Operator answered 1/2/3 on 2026-06-16 (applied below); 
 
 ## AUDIT 2026-06-16 (workflow wj74tg65i) — newly-tracked defects & stubs
 
-- **D1** launch.ps1 junction-probe misfire: reinstalls ed_autojump every launch from the C: path + offline hard-fail; fix = realpath both sides + Resolve-Path $RepoRoot + offline-safe pip. (in council)
-- **D2** nav-panel target: RETIRE the blind keypress macro and REPLACE ENTIRELY with CV-driven selection per project spec (operator correction 2026-06-16). Do NOT tune the blind macro (de-dup/pin-hold/max_rows were the wrong frame). Vehicle = WinRT parser-v2 (worktree wf_d1765b5a-d6c-2, D5). Design draft: docs/superpowers/specs/2026-06-16-cv-navpanel-target-DESIGN-DRAFT.md — pending operator review.
+- **D1** launch.ps1 junction-probe misfire: reinstalls ed_autojump every launch from the C: path + offline hard-fail. ✅ **FIXED + pushed (329797d)** — realpath both sides + Resolve-Path $RepoRoot + offline-safe pip (Ensure-BuildTools); verified AT-1 C-junction=0, AT-2 G=0, AT-3 out-of-tree=2.
+- **D2** nav-panel target: RETIRE the blind keypress macro and REPLACE ENTIRELY with CV-driven selection per project spec (operator correction 2026-06-16). Do NOT tune the blind macro (de-dup/pin-hold/max_rows were the wrong frame). Vehicle = WinRT parser-v2, which is LOST WORK and must be REBUILT (D5). Design draft: docs/superpowers/specs/2026-06-16-cv-navpanel-target-DESIGN-DRAFT.md — pending operator review. (Build council not yet dispatched — gated on the parser rebuild.)
 - **D2b** Unnecessary post-SC-assist wait when target is already in front (gatewalk-efficiency-targets) — was tracked NOWHERE.
 - **D3** EDMCOverlay.exe auto-launch crashes -> visible "not found" console window (mistaken for honk; honk is an in-process thread). Fix: repair EDMC OR [overlay] launch_if_absent=false + connect_timeout_s=2.0. Needs operator's exe-run error text.
 - **D4** escape_vector.detect_escape_vector hard-returns NONE -> smack_recovery NEVER auto-fires; _escape_vector_grabber unwired. Needs blue/purple/no-vector calibration frames.
-- **D5** explore/body_tour BLIND: nav_panel_ocr_enabled=False (config.py:90), parser uses pytesseract not ratified WinRT; WinRT parser-v2 stuck in worktree wf_d1765b5a-d6c-2, never harvested. Harvest navpanel_parser.py + ocr_winrt.py.
+- **D5** explore/body_tour BLIND: nav_panel_ocr_enabled=False (config.py:90), parser uses pytesseract not ratified WinRT; WinRT parser-v2 is **LOST WORK** (worktree gone, never committed, unrecoverable from git) — must **REBUILD** navpanel_parser.py + ocr_winrt.py from the ed-navpanel-ocr-first-parser memory design (not harvest). Long pole; gates explore AND nav-panel target.
 - **D6** ed_vision/hud_sc_indicators.py module ABSENT (only data .json); ctx.hud_grabber never injected -> confirm_orbiting permanently dead. Build detector + wire grabber OR remove the branch.
 - **D7** OQ4: C1 jump-tail kill incomplete — blind wait s=13.0 + engage_jump + hold_alignment still in sc_resume/startup/smack_recovery (only arrival + dock_resume migrated).
 - **D8** doc drift (this cleanup) + inert cleanup: 24 orphaned __pycache__ .pyc; v/ pytest cache git-tracked at repo root; stale dist-info (ed_explore records deleted worktree path, ed_autojump records C: origin); pyvenv.cfg records pre-move path.
 - 5 registered-but-unreferenced steps (fix-or-delete per nothing-stays-unwired): body_tour, station_services, confirm_menu_item, pitch, press.
 - Parallel scoop global python 3.14 editable-installs 4 of 6 packages (a second drift surface) — decide keep-in-sync vs remove.
+
+---
+
+## MAJOR GAP REGISTER — review tonight (consolidated 2026-06-16)
+
+Single review surface. Source: redemption audit (wj74tg65i) + CV candidate register (wr38kdryp).
+The desired-function gap-analysis council (w3spwcbaf) will add/confirm when it lands.
+**Council status:** ✅ done · ⏳ council running · ◻️ no council dispatched yet.
+
+### 🔴 Ship-safety — live, can crash the ship, no ratified fix · ◻️
+- **smack-recovery pitch-astern false-"done"** (README defect #3 / CVR-12) — has thrown the ship INTO the star; C3 did NOT touch the recovery maneuver. No specified CV fix yet.
+- **sc_resume star-ram** (README defect #2 / CVR-2) — P4 fast path drives a nose-on-star ship in; the blind nav-panel row-walk is doubling as a fake distance sensor. (Largely killed by OQ4 below once the jump fails closed on obstruction.)
+
+### 🟢 Ship-now, buildable, ~no frames · ◻️ (each needs a go / one decision)
+- **OQ4 jump-tail migration** (D7 / CVR-3) — propagate the built engage_jump_clearance into sc_resume/startup/smack_recovery; kills the star-ram backend + D7 + the smack 13s tail at once. #1 register fork; ratified + buildable today.
+- **Orient failure-clocks** (CVR-14) — drop the 45s (orient_compass) / 30s & 75s (pitch_compass) / 18s (orient_widget_ring) wall-clock FAILURE gates on already-CV-converged loops to read-count + should_abort. The exact "clunky clock" class.
+- **Exploration S0 self-block** (item 3 / CVR-10) — S0 fail-closes → the autoexplore tour NEVER runs today; simplify so it stops self-blocking (you set filters manually, bot just reads).
+- **Audio readiness gate** (CVR-15) — SteelSeries Sonar virtual-endpoint timeout; multi-endpoint probe fix already written but unwired. Pure code-wiring.
+
+### 🟡 Inert flagship features — blocked on calibration frames you capture · ◻️
+- **Smack determination** (D4 / item 5 / CVR-5/6) — escape_vector returns NONE → recovery never auto-fires; needs blue (have) / purple / no-vector frames.
+- **SC-assist HUD detector** (D6 / CVR-11) — hud_sc_indicators.py was never built; unblocks orbit-confirm + the four "orbit-acquire" 13s waits (OQ3). Confirm ORBITING/ALIGN frames exist or recapture.
+- **Nav-panel parser-v2 REBUILD** (D5 / CVR-7 + CVR-1) — the LOST WinRT parser; gates BOTH explore AND nav-panel target. The long pole. Needs the planet-rich nav frame (item 4).
+
+### ⚪ Scope questions — yes/no before any council · ◻️
+- **FSS + DSS** (CVR-18) — zero implementation; in the >90%-CV push, or stay off indefinitely?
+- **Docking / station-services CV** (CVR-9/19/20/21) — deferred later-scope, or pull in now? (station_menu detector + auto_launch already work; open piece is the blind request_docking Contacts-tab macro.)
+
+### Already handled this session
+- ✅ **D1** launcher fix (329797d, verified) · ✅ **D8** doc drift + v/ untrack
+- ⏳ **gate-split / overlay-says-arrival** — design council w7azy0mcp running
+- ⏳ **gap-analysis** desired-function meta-council w3spwcbaf running
+- **D2 nav-panel target** — design draft done; build council pending the parser rebuild
+- Hygiene (no council): 5 dead unreferenced steps; orphaned __pycache__ .pyc
