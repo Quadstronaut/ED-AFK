@@ -1,0 +1,5 @@
+# Generated validation artifacts (validate_ocr_winrt.py re-renders these).
+*.png
+_*
+# Redundant raw feasibility probe (superseded by validate_ocr_winrt.py).
+winrt_ocr_probe.py
