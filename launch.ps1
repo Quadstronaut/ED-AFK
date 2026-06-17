@@ -114,6 +114,14 @@ if (-not $RepoRoot -and $MyInvocation.MyCommand.Path) {
     $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 if (-not $RepoRoot) { $RepoRoot = (Get-Location).Path }
+# Belt-and-suspenders canonicalization (NOT the load-bearing fix). Resolve-Path's
+# ProviderPath normalizes casing, '..' segments, and relative artifacts to a clean
+# absolute path. It does NOT collapse the C:\Users\...\Documents NTFS junction ->
+# G:\Documents (verified: ProviderPath returns the C-form when invoked from the
+# junction). The real junction/stale-editable correction lives in the realpath
+# probe below; this line just guarantees $RepoRoot is a tidy literal path before we
+# Join-Path off it.
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).ProviderPath
 if (-not (Test-Path (Join-Path $RepoRoot "projects\ed-autojump"))) {
     Write-Error "Cannot find projects\ed-autojump under '$RepoRoot' -- run launch.ps1 from the repo root."
     exit 2
@@ -203,22 +211,114 @@ if (-not (Test-Path $venvPython)) {
 # importing a FROZEN out-of-tree snapshot -- importable, so the old find_spec-only
 # check passed, and the bot ran OLD code no matter what was committed to the live
 # tree (cost days, 2026-06-16). Treat (2) like (1) and reinstall so the editable
-# path self-heals to $ProjectRoot. Deliberately NO stderr redirect / NO bare
-# `import` (PS 5.1 wraps a redirected native-stderr line in a terminating
-# NativeCommandError that would kill this script). Path is passed via env to
-# dodge backslash-in-string quoting.
+# path self-heals to $ProjectRoot.
+#
+# REALPATH ON BOTH SIDES (the load-bearing fix, 2026-06-16): C:\Users\...\Documents
+# is an NTFS junction -> G:\Documents. When the operator launches from the C-form
+# junction path, $ProjectRoot is C-form but the editable origin is G-form -- the
+# SAME physical directory. The old abspath+startswith compared C-form root against
+# G-form origin, mismatched, and fired a pointless --force-reinstall on EVERY
+# launch (which then hard-failed offline). os.path.realpath collapses the junction
+# on BOTH sides so the C-aliased root and G-form origin compare equal. A genuinely
+# out-of-tree origin (a worktree .pth) still mismatches -> 2 (protection intact:
+# realpath leaves a nonexistent C: worktree path literal C-form). The in-tree test
+# is `origin == root OR origin startswith root + os.sep` so a sibling like
+# ...\ed-autojump2 cannot prefix-match ...\ed-autojump.
+#
+# Deliberately NO stderr redirect / NO bare `import` (PS 5.1 wraps a redirected
+# native-stderr line in a terminating NativeCommandError that would kill this
+# script). Path is passed via env to dodge backslash-in-string quoting.
 $env:EDAFK_PROJECT_ROOT = $ProjectRoot
-& $venvPython -c "import importlib.util as u, sys, os; root=os.path.normcase(os.path.abspath(os.environ['EDAFK_PROJECT_ROOT'])); s=u.find_spec('ed_autojump'); sys.exit(1) if (s is None or not s.origin) else sys.exit(0 if os.path.normcase(os.path.abspath(s.origin)).startswith(root) else 2)"
+& $venvPython -c "import importlib.util as u, sys, os; root=os.path.normcase(os.path.realpath(os.environ['EDAFK_PROJECT_ROOT'])); s=u.find_spec('ed_autojump'); o=os.path.normcase(os.path.realpath(s.origin)) if (s and s.origin) else None; sys.exit(1) if o is None else sys.exit(0 if (o == root or o.startswith(root + os.sep)) else 2)"
 $probeCode = $LASTEXITCODE
 $env:EDAFK_PROJECT_ROOT = ''
+
+function Ensure-BuildTools {
+    # OFFLINE-SAFE build-backend seeding. pyproject declares
+    # [build-system] requires=["setuptools>=68","wheel"] with backend
+    # setuptools.build_meta, but this venv has NEITHER setuptools nor wheel. Under
+    # default PEP-517 build isolation pip would fetch them from PyPI -- which HARD-
+    # FAILS with no network and turns a self-heal into a launch-blocking error.
+    #
+    # Fix: vendor setuptools (and wheel, if a donor has it) into the venv's own
+    # site-packages by copying from a DONOR interpreter (sys.base_prefix python, or
+    # a bare `python` on PATH) that already ships them. No network, no PyPI. Once
+    # setuptools is importable the editable build runs with --no-build-isolation
+    # against the venv's own interpreter. Modern setuptools (>=70) vendors all
+    # wheel-building machinery, so the standalone `wheel` package is NOT actually
+    # required for an editable build (verified: build_editable succeeds with only
+    # setuptools present); we still seed wheel when a donor offers it, but only
+    # setuptools is mandatory. Returns $true if setuptools ends up importable.
+    $seed = @'
+import importlib.util as U, os, sys, glob, shutil, subprocess, sysconfig
+def have(m):
+    try:
+        return U.find_spec(m) is not None
+    except Exception:
+        return False
+def donor(m):
+    cands = []
+    b = os.path.join(sys.base_prefix, "python.exe")
+    if os.path.isfile(b):
+        cands.append(b)
+    cands.append("python")
+    for py in cands:
+        if os.path.normcase(os.path.abspath(py)) == os.path.normcase(os.path.abspath(sys.executable)):
+            continue
+        try:
+            o = subprocess.run([py, "-c", "import importlib.util as u,os;s=u.find_spec(%r);print(os.path.dirname(s.submodule_search_locations[0]) if (s and s.submodule_search_locations) else (os.path.dirname(s.origin) if s and s.origin else str()))" % m], capture_output=True, text=True, timeout=30)
+            p = o.stdout.strip()
+            if p and os.path.isdir(p):
+                return p
+        except Exception:
+            pass
+    return None
+def vendor(m, dest):
+    sp = donor(m)
+    if not sp:
+        return False
+    md = os.path.join(sp, m)
+    if not os.path.isdir(md):
+        return False
+    shutil.copytree(md, os.path.join(dest, m), dirs_exist_ok=True)
+    for di in glob.glob(os.path.join(sp, m + "-*.dist-info")):
+        shutil.copytree(di, os.path.join(dest, os.path.basename(di)), dirs_exist_ok=True)
+    if m == "setuptools":
+        for e in ("pkg_resources", "_distutils_hack"):
+            ed = os.path.join(sp, e)
+            if os.path.isdir(ed):
+                shutil.copytree(ed, os.path.join(dest, e), dirs_exist_ok=True)
+        ph = os.path.join(sp, "distutils-precedence.pth")
+        if os.path.isfile(ph):
+            shutil.copy2(ph, os.path.join(dest, "distutils-precedence.pth"))
+    return True
+dest = sysconfig.get_paths()["purelib"]
+need = [m for m in ("setuptools", "wheel") if not have(m)]
+for m in need:
+    print("[launch] seed build tool: %s -> %s" % (m, "OK" if vendor(m, dest) else "no offline donor (skipped)"))
+sys.exit(0 if have("setuptools") else 3)
+'@
+    & $venvPython -c $seed
+    return ($LASTEXITCODE -eq 0)
+}
+
 if ($probeCode -ne 0) {
     $pkgSpec = $ProjectRoot + "[dev,hotkey,vision]"
+    # GUARANTEE the editable build can complete OFFLINE before invoking pip: the
+    # backend needs setuptools and this venv has none. Seed (vendor) the build
+    # tools from a donor interpreter, then build with --no-build-isolation (which
+    # is valid ONLY once setuptools is importable -- a bare --no-build-isolation
+    # would fail here today). This keeps the self-heal network-free (INV-4).
+    if (-not (Ensure-BuildTools)) {
+        Write-Error "could not seed setuptools offline -- no donor interpreter has it (need a base Python with setuptools, or network access)"
+        exit 2
+    }
     if ($probeCode -eq 2) {
         Write-Host "[launch] ed_autojump resolves OUT OF TREE (stale editable .pth from a worktree) -- repointing editable to the live tree..."
-        & $venvPython -m pip install -e $pkgSpec --force-reinstall --no-deps
+        & $venvPython -m pip install -e $pkgSpec --force-reinstall --no-deps --no-build-isolation
     } else {
         Write-Host "[launch] ed_autojump not importable (fresh venv, or the repo moved) -- (re)installing editable..."
-        & $venvPython -m pip install -e $pkgSpec
+        & $venvPython -m pip install -e $pkgSpec --no-build-isolation
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Error "pip install failed"
