@@ -61,3 +61,19 @@ fail-closed with a TODO. Operator answered 1/2/3 on 2026-06-16 (applied below); 
 ## Already answered — thank you (no action)
 - Q2 jump obstruction: HUD-only, stars+planets block, stations don't. CV-free StartJump-loop chosen.
 - STARSMACK fires only on a real star-smack; planet-smack is the separate purple-vector case.
+
+---
+
+## AUDIT 2026-06-16 (workflow wj74tg65i) — newly-tracked defects & stubs
+
+- **D1** launch.ps1 junction-probe misfire: reinstalls ed_autojump every launch from the C: path + offline hard-fail; fix = realpath both sides + Resolve-Path $RepoRoot + offline-safe pip. (in council)
+- **D2** nav-panel target: RETIRE the blind keypress macro and REPLACE ENTIRELY with CV-driven selection per project spec (operator correction 2026-06-16). Do NOT tune the blind macro (de-dup/pin-hold/max_rows were the wrong frame). Vehicle = WinRT parser-v2 (worktree wf_d1765b5a-d6c-2, D5). Design draft: docs/superpowers/specs/2026-06-16-cv-navpanel-target-DESIGN-DRAFT.md — pending operator review.
+- **D2b** Unnecessary post-SC-assist wait when target is already in front (gatewalk-efficiency-targets) — was tracked NOWHERE.
+- **D3** EDMCOverlay.exe auto-launch crashes -> visible "not found" console window (mistaken for honk; honk is an in-process thread). Fix: repair EDMC OR [overlay] launch_if_absent=false + connect_timeout_s=2.0. Needs operator's exe-run error text.
+- **D4** escape_vector.detect_escape_vector hard-returns NONE -> smack_recovery NEVER auto-fires; _escape_vector_grabber unwired. Needs blue/purple/no-vector calibration frames.
+- **D5** explore/body_tour BLIND: nav_panel_ocr_enabled=False (config.py:90), parser uses pytesseract not ratified WinRT; WinRT parser-v2 stuck in worktree wf_d1765b5a-d6c-2, never harvested. Harvest navpanel_parser.py + ocr_winrt.py.
+- **D6** ed_vision/hud_sc_indicators.py module ABSENT (only data .json); ctx.hud_grabber never injected -> confirm_orbiting permanently dead. Build detector + wire grabber OR remove the branch.
+- **D7** OQ4: C1 jump-tail kill incomplete — blind wait s=13.0 + engage_jump + hold_alignment still in sc_resume/startup/smack_recovery (only arrival + dock_resume migrated).
+- **D8** doc drift (this cleanup) + inert cleanup: 24 orphaned __pycache__ .pyc; v/ pytest cache git-tracked at repo root; stale dist-info (ed_explore records deleted worktree path, ed_autojump records C: origin); pyvenv.cfg records pre-move path.
+- 5 registered-but-unreferenced steps (fix-or-delete per nothing-stays-unwired): body_tour, station_services, confirm_menu_item, pitch, press.
+- Parallel scoop global python 3.14 editable-installs 4 of 6 packages (a second drift surface) — decide keep-in-sync vs remove.
