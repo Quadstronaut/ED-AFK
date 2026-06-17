@@ -1,3 +1,19 @@
+> ## ⚠️ STALE — FROZEN SNAPSHOT, DO NOT USE AS CURRENT TRUTH
+>
+> **Frozen at 2026-06-08 (master @ ee4c0f7).** This document predates all C1–C4
+> council work (landed 2026-06-16). The Part D defect list, the per-step action
+> tables, and the gate/failure-policy columns **no longer match master**.
+>
+> **Current truth:**
+> - Per-step procedures: `projects/ed-autojump/procedures/*.toml` (live, editable)
+> - C-series design specs (C1–C4): `docs/superpowers/specs/` (ratified council output)
+> - Open defects: `docs/superpowers/specs/OPERATOR_TODO_2026-06-16.md`
+> - Repo overview: `README.md`
+>
+> This file is kept for historical reference only.
+
+---
+
 # ED-AFK Bot Action Surface — Council-of-7 Megasheet
 **Audit date 2026-06-08 · master @ ee4c0f7 · synthesis of 7 slice audits**
 

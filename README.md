@@ -161,9 +161,12 @@ The procedures shipped on `master` (all editable in
   the fire-group trigger until `FSSDiscoveryScan` lands (~5 s), release.
 
 The full per-step table — every action, its gate, its failure policy, and its
-known defects — lives in
-[`docs/ACTION_MEGASHEET.md`](./docs/ACTION_MEGASHEET.md), the authoritative
-audit, and the DSL reference is
+known defects — was in
+[`docs/ACTION_MEGASHEET.md`](./docs/ACTION_MEGASHEET.md).
+**Note: that file is STALE (frozen 2026-06-08, pre-C-series).** Current truth is
+the live procedures in `projects/ed-autojump/procedures/*.toml` and the C1–C4
+ratified specs under [`docs/superpowers/specs/`](./docs/superpowers/specs/).
+The DSL reference is
 [`projects/ed-autojump/procedures/procedures.md`](./projects/ed-autojump/procedures/procedures.md).
 
 ---
@@ -212,8 +215,10 @@ replay-tested only. The fuel-scoop pit-stop (`scoop_refuel`) and several flows
 are explicitly marked *not live-tested*. You cannot be promised reliable
 unattended operation today.
 
-**Open defects that can strand or crash the ship** (full detail in
-[`docs/ACTION_MEGASHEET.md`](./docs/ACTION_MEGASHEET.md), Part D):
+**Open defects that can strand or crash the ship** (Part D of
+[`docs/ACTION_MEGASHEET.md`](./docs/ACTION_MEGASHEET.md) is **STALE** — frozen
+2026-06-08, pre-C-series; see [`docs/superpowers/specs/OPERATOR_TODO_2026-06-16.md`](./docs/superpowers/specs/OPERATOR_TODO_2026-06-16.md)
+for the current defect list):
 
 1. **Docking defect #1 closed on `master`.** The `dock_approach` step is now
    present in `dock.toml` and `steps.py`; the DockingDenied(Distance) loop no
@@ -274,7 +279,7 @@ ED-AFK/
 ├── LICENSE                    <- MIT (repo root)
 ├── THIRD_PARTY_NOTICES.md     <- attribution + the AGPL model note
 ├── docs/
-│   ├── ACTION_MEGASHEET.md    <- authoritative per-step audit (gates, defects)
+│   ├── ACTION_MEGASHEET.md    <- STALE (frozen 2026-06-08, pre-C-series); see specs/ for current truth
 │   ├── shared/                <- cross-tool reference (journal events, FSD, star classes)
 │   └── superpowers/specs/     <- design specs (incl. the procedure-interpreter design)
 └── projects/                 <- a layered workspace; the dependency DAG points
@@ -303,8 +308,10 @@ ED-AFK/
   knobs, runtime settings).
 - **Procedures** live in `projects/ed-autojump/procedures/` — the editable
   surface described above.
-- **The authoritative action audit** (every step, gate, and open defect) is
-  [`docs/ACTION_MEGASHEET.md`](./docs/ACTION_MEGASHEET.md).
+- **The authoritative action audit** was
+  [`docs/ACTION_MEGASHEET.md`](./docs/ACTION_MEGASHEET.md) — **STALE (frozen 2026-06-08,
+  pre-C-series)**. Current: [`docs/superpowers/specs/`](./docs/superpowers/specs/) (C1–C4
+  ratified specs) and `projects/ed-autojump/procedures/*.toml` (live step lists).
 - **The original design spec** is
   [`docs/superpowers/specs/2026-05-25-procedure-interpreter-design.md`](./docs/superpowers/specs/2026-05-25-procedure-interpreter-design.md).
 

@@ -28,6 +28,7 @@ wheels/
 .installed.cfg
 *.egg
 .pytest_cache/
+v/
 .mypy_cache/
 .ruff_cache/
 .tox/
