@@ -21,9 +21,11 @@ manual: setup, calibration, and the CLI.
 > marked so), and there are **open defects that can strand or crash the ship** —
 > the `dock` lane now has the `dock_approach` step (defect #1 closed on master),
 > `sc_resume` can throttle a star-parked ship into the star, and
-> `smack_recovery` can mis-flip. The authoritative per-step audit, with every
-> gate and known defect, is [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md)
-> at the repo root. `calibration/README.md` and `calibration/overnight-runbook.md`
+> `smack_recovery` can mis-flip. The historical per-step audit was
+> [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md) — **STALE (frozen
+> 2026-06-08, pre-C-series)**; current truth is the C1–C4 ratified specs in
+> [`docs/superpowers/specs/`](../../docs/superpowers/specs/) and the live step lists
+> in `procedures/*.toml`. `calibration/README.md` and `calibration/overnight-runbook.md`
 > cover what to validate in-game.
 
 ## Quick start
@@ -177,35 +179,30 @@ StarClass, no fuel starvation, no abandoned routes.
 
 ## Layout
 
+> **Note:** the layout below reflects the current workspace after the Phase-1
+> reorg (landed master @ f36f1e7, 2026-06-15). The old monolith is gone.
+> Subsystems that formerly lived inside `src/ed_autojump/` have migrated:
+> journal/status/keys/planner/hud/launcher/orchestrator → **`ed-core`**;
+> compass/widget-ring/nav-panel CV → **`ed-vision`**; body-tour → **`ed-explore`**.
+> Only the exploration-harness-specific logic remains here.
+
 ```
 projects/ed-autojump/
   pyproject.toml
+  config.toml             # runtime config (vision region, nav knobs, ...)
+  procedures/             # editable step-list TOML files (arrival, startup, ...)
   src/ed_autojump/
+    __init__.py
     cli.py                # entry point (registered as `ed-autojump`)
-    config.py             # config.toml loader
-    state.py              # in-memory FSM
-    binds_tool.py         # install / swap / restore StartPreset.4.start
-    journal/              # journal tail + pydantic event models
-    status/               # Status.json + NavRoute.json watchers
-    keys/                 # binds parser + DirectInput sender (Null/Recording/real)
-    fsd/                  # fuel math + danger list (coriolis-data constants)
-    planner/              # Spansh integration + danger/fuel filters
-    executor/             # state-driven macros (honk, jump, scoop, fss, dss)
-    eddn/                 # EDDN publisher (opt-in)
-    hud/                  # EDHM detect, GraphicsConfigurationOverride writer
-    docking/              # docking pre-flight predicates + permission flow
-    launcher/             # MEL spawn + dryrun + menu nav + wizards + flow
-    binds/                # bundled ED-AFK.4.2.binds preset
-    data/                 # bundled FSD constants (fsd_modules.json)
-    orchestrator.py       # main loop (JournalTail -> dispatch -> Recorder)
-    panic.py              # thread-safe panic switch (poll + trip + on_trip callback)
-    recorder.py           # session JSONL writer (overnight capture)
-    anonymizer.py         # scrub CMDR / FID / AccountID from session JSONL
     session_audit.py      # pure functions for safety asserts on recorded sessions
-    doctor.py             # pre-flight checks (binds + dirs + EDHM + pydirectinput)
+    binds/                # bundled ED-AFK.4.2.binds preset
+    data/                 # bundled constants (fsd_modules.json, receivetext_catalog.json)
+    executor/             # step executor / interpreter
+    flow/                 # flow steps (arrival, startup, dock, smack, etc.)
+    fsd/                  # fuel math + danger list (coriolis-data constants)
   tests/
     fixtures/journals/    # anonymized real-journal samples
-    test_*.py             # ~1240 offline tests, 1 @requires_game stub
+    test_*.py             # offline test suite
   scripts/
     nightly-run.ps1       # Tier-2 unattended runner (manual or task-scheduled)
     ed-afk-nightly.xml    # Task Scheduler XML (manual import only)
@@ -217,9 +214,10 @@ projects/ed-autojump/
 ## Capability status
 
 Honest state on `master`. "Shipped" means wired into the live path and covered
-by the offline suite; it does **not** mean live-proven. The authoritative
-per-step audit, including every open defect, is
-[`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md).
+by the offline suite; it does **not** mean live-proven. The historical per-step
+audit is [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md) — **STALE
+(frozen 2026-06-08, pre-C-series)**; see [`docs/superpowers/specs/`](../../docs/superpowers/specs/)
+(C1–C4 ratified specs) and `procedures/*.toml` (live step lists) for current truth.
 
 | Capability | Status |
 |---|---|
