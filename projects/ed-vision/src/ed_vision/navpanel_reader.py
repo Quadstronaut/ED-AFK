@@ -45,6 +45,30 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence
 # READ layer stays CALIBRATION-PENDING); the PARSE/SELECT logic is validated.
 DEFAULT_NAV_REGION = (505, 435, 410, 330)
 
+
+def resolve_nav_region(
+    default_region: Sequence[int],
+    by_ship: Optional[dict] = None,
+    ship: Optional[str] = None,
+) -> tuple:
+    """Per-ship nav-panel region (#19): cockpit/HUD geometry shifts per ship, so
+    a region calibrated for one hull is wrong on another.  Return the active
+    ship's calibrated rect if `by_ship` has it, else `default_region`.
+
+    `ship` = the journal `Ship` type (LoadGame/Loadout), case-insensitive.
+    ship=None / unknown / empty map -> default_region (fail-safe: identical to
+    today's single-ship behaviour).  TODO(#19): wire the runtime active-ship
+    supplier so the region tracks ship swaps live; today the bot is single-ship
+    (Mandalay) and `by_ship` is empty, so this is an inert hook.  Same exposure
+    exists for the compass/widget rects (VisionConfig) — tracked in #19.
+    """
+    if ship and by_ship:
+        key = ship.strip().lower()
+        for k, v in by_ship.items():
+            if str(k).strip().lower() == key:
+                return tuple(v)
+    return tuple(default_region)
+
 # A body DESIGNATOR after the system name: 0-3 capital letters then an optional
 # run of " <n>"/" <letter>" parts — "A", "A 1", "AB 3", "A 1 a", "1".  At least
 # one letter OR digit must be present (a bare system name with no designator is
@@ -208,15 +232,36 @@ def read_nav_panel_lines(
     psm: int = 6,
     upscale: float = 2.0,
     invert: bool = True,
+    engine: str = "auto",
 ) -> List[str]:
-    """OCR a nav-panel crop to text lines.  Lazy-imports cv2 + pytesseract so the
-    module imports fine without the [cv] extra (raises a clear error only if
-    actually called without them).
+    """OCR a nav-panel crop to text lines.
 
-    Preprocessing: grayscale -> upscale -> Otsu threshold (orange-on-dark, so
-    invert to dark-on-light for tesseract).  TUNING IS CALIBRATION-PENDING — the
-    psm / threshold / upscale want a real planet-rich frame to lock in.
+    `engine`:
+      "auto"      (default) — WinRT if the winrt-Windows.* packages import,
+                  else the pytesseract fallback.
+      "winrt"     — force WinRT (raise if unavailable).
+      "tesseract" — force the legacy pytesseract path.
+
+    WinRT (`ocr_winrt`) is the RATIFIED engine (memory ed-navpanel-ocr-first-
+    parser): it reads the dim slanted HUD font where pytesseract is hit-or-miss,
+    needs no tesseract binary, and strips the leading row icon-glyphs.  Validated
+    live on the Sol frame (8/8 known bodies).  The pytesseract path stays as a
+    fallback for boxes without the winrt projection.
+
+    pytesseract preprocessing: grayscale -> upscale -> Otsu threshold
+    (orange-on-dark, so invert to dark-on-light).  CALIBRATION-PENDING — psm /
+    threshold / upscale want a real planet-rich frame to lock in.
     """
+    if engine in ("auto", "winrt"):
+        try:
+            from .ocr_winrt import available as _winrt_available
+            from .ocr_winrt import ocr_lines as _winrt_lines
+            if engine == "winrt" or _winrt_available():
+                return _winrt_lines(frame)
+        except Exception:
+            if engine == "winrt":
+                raise
+            # "auto" -> degrade to the pytesseract fallback below.
     try:
         import cv2  # type: ignore
         import numpy as np  # type: ignore
@@ -250,13 +295,14 @@ class NavPanelReader:
     PARSE + SELECT below it are tested."""
 
     def __init__(self, *, region: Sequence[int] = DEFAULT_NAV_REGION,
-                 fuzzy: float = 0.8, psm: int = 6):
+                 fuzzy: float = 0.8, psm: int = 6, engine: str = "auto"):
         self.region = tuple(region)
         self.fuzzy = fuzzy
         self.psm = psm
+        self.engine = engine
 
     def parse(self, frame: Any, current_system: Optional[str]) -> List[NavBody]:
-        lines = read_nav_panel_lines(frame, psm=self.psm)
+        lines = read_nav_panel_lines(frame, psm=self.psm, engine=self.engine)
         return parse_nav_panel_rows(lines, current_system, fuzzy=self.fuzzy)
 
     def read(self, frame: Any, current_system: Optional[str],

@@ -314,11 +314,16 @@ def build_navpanel_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[]
     """Construct (NavPanelReader, navpanel_grabber.grab) for body_tour identity
     targeting, or (None, None) if disabled / unavailable.
 
-    Gated on cfg.exploration.nav_panel_ocr_enabled (default OFF). The OCR layer
-    needs the [cv] extra (pytesseract) + a tesseract binary + a calibrated
-    region — none assumed here; if anything is missing the build degrades to
-    (None, None) and body_tour falls back to the blind row walk. CALIBRATION-
-    PENDING until a real planet-rich frame validates the region.
+    Gated on cfg.exploration.nav_panel_ocr_enabled (default OFF). The READ layer
+    is WinRT (ocr_winrt.py, the ratified engine — needs the winrt-Windows.*
+    packages; pytesseract is only the fallback) + a calibrated region. If
+    anything is missing the build degrades to (None, None) and the caller falls
+    back to the blind row walk. CALIBRATION-PENDING until a per-ship frame
+    validates the region.
+
+    #19: the region is resolved per-ship (cockpit geometry is ship-dependent).
+    TODO(#19) wire the runtime active-ship supplier; today ship=None -> the
+    single global rect (Mandalay), identical to prior behaviour.
 
     Mirrors build_widget_vision: returns the BOUND `.grab` (every call site does
     grabber()). NEVER raises."""
@@ -326,9 +331,13 @@ def build_navpanel_vision(cfg: Any) -> Tuple[Optional[Any], Optional[Callable[[]
     if expl is None or not getattr(expl, "nav_panel_ocr_enabled", False):
         return None, None
     try:
-        from .navpanel_reader import NavPanelReader
+        from .navpanel_reader import NavPanelReader, resolve_nav_region
 
-        region = tuple(getattr(expl, "nav_panel_region", (310, 145, 235, 125)))
+        region = resolve_nav_region(
+            getattr(expl, "nav_panel_region", (505, 435, 410, 330)),
+            getattr(expl, "nav_panel_region_by_ship", None),
+            ship=None,  # TODO(#19): runtime active-ship from journal LoadGame/Loadout
+        )
         reader = NavPanelReader(region=region)
         grabber = ScreenGrabber(region, backend=cfg.vision.capture_backend,
                                 name="navpanel")

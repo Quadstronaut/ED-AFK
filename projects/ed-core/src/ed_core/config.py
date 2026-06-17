@@ -81,14 +81,22 @@ class ExplorationConfig:
     body_tour_max_rows: int = 8
     body_tour_orbit_timeout_s: float = 120.0   # per-body BACKSTOP only, never a success gate
     body_tour_min_bodies: int = 0           # only tour a system whose honk BodyCount >= this (0 = every system)
-    # IDENTITY targeting (task #45): when on, body_tour reads the NAVIGATION
-    # panel (OCR) and targets the next UNEXPLORED body by NAME instead of a
-    # blind row walk. OFF by default — needs the [cv] extra (pytesseract +
-    # tesseract binary) and a live OCR pass to lock psm/preprocessing.
+    # IDENTITY targeting (task #45) + G1 nav-panel CV target: when on, the
+    # NAVIGATION panel is OCR'd and bodies/target are picked by NAME instead of
+    # a blind row walk. OFF by default — gate flips after a per-ship calibration
+    # frame validates the region (the rebuilt READ layer is WinRT, the ratified
+    # engine: ocr_winrt.py, no tesseract binary; pytesseract stays a fallback).
     # nav_panel_region is (x, y, w, h) @1920x1080, MEASURED from a real frame
     # (the body-name column); see vision/navpanel_reader.DEFAULT_NAV_REGION.
     nav_panel_ocr_enabled: bool = False
     nav_panel_region: tuple[int, int, int, int] = (505, 435, 410, 330)
+    # #19 per-ship CV regions: cockpit/HUD geometry shifts per ship, so the rect
+    # above is wrong on another hull. Map journal Ship type -> its calibrated
+    # rect; empty = single-ship (current behaviour). Resolved via
+    # navpanel_reader.resolve_nav_region. Compass/widget rects (VisionConfig)
+    # have the same exposure — see docs OPERATOR_TODO_2026-06-16 #19.
+    nav_panel_region_by_ship: dict[str, tuple[int, int, int, int]] = field(
+        default_factory=dict)
 
 
 @dataclass

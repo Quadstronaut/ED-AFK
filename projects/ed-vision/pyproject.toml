@@ -21,6 +21,19 @@ cv = [
     "dxcam-cpp",
     "pytesseract>=0.3.10",
 ]
+# Nav-panel CV READ layer (G1/G5/G6). WinRT Windows.Media.Ocr via the modern
+# split winrt-Windows.* packages (cp314 wheels; the dead monolithic `winsdk`
+# has none). opencv crops/encodes the frame -> in-memory PNG -> WinRT OCR.
+# Windows-only (this project is win32-only). pytesseract (in [cv]) is the
+# fallback engine.
+navocr = [
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "winrt-Windows.Media.Ocr",
+    "winrt-Windows.Graphics.Imaging",
+    "winrt-Windows.Storage.Streams",
+    "winrt-Windows.Foundation.Collections",
+]
 # Nav-compass alignment. Default (light) path: onnxruntime runs the
 # vendored compass.onnx. opencv/dxcam do capture + the colour-free
 # fallback reader. No PyTorch here — this is the "just works" tier.
