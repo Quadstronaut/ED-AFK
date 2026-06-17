@@ -136,6 +136,33 @@ Extends the quick register above. Each function independently gap-analyzed + a s
 - **G14 · P2 · MISSING** — FSS sweep: unbuilt; SPEC's keyboard sweep is a blind 30s timer (conflicts with no-timers → must be CV/event).
 - **G15 · P2 · MISSING** — DSS: entirely absent, not even designed (Non-goal in the original spec).
 
-**Also flagged (outside the 15):** combat + trading domains register NOTHING — "engine runs DOMAINS" is autojump-only today; no CV-coverage map (which functions are journal-sufficient vs genuinely-need-CV); VisionConfig backend default `yolo-onnx` ≠ validated-production `cyan` (a fresh config loads the less-validated reader).
+**Also flagged (outside the 15):**
+- **16 ·** combat + trading domains register NOTHING — "engine runs DOMAINS" is autojump-only today.
+- **17 ·** no CV-coverage map (which functions are journal-sufficient vs genuinely-need-CV).
+- **18 ·** VisionConfig backend default `yolo-onnx` ≠ validated-production `cyan` (a fresh config loads the less-validated reader).
+
+---
+
+## 19 · Per-ship CV region calibration — screen regions are ship-dependent · ◻️ [NEW, operator 2026-06-16]
+
+The CV screen-region constants are calibrated for ONE ship and are WRONG on another. Operator bought
+the **Caspian Explorer** (exploration ship), found the **compass vision location was wrong** (the
+cyan-dot/ring reader was pointed at the wrong screen rect → bad/empty reads), and **switched back to the
+Mandalay** — the ship the current calibration fits. Could not test G1 further on the Caspian. Root cause:
+cockpit/HUD geometry shifts per ship, so every hardcoded CV rect is ship-specific:
+
+- `VisionConfig.region` (compass capture rect) + `compass_radius` — `config.py:265-268`; the sentinel
+  `(0,0,0,0)` is set once by `ed-autojump calibrate-compass` for whatever ship was active. **[the one the operator hit]**
+- `VisionConfig.widget_crop` `(510,240,900,600)` — `config.py:287` (HUD mouse-widget ring fine-align).
+- `ShipConfig.nav_panel_region` `(505,435,410,330)` — `config.py:91` (G1 nav-panel target + G5 body-identify OCR).
+- SC-assist HUD crops (`data/hud_sc_indicators.json`, G7) + the escape-vector region (G2) — same exposure.
+
+**Fix direction (design, not built):** make CV regions a per-ship map keyed on the journal **`Ship`**
+type (from `LoadGame`/`Loadout`), resolved at runtime once the active ship is known; `calibrate-compass`
+stores under the active ship; an uncalibrated ship falls back to off/blind (fail-closed — never drive on a
+wrong rect). **This is a calibration dependency for G1/G2/G5/G7:** the rebuilt nav-panel parser's region
+must come from this per-ship resolver, not a global constant (the rebuild adds the hook + stub now).
+Until built, the bot is single-ship — re-run calibration after every ship change; **Mandalay is the
+calibrated ship.**
 
 **12 operator forks (answer one at a time — full text in tasks/w3spwcbaf.output):** Fork-1 FIRST = disambiguate which "OCR/overlay" is broken (2-line fix vs multi-day CV rebuild); then nav-panel calibration frames, smack frames, boot-determine evidence source, OQ4 migration scope, orbit-confirm, Spansh route-set, launch `--launch` wiring, panic-throttle, widget default, autoexplore throttle, FSS/DSS scope.
