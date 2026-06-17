@@ -61,7 +61,7 @@ guess (exactly the "ask Operator, no guessing" discipline). Per-council designs 
 
 ## D · No input needed (I handle / cross-council)
 
-- **C5 Traversal** re-fired with the round-1 fixes (citation, no-honk-in-Traversal, contract wording) — running.
+- **C5 Traversal** — re-fired with the round-1 fixes → **RATIFIED (round 2, commit, gen-sonnet-2)**. Frame-independent and buildable now (the first scene that can ship). Leftover flags B1–B3 (C2 entry contract; whether the 5s/3s waits should be event-gated) are minor and don't block.
 - **`boost`** is a new step (C7 3b): tap `UseBoostJuice`/Key_B, best-effort. I'll spec it (say if you want a cooldown/heat guard).
 - **honk** stays a parallel track in **Arrival only** (not Traversal/Smack) — pinned.
 - **The danger-gate "hole"** in `target_next_route` is the unwired/test path only — **not a live bug** (verified `steps.py:94`).
