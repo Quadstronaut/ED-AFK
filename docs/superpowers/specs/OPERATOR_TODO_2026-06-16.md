@@ -111,3 +111,31 @@ The desired-function gap-analysis council (w3spwcbaf) will add/confirm when it l
 - ⏳ **gap-analysis** desired-function meta-council w3spwcbaf running
 - **D2 nav-panel target** — design draft done; build council pending the parser rebuild
 - Hygiene (no council): 5 dead unreferenced steps; orphaned __pycache__ .pyc
+
+---
+
+## GAP ANALYSIS COUNCIL (w3spwcbaf) — AUTHORITATIVE register (52 agents, adversarially verified, 2026-06-16)
+
+Extends the quick register above. Each function independently gap-analyzed + a separate skeptic verified the gap is real. Full 12 forks + 13-step build sequence in `tasks/w3spwcbaf.output`.
+
+**Thesis:** the ENGINE is done (dispatcher→interpreter→steps→keys, editable TOML, honk, scoop, docking — delivered + reachable). "None of this is happening" = the PERCEPTION layer is hollow + autonomy gated behind calibration frames + config flags. **ONE root cause feeds the big three: the CV nav-panel READ layer doesn't exist at runtime (lost WinRT parser-v2).** Rebuild it → unblocks G1+G5+G6 at once.
+
+- **G1 · P0 · MISSING** — `F-navpanel-target-cv`: blind macro over-fires (14× pin-walks/hop, 7 callsites: arrival 42/72, startup 87/94/111, sc_resume 55, smack 49); CV target path unbuilt; reader is uncalibrated pytesseract, `nav_panel_ocr_enabled=False`. **[ROOT]**
+- **G2 · P1 · STUB** — smack determine+recover: `detect_escape_vector` returns NONE + grabber unwired → `smack_recovery` NEVER auto-fires. Needs purple-planet + no-vector frames.
+- **G3 · P1 · STUB · [NEW]** — Spansh routing: README says "Shipped" but it's ONE console print; no HTTP client, no route-SET mechanism (NavRoute.json is read-only).
+- **G4 · P1 · BROKEN** — overlay indicators: status text works; CV-debug boxes suspected-broken on a wire-format defect (`fill=""` should be `#00000000`) + the EDMCOverlay.exe auto-launch crash (D3).
+- **G5 · P1 · PARTIAL** — body-identify: only NAME(text)+explored(journal) exist; no KIND/distance/selected-row; WinRT engine lost; double-gated OFF. **[root-fed]**
+- **G6 · P1 · CLUNKY** — autoexplore: fully built, no-ops on the first guard (OCR gate OFF) + 4 stubs; predecessor body_tour timed out 120s (suspected throttle not in SC-assist blue zone). **[root-fed]**
+- **G7 · P1 · CLUNKY** — orbit get-around: fires but proves nothing; blind 13s acquire timer; `detect_orbiting` module absent + hud_grabber unwired (D6).
+- **G8 · P1 · PARTIAL · [NEW]** — boot-determine: in-SC restart split still 100% the 30s `FRESH_ARRIVAL_WINDOW` timer; only 4/11 C-series states route live; ARRIVAL/STARSMACK unreachable from classify.
+- **G9 · P1 · PARTIAL** — flight loop: architecturally complete but NEVER live-verified end-to-end unattended; aggregates G1/G2/G6/G10 + the sc_resume star-ram.
+- **G10 · P1 · PARTIAL** — jump-clearance migration (= OQ4): C1 loop live only in arrival+dock_resume; sc_resume/startup/smack_recovery still on the blind 13s+engage+hold tail.
+- **G11 · P1 · PARTIAL · [NEW]** — launch-menu: hands-off launch UNREACHABLE from `launch.ps1` (never passes `--launch`); menu-nav is a blind keypress walk.
+- **G12 · P2 · PARTIAL · [NEW, safety seam]** — panic-abort: on panic mid-SC the ship keeps coasting at throttle-100 (no SetSpeedZero; throttle is latched, release_all can't stop it). Must gate any SetSpeedZero to not-charging.
+- **G13 · P2 · PARTIAL · [NEW]** — fail-closed seam: `widget_ring_on_miss` defaults 'degrade' → a fine-align miss lets the REQUIRED orient PASS on compass-only; startup.toml:117 orient not required=true.
+- **G14 · P2 · MISSING** — FSS sweep: unbuilt; SPEC's keyboard sweep is a blind 30s timer (conflicts with no-timers → must be CV/event).
+- **G15 · P2 · MISSING** — DSS: entirely absent, not even designed (Non-goal in the original spec).
+
+**Also flagged (outside the 15):** combat + trading domains register NOTHING — "engine runs DOMAINS" is autojump-only today; no CV-coverage map (which functions are journal-sufficient vs genuinely-need-CV); VisionConfig backend default `yolo-onnx` ≠ validated-production `cyan` (a fresh config loads the less-validated reader).
+
+**12 operator forks (answer one at a time — full text in tasks/w3spwcbaf.output):** Fork-1 FIRST = disambiguate which "OCR/overlay" is broken (2-line fix vs multi-day CV rebuild); then nav-panel calibration frames, smack frames, boot-determine evidence source, OQ4 migration scope, orbit-confirm, Spansh route-set, launch `--launch` wiring, panic-throttle, widget default, autoexplore throttle, FSS/DSS scope.
