@@ -1,0 +1,45 @@
+﻿<!-- C-council C2-control-flow | task wio65907k | decision=route_back selected= | 2026-06-17 | DESIGN-ONLY (not built/wired) | ledger: .claude/council-ledger.jsonl -->
+
+## C2 Control-Flow / Section-Transition â€” DESIGN (DESIGN-ONLY, no flight-code edits, no commit)
+
+Two new files (verified via `git status`: only these, no flight-code touched):
+- **`docs/superpowers/specs/2026-06-17-c2-control-flow-DESIGN.md`** â€” the ratified design doc + BLOCKED-ON-KYLE list.
+- **`projects/ed-autojump/tests/flow/test_c2_section_transition.py`** â€” 29 PURE acceptance tests (no game/CV/network), GREEN against the real `Status`/`_Destination`/`NavRoute` parsers, the settled `_destination_is_local_star`/`_dest_is_named_station` predicates, and the real `ArrivalLatch`. Verified: `29 passed in 0.52s` under both the package config and the repo-root `pytest.ini` (`not requires_game`).
+
+### THE ONE DECISION (AC1, D4): Python orchestrator in `ed_autojump`, NOT a TOML `goto` step.
+Procâ†’proc transition does not exist in the interpreter/loader/model: `model.Step` (model.py:9-27) has no successor field; `loader._step_from_table` (loader.py:35-42) pops only action/required/retry_anchor/skip_to â€” no goto/next/chain key; `run_procedure` (interpreter.py:31-187) returns a terminal `ProcedureResult` and only does intra-proc `skip_to`/`retry_from`. All chaining today is Python `runner._run` in boot_routes.py. Chosen realization = a domain-side successor map (`_SECTION_TO_PROC`) + `transition_to(runner, section)` + a `run_arrival_then_branch` orchestrator next to the existing `_STATE_TO_PROC`. A TOML `goto` is rejected because acting on its terminal verdict would force either a coreâ†’domain import (the G12 edge the interface forbids) or a strictly-larger core-engine change that is just the orchestrator wired through the interpreter for no benefit. D4 still flagged for Operator as a preference ratification.
+
+### Arrival flag (AC2): reuse `ArrivalLatch`. Hyperspace `StartJump` begins witchspace (dispatcher.py:660), `FSDJump` ends it (dispatcher.py:662) and IS the arming edge (`_route_fsd_jump` arms, boot_routes.py:510). Ownership: `_route_fsd_jump` owns ARM (live, arms-and-dispatches directly); `classify_startup` owns CONSUME (restart only, boot_routes.py:298, exactly-once). The classifier runs only when no events pending (dispatcher.py:941-945) and the live route only when events ARE pending, so the two surfaces are mutually exclusive per tick â€” cannot double-fire.
+
+### Discriminators (AC3), placement `ed_core/flow/predicates.py`, fail-closed:
+- `dest_is_system(st, route, system_name)`: NavRoute-empty PRIMARY, `_destination_is_local_star is True` CORROBORANT. None route â†’ empty â†’ True â†’ safe terminal Docking.
+- `dest_is_station(st)` = `_dest_is_named_station(st)` verbatim (Body!=0 + non-`$` Name); `system` is the negation (Body==0). status=None â†’ False.
+- `exploration_active(runner)` = `bool(getattr(runner,"_exploration_mode",False))` â€” D2-BLOCKED, fails closed to False.
+
+### Arrival branch table (AC4, verbatim + precedence): `if dest_is_system â†’ docking; elif exploration_active â†’ exploration; else â†’ traversal`. Smackâ†’Traversal and Explorationâ†’Traversal are unconditional `transition_to(runner,"traversal")` (D5: Exploration hands off by procedure completion, not internal goto).
+
+### honk (AC5): confirmed = existing `parallel_tracks=["honk"]` (arrival.toml:17), 15s join cap (dispatcher.py:534), no downstream wait. Reconciliation: `honk_dscanner` stays PURELY the track, NOT a named in-line step â€” the operator's "step 2" is ordering intent; the track launches at scene start (even earlier). No extension needed.
+
+### scoop knob (AC6, DESIGN-ONLY no edit): STEP PARAM not config. `arrival.toml` line 52 `refuel_below = 0.70 â†’ 0.50`. Other call site enumerated: `route_complete_park.toml` line 32 `refuel_below = 0.99` â€” do NOT change (intentional end-of-route top-up); flagged as new D6.
+
+### Placement (AC8): predicates in ed_core (domain-free); orchestrator in ed_autojump via register_classifier_rule/register_event_route at activate() (no coreâ†’domain import, no lazy register in run_live); consistent with `_STATE_TO_PROC`/`scene_for`.
+
+### BLOCKED-ON-KYLE (AC7): D1 (Status.Destination station schema, LIVE-TEST-GATED â€” undockâ†’plot-to-stationâ†’read Body!=0), D2 (exploration source: body_tour_enabled vs new flag â€” _exploration_mode unwired), D3 (engage_jump_clearance semantics), D4 (transition mechanism ratification), D5 (Explorationâ†’Traversal hand-off via completion), D6 (route_complete_park scoop knob).
+
+## ASSUMPTIONS ()
+- Acceptance tests belong under projects/ed-autojump/tests/flow/ (the only collected tests dir with a conftest+FakeSender; projects/ed-core/tests does not exist yet, and pytest.ini skips non-existent testpaths). The test imports ed_core.flow.predicates directly, so it does not need to live in ed-core's tree.
+- Because the council is DESIGN-ONLY, the three new discriminators and the section-transition orchestrator are defined as a REFERENCE implementation INSIDE the test file (the executable contract), NOT added to flight code (predicates.py / boot_routes.py). When ratified they land verbatim in those files.
+- The Arrival branch precedence is dest_is_system FIRST (most specific: arrived at final destination), then exploration_active, then traversal default â€” matching the master spec's written order if/elif/else.
+- NavRoute-empty is the PRIMARY signal for 'current system == destination' and _destination_is_local_star is the corroborant, per the interface's recommended precedence (Interface 2.3).
+- A station-locked Destination while the route still has onward hops branches to Traversal (not Docking) at Arrival; Docking is reached only at route-complete (empty route) â€” i.e. dest_is_station does not by itself force the Docking branch during mid-route arrival.
+- honk_dscanner is realized purely as the parallel track, not as a sequential in-line step, because only the track gives 'begin immediately, nobody waits'.
+- The scoop step impl (step_scoop_refuel) reads refuel_below from params with no hardcoded default needing change for the 0.70->0.50 edit (inferred from the TOML param being authoritative; not separately re-read in this pass).
+- transition_to returns '' (empty) and dispatches nothing on an unknown/unloaded section, and the caller must treat '' as a named operator abort rather than running a blank procedure (fail-closed).
+
+## RISKS ()
+- @{lens=spec-conformance; note=The discriminators/orchestrator are designed and TESTED as a reference impl in the test file, not wired into predicates.py/boot_routes.py (DESIGN-ONLY mandate). If the operator expected the design council to also stage the actual code edits, the contract is proven correct but not yet placed in flight code. The exact landing sites are named in the design doc.}
+- @{lens=boundaries; note=dest_is_system treats a None NavRoute as empty->True->Docking. If a transient NavRoute read failure (file mid-write returning None) coincides with Arrival, the bot would branch to Docking instead of Traversal mid-route. Mitigation relies on Docking step-1 re-reading Status and idling on a system dest, but a momentary None during an onward-hop arrival is a possible mis-branch. A two-read settle (as dispatch_route_complete uses) may be warranted; not specified here.}
+- @{lens=spec-conformance; note=D1 (plot-to-station sets Destination.Body!=0 at the decision instant) is UNCONFIRMED from journals and gates dest_is_station's real-world correctness. The predicate read is settled; the game mechanic that produces the schema is not. If D1 is false, station detection at Arrival is dead (falls to system/park path) â€” fail-safe but functionally incomplete until Operator's live test.}
+- @{lens=spec-conformance; note=exploration_active is hard-blocked on D2 and fails closed to False, so the Exploration branch can NEVER be taken until Operator wires a source. The design is correct-but-inert for that branch; a reviewer wanting Exploration exercised live will find it unreachable by construction.}
+- @{lens=concurrency; note=The arm(live)/consume(restart) mutual-exclusion argument rests on run_classifiers firing only when `not events` (dispatcher.py:941-945). If a future change ran classifiers while events are pending, the live arm and a restart consume could interleave for the same arrival. The argument is correct for today's loop but is a load-bearing dependency on that specific ordering, not an enforced invariant.}
+- @{lens=failure-recovery; note=transition_to dispatches via runner._run, which is cooperative but runs the successor synchronously after the current proc returns. If the orchestrator (run_arrival_then_branch) itself is invoked from an event route, a preempt that arrives between arrival's return and the branch read is not re-checked before transition_to â€” a smack landing in that window could be branched-over. The design says transitions mirror _run discipline but does not specify a should_abort recheck at the branch point.}
