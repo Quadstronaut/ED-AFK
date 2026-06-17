@@ -3,6 +3,20 @@
 All 4 councils LANDED (C1-C4) + the stale-editable fix. NO answer was guessed — every gap is STUBBED
 fail-closed with a TODO. Operator answered 1/2/3 on 2026-06-16 (applied below); only the FRAMES remain.
 
+> **PROGRESS 2026-06-16 eve (G1 root landed):**
+> - **#19 added** — per-ship CV region calibration (operator hit it on the Caspian Explorer; see §19).
+> - **G1 ROOT REBUILT + LANDED (`c31af28`)** — the lost WinRT parser-v2 READ layer is rebuilt as
+>   `ed_vision/ocr_winrt.py` (modern `winrt-Windows.*` cp314 packages; dead `winsdk` has no 3.14 wheel).
+>   **Validated LIVE on the pinned Sol frame, ndarray flight path: 8/8 bodies** (NAV BEACON/MERCURY/VENUS/
+>   EARTH/MOON/TITAN COCIJO/MARS/JUPITER/GANYMEDE/IO). `read_nav_panel_lines` now prefers WinRT
+>   (pytesseract fallback kept). **Ship-safe-inert:** `nav_panel_ocr_enabled=False` unchanged → flight path
+>   byte-identical; adversarially reviewed (ship-safe + contracts + fail-soft all CONFIRMED). **This is the
+>   D5/G5/G6 root** — the parser is no longer "lost work" (resolves D5's REBUILD).
+> - **REMAINING for G1** (not built): the **selection brain** `step_nav_panel_target_cv` (pick THE target
+>   row + skip-when-locked + counted walk to row_index), gated on the **3 BLOCKING operator OQs** in
+>   `2026-06-16-cv-navpanel-target-DESIGN-DRAFT.md` (OQ1 skip-when-locked, OQ2 identity rule, OQ3 success
+>   predicate) + **a per-ship NAVIGATION calibration frame** (region currently estimated for Mandalay).
+
 ## Autoexploration
 
 ### RESOLVED by Operator (2026-06-16) — applied as game-truth, not guessed
