@@ -4,7 +4,14 @@ All 7 section councils ran (design-only, no-guessing). **C3 Arrival ratified (co
 route_back'd** — almost entirely on legitimate frame / game-truth / intent gaps the councils refused to
 guess (exactly the "ask Operator, no guessing" discipline). Per-council designs are committed as drafts
 (`2026-06-17-flow-redesign-C*-DESIGN.md`); ledger in `.claude/council-ledger.jsonl`. They are
-**build-blocked** on the items below. C5 Traversal was re-fired with fixes (running).
+**build-blocked** on the items below.
+
+## ✅ BUILD STATUS (2026-06-18) — operator lifted design-only; code is shipping
+- **C5 Traversal** — BUILT + landed `5512a17` (12/12 tests green). The first live scene.
+- **C2 section-transition orchestrator** — BUILT + landed `42f33d0` (68/68 green, 0 regressions, abort-recheck live). Wires arrival → branch; the default branch dispatches the C5 traversal procedure.
+- **Pip steps** — `reset_power_distribution` + `pips_engines` restored + registered `daa4bf9` (unwired; placement TBD, see repo-root `pips.md`).
+- Audit inventory: `2026-06-18-AUDIT-INVENTORY.md`. Reusable-code research: `2026-06-18-REUSABLE-CODE-RESEARCH.md`. Debug-menu spec (note-for-later): `council-briefs/DEBUG-MENU-STAGE0-SPEC.md`.
+- Still gated: C1 (detail-page frame), C3 (built parts need C1 nav_supercruise_star + D1), C4 smack (LAW, build pending C1), C6 (frames + game-truth), C7 (km-frame + C1). The frame + D1 items below remain the unblock.
 
 ---
 
