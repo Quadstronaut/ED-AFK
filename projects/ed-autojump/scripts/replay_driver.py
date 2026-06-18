@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 from ed_autojump.flow import FlowRunner, load_procedures
-from ed_autojump.journal.tail import JournalTail
+from ed_core.journal.tail import JournalTail
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     procedures = load_procedures(ROOT / "procedures")
 
     # Build the real FlowRunner. _run is stubbed to a tracer (no motor steps).
-    from ed_autojump.keys import NullSender
+    from ed_core.keys import NullSender
     runner = FlowRunner(
         procedures=procedures,
         sender=NullSender(),

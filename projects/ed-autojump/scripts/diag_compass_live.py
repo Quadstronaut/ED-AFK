@@ -21,10 +21,10 @@ from pathlib import Path
 
 import cv2
 
-from ed_autojump.config import load_config
-from ed_autojump.launcher.focus import focus_ed_window
-from ed_autojump.vision.capture import GdiGrabber
-from ed_autojump.vision.cyan_reader import CyanDotReader
+from ed_core.config import load_config
+from ed_core.launcher.focus import focus_ed_window
+from ed_vision.capture import GdiGrabber
+from ed_vision.cyan_reader import CyanDotReader
 
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 20
 

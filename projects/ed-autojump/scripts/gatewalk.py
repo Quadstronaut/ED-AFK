@@ -50,16 +50,16 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ed_autojump.config import load_config
+from ed_core.config import load_config
 from ed_autojump.flow import FlowRunner, load_procedures
-from ed_autojump.flow.loader import validate_procedure
+from ed_core.flow.loader import validate_procedure
 from ed_autojump.flow.steps import STEP_REGISTRY
-from ed_autojump.journal.tail import JournalTail
-from ed_autojump.keys import LoggingSender, NullSender
-from ed_autojump.panic import PanicSwitch
-from ed_autojump.recorder import Recorder
-from ed_autojump.status.navroute import NavRouteReader
-from ed_autojump.status.status import StatusReader
+from ed_core.journal.tail import JournalTail
+from ed_core.keys import LoggingSender, NullSender
+from ed_core.panic import PanicSwitch
+from ed_core.recorder import Recorder
+from ed_core.status.navroute import NavRouteReader
+from ed_core.status.status import StatusReader
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -292,9 +292,9 @@ def main(argv: list[str] | None = None) -> int:
     widget_ring_reader = widget_frame_grabber = None
     nav_panel_reader = nav_panel_grabber = None
     if args.mode == "step":
-        from ed_autojump.vision.capture import (build_navpanel_vision,
-                                                build_vision,
-                                                build_widget_vision)
+        from ed_vision.capture import (build_navpanel_vision,
+                                       build_vision,
+                                       build_widget_vision)
         compass_reader, frame_grabber = build_vision(cfg)
         nav_panel_reader, nav_panel_grabber = build_navpanel_vision(cfg)
         if cfg.vision.widget_ring_alignment:

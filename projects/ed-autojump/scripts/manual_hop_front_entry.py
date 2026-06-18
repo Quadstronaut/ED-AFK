@@ -13,12 +13,12 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from ed_autojump.config import load_config
-from ed_autojump.executor.align import _correct, _measure, align_to_target
-from ed_autojump.keys import DirectInputSender, parse_binds
-from ed_autojump.launcher.focus import focus_ed_window
-from ed_autojump.status.status import StatusReader
-from ed_autojump.vision.capture import build_vision
+from ed_core.config import load_config
+from ed_core.executor.align import _correct, _measure, align_to_target
+from ed_core.keys import DirectInputSender, parse_binds
+from ed_core.launcher.focus import focus_ed_window
+from ed_core.status.status import StatusReader
+from ed_vision.capture import build_vision
 
 ROOT = Path(__file__).resolve().parents[1]
 cfg = load_config(ROOT / "config.toml")

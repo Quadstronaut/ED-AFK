@@ -23,7 +23,7 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from ed_autojump.lifecycle import CleanupGuard, install_signal_cleanup  # noqa: E402
+from ed_core.lifecycle import CleanupGuard, install_signal_cleanup  # noqa: E402
 
 
 # --- test doubles ----------------------------------------------------------

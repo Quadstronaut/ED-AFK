@@ -14,9 +14,9 @@ from pathlib import Path
 
 import cv2
 
-from ed_autojump.config import load_config
-from ed_autojump.vision.cyan_reader import CyanDotReader
-from ed_autojump.vision.reader import build_compass_reader
+from ed_core.config import load_config
+from ed_vision.cyan_reader import CyanDotReader
+from ed_vision.reader import build_compass_reader
 
 cfg = load_config(Path(__file__).resolve().parents[1] / "config.toml")
 v = cfg.vision

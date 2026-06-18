@@ -13,8 +13,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from ed_autojump.keys import DirectInputSender, parse_binds
-from ed_autojump.launcher.focus import focus_ed_window
+from ed_core.keys import DirectInputSender, parse_binds
+from ed_core.launcher.focus import focus_ed_window
 
 binds_path = Path(__file__).resolve().parents[1] / "src" / "ed_autojump" / \
     "binds" / "ED-AFK.4.2.binds"

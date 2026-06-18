@@ -24,8 +24,8 @@ from pathlib import Path
 
 import cv2
 
-from ed_autojump.executor.align import _FILL_BAND_HI, _FILL_BAND_LO
-from ed_autojump.vision.cyan_reader import CyanDotReader
+from ed_core.executor.align import _FILL_BAND_HI, _FILL_BAND_LO
+from ed_vision.cyan_reader import CyanDotReader
 
 reader = CyanDotReader()
 PAT = re.compile(r"orient_(\d+)_i(\d+)_s(\d+)\.png$")
