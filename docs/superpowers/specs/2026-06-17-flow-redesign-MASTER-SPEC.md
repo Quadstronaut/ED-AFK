@@ -11,7 +11,7 @@ settled game-truths; councils design AGAINST it. **It decides the WHAT; councils
 - **Read the documentation** — repo code/docs AND community ED references (journal/Status.json schema,
   nav-panel behaviour) before asserting a mechanic.
 - **DESIGN-ONLY / no-build is LIFTED (operator 2026-06-18).** Building is now **authorized** for ratified
-  scenes — the C5 Traversal and C2 orchestrator code councils are in flight. The prior STANDING RULE
+  scenes — the C5 Traversal (5512a17) and C2 orchestrator (42f33d0) scenes are BUILT + landed (unit-verified), and the pip steps are restored (daa4bf9). The prior STANDING RULE
   ("Do not build, edit flight code, or commit; the live flight path stays untouched until Operator signs each
   design off") is **superseded**. Only the no-build clause is lifted; **NO GUESSING** (above) and
   fail-closed (below) remain fully in force — a ratified design still gates every unknown on Operator and
