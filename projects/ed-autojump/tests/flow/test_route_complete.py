@@ -127,7 +127,12 @@ def test_e4_clear_then_jump_to_different_system_runs_arrival():
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Other",
                    system_address=99999, timestamp=_ts(10)))
-    assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
+    # Arrival ran (NOT park). The C2 orchestrator additionally branches to a
+    # successor section after arrival (here 'dock' via the empty-route
+    # terminal read, since no navroute is wired into this dispatch-level
+    # fake) — so assert arrival ran and park did NOT, not list-exact equality.
+    assert "TargetNextRouteSystem" in sender.actions()       # arrival ran
+    assert "SetSpeedZero" not in sender.actions()            # NOT route-park
 
 
 # ---- guards: no-clear / address-mismatch / stale-clear -----------------------
@@ -139,7 +144,11 @@ def test_no_clear_runs_arrival():
     # no NavRouteClear latched
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
-    assert sender.actions() == ["TargetNextRouteSystem"]
+    # Arrival ran (NOT route-park). C2 then branches a successor section after
+    # arrival; assert arrival ran and park did NOT (the route-complete decision
+    # under test), not exact list equality.
+    assert "TargetNextRouteSystem" in sender.actions()
+    assert "SetSpeedZero" not in sender.actions()
 
 
 def test_no_final_waypoint_runs_arrival():
@@ -149,7 +158,9 @@ def test_no_final_waypoint_runs_arrival():
     # _final_waypoint never cached (no route ever seen)
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="X",
                    system_address=12345, timestamp=_ts(10)))
-    assert sender.actions() == ["TargetNextRouteSystem"]
+    # Arrival ran (NOT route-park); C2 branches a successor section after.
+    assert "TargetNextRouteSystem" in sender.actions()
+    assert "SetSpeedZero" not in sender.actions()
 
 
 def test_stale_clear_outside_window_runs_arrival():
@@ -163,7 +174,9 @@ def test_stale_clear_outside_window_runs_arrival():
     far = f"2026-06-07T12:0{int(_CLEAR_JOIN_WINDOW_S // 60) + 1}:01Z"
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=far))
-    assert sender.actions() == ["TargetNextRouteSystem"]
+    # Arrival ran (NOT route-park); C2 branches a successor section after.
+    assert "TargetNextRouteSystem" in sender.actions()
+    assert "SetSpeedZero" not in sender.actions()
 
 
 def test_clear_after_jump_is_not_completion():
@@ -175,7 +188,9 @@ def test_clear_after_jump_is_not_completion():
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(30)))
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
-    assert sender.actions() == ["TargetNextRouteSystem"]
+    # Arrival ran (NOT route-park); C2 branches a successor section after.
+    assert "TargetNextRouteSystem" in sender.actions()
+    assert "SetSpeedZero" not in sender.actions()
 
 
 # ---- re-arm: a fresh NavRoute clears a prior done latch ----------------------
@@ -364,7 +379,9 @@ def test_address_mismatch_same_system_name_runs_arrival():
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=67890, timestamp=_ts(10)))   # name same, addr differs
-    assert sender.actions() == ["TargetNextRouteSystem"]      # arrival
+    # Arrival ran (NOT route-park); C2 branches a successor section after.
+    assert "TargetNextRouteSystem" in sender.actions()       # arrival ran
+    assert "SetSpeedZero" not in sender.actions()            # NOT route-park
 
 
 def test_route_complete_overlay_uses_event_and_status_slots():
