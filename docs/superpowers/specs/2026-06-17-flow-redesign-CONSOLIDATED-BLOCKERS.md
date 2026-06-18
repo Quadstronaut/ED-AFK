@@ -46,9 +46,16 @@ guess (exactly the "ask Operator, no guessing" discipline). Per-council designs 
 9. **`exploration == active` flag source** (C2 D2, C3 BK-2): `_exploration_mode` is **unwired** (always
    False → the Exploration branch is unreachable today). Use the existing `body_tour_enabled` config, or
    a new exploration-mode flag?
-10. **Section transitions: a TOML `goto` step, or a Python orchestrator?** (C2 D4). All councils
-    recommend the **Python orchestrator** (chains via `runner._run`, fits the existing boot_routes /
-    dispatcher, no new interpreter concept). Your ratify.
+10. **Section transitions** — ✅ **RESOLVED (operator 2026-06-18): Python orchestrator.** In
+    `ed_autojump`: a `_SECTION_TO_PROC` map + `transition_to(runner, section)` + `run_arrival_then_branch`,
+    registered via the existing classifier/event-route surfaces (no core→domain import). Rejected the TOML
+    `goto` (net-new core primitive that, after the G12 DAG + the conditional branch, collapses into the
+    orchestrator-through-the-interpreter for no benefit). **MANDATORY: abort-recheck** so a smack landing
+    between arrival's return and the forward branch can't drive into the exclusion zone — read
+    `self._preempt` / `self._smacked` / `should_abort()` at TWO points: (a) in `run_arrival_then_branch`
+    BETWEEN `_run("arrival")` and the discriminator read; (b) at the top of `transition_to` before
+    `runner._run(section)`. If set → don't branch, yield to run_live → `_route_sc_exit`. Optional stronger
+    form: `transition_to` returns the section to run_live (event-route priority handles the smack for free).
 11. **Docking `E/E/D/space` precondition** (C7 3a): the literal keys = `CycleNextPanel ×2, UI_Right,
     UI_Select` = the `request_docking` *tail* with **no panel-open and no pin**. Does it assume the panel
     is already open on the Contacts station row, or should it be the full `request_docking` macro?
