@@ -33,7 +33,30 @@ guess (exactly the "ask Operator, no guessing" discipline). Per-council designs 
    normal space, the explore loop needs a re-engage branch or it strands. (Memory says SC-assist orbits
    bodies in SC and only drops at stations/POI — but unexplored bodies are the untested case.)
 
-## C · Intent / design decisions (your call)
+## ✅ C · Intent / design decisions — ALL LOCKED (operator 2026-06-18)
+
+Recorded in [[resume-state-2026-06-18-flow-redesign]]. Summary:
+- **#9 exploration flag** → reuse `body_tour_enabled` (VERIFIED wired; C2 predicate must read
+  `ctx.body_tour_enabled`, not the phantom `runner._exploration_mode` at boot_routes.py:84).
+- **#6 smack step-6** → `engage_supercruise` (Key_J). *(Moot pending the C4 deviation below.)*
+- **#8 planet-smack** → same as star-smack, parameterized, EXCEPT compass usable the WHOLE time (no
+  flip-about: planet has no superbright source / no glare).
+- **#11 docking sequence** → OCR-gated, NOT blind. `1`→`E`→`E`→`D`→`space`→throttle 0; OCR-confirm the
+  REQUEST DOCKING button before pressing. Full open-from-scratch.
+- **#12 NFZ gate** → NFZ-entry ≠ docking-ready. Proximity (<7.5 km OCR) is the docking trigger; the NFZ
+  journal event is a SEPARATE fire-safety concern. Keep both, distinct.
+- **#13 station-name** → `Status.Destination.Name`, logging-only.
+- **#7 nav_supercruise_star** → assumes ALREADY in SC; it is only the final SC-assist-on-star press.
+
+### ⚠ C4 SMACK IS DEVIATION-BLOCKED (do NOT re-fire/build until reconciled)
+Operator's fresh verbal routine (flip → **target nothing** → engage supercruise → compass-orient →
+**fine-align escape vector** → wait in-SC → nav_supercruise_star) CONFLICTS with his own authored master
+spec (`set_throttle 100` → **nav_target_star** → pitch_compass → **target_ahead** → wait_cooldown_clear →
+engage_jump_clearance → nav_supercruise_star) AND with live memory (compass CV is blind to the real escape
+vector; compass hologram needs a locked target but verbal says target nothing). Operator asked these be
+SURFACED, not patched. He reconciles before C4 proceeds. Full breakdown in the resume-state memory.
+
+## C · Intent / design decisions (original — superseded by the LOCKED block above)
 
 6. **Smack step-6: `engage_supercruise` (Key_J) or `engage_jump_clearance` (Key_K)?** (C4 #1, C2 D3).
    Council's strong read: you meant **`engage_supercruise`** (re-enter SC → the escape-vector
