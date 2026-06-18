@@ -138,6 +138,193 @@ _STATE_TO_PROC: dict[CSeriesState, tuple] = {
 assert set(_STATE_TO_PROC) == set(CSeriesState), \
     "_STATE_TO_PROC must be total over all CSeriesState"
 
+# ===========================================================================
+# Section-transition orchestrator (C2, LOCKED #10).
+#
+# This is the BUILD deliverable. It replaces the bare `runner._run("arrival")`
+# at every NEW-arrival dispatch site with `run_arrival_then_branch`, which runs
+# the arrival scene and THEN (only if no abort/smack/preempt landed) branches
+# to the correct successor SECTION procedure (dock / exploration / traversal).
+#
+# Domain placement (LOCKED #10): all of this lives in ed_autojump (the domain),
+# NOT ed_core. The pure-telemetry discriminators delegate to the SETTLED,
+# domain-free predicates in ed_core.flow.predicates (imported, never copied).
+# No core->domain import is introduced (AC8 / INV-9).
+#
+# The MANDATORY abort-recheck runs at TWO points to close the exclusion-zone
+# race the C2 design council flagged (C2-DESIGN.md:45):
+#   (a) in run_arrival_then_branch, BETWEEN arrival's return and the branch read.
+#   (b) at the TOP of transition_to, BEFORE runner._run (which clears _preempt
+#       at dispatcher.py:514 — checking after that point would be blind).
+# A smack mid-arrival sets BOTH _smacked=True and _preempt="star_smack" (because
+# _running_proc stays "arrival" and "arrival" is in _PREEMPT_ON_SMACK,
+# dispatcher.py:37); either recheck suppresses the forward branch and yields to
+# run_live -> _route_sc_exit (the CV-gated owner of smack recovery).
+# ===========================================================================
+
+# Section -> procedure name. Module-level, frozen, asserted TOTAL at import
+# (INV-11): drift in the key set (a new section without a mapped proc) is a
+# load-time failure, not a silent fall-through.
+_SECTION_TO_PROC: dict[str, str] = {
+    "docking":     "dock",
+    "exploration": "exploration",
+    "traversal":   "traversal",
+}
+assert set(_SECTION_TO_PROC) == {"docking", "exploration", "traversal"}, \
+    "_SECTION_TO_PROC must map exactly the three known sections"
+
+
+def _route_of(runner: Any) -> Optional[list]:
+    """The current NavRoute.route (or None) via the runner's durable reader.
+
+    Mirrors the route read used everywhere else in this module
+    (_classify_startup_legacy, _route_nav_route): poll the FILE-backed
+    NavRoute, fall through to None. An empty list and None both read as
+    'no onward hop' downstream (`not route`).
+
+    Boundary-robust: a runner WITHOUT a _navroute_state method (a minimal
+    stand-in) yields None rather than raising. The real FlowRunner always
+    has it (dispatcher.py:852)."""
+    reader = getattr(runner, "_navroute_state", None)
+    if not callable(reader):
+        return None
+    nr = reader()
+    return getattr(nr, "route", None) if nr is not None else None
+
+
+def _transition_aborted(runner: Any) -> bool:
+    """True if a section transition MUST be suppressed.
+
+    Reads exactly the three LOCKED #10 sources, fail-closed (ANY set => True):
+      - self._smacked     (dispatcher.py:189) — a massive-body drop latched.
+      - self._preempt      (dispatcher.py:221) — a scene-invalidating preempt.
+      - self._should_abort() (dispatcher.py:390) — operator stop/panic.
+
+    getattr-guarded so a partially-built runner (or a stand-in) degrades to
+    'not aborted' on a MISSING attr rather than raising — but a PRESENT,
+    truthy source always wins. _should_abort is read as a callable; a
+    non-callable/absent abort source contributes False (never a crash)."""
+    if bool(getattr(runner, "_smacked", False)):
+        return True
+    if getattr(runner, "_preempt", None) is not None:
+        return True
+    abort = getattr(runner, "_should_abort", None)
+    return bool(abort()) if callable(abort) else False
+
+
+def _dest_is_system(st: Any, route: Any, system_name: Optional[str]) -> bool:
+    """Is the journey's terminal destination the CURRENT system (terminal
+    Docking), as opposed to an onward hop?
+
+    Empty/None route is the PRIMARY signal: no further FSD hop is plotted, so
+    this arrival IS the destination -> True. A non-empty route is an onward
+    hop UNLESS the locked Destination corroborates the local star (the
+    CORROBORANT signal via the settled _destination_is_local_star, which
+    returns True/False/None — only an explicit True counts as 'arrived',
+    so a None/False unjudgeable dest fails closed to 'not arrived', INV-7)."""
+    from ed_core.flow.predicates import _destination_is_local_star
+
+    if not route:                                       # None / [] -> terminal
+        return True
+    return _destination_is_local_star(st, system_name) is True
+
+
+def _dest_is_station(st: Any) -> bool:
+    # BLOCKED-ON-D1: confirm Status.Destination.Body != 0 => station
+    # (operator must live-test: undock -> plot-station -> read Status.json).
+    # Until D1 is confirmed in-game, the REAL-WORLD correctness of the
+    # "Body != 0 means a station is locked at plot time" mechanic is
+    # UNVERIFIED. This predicate fails CLOSED: a non-station / unread dest
+    # reads False and the arrival branch falls through to Traversal/park —
+    # NEVER a blind drive into a station. The unverified game mechanic is
+    # NOT hardcoded as confirmed; _dest_is_named_station (predicates.py:43)
+    # is the SETTLED READ of the schema, but the in-game behaviour that sets
+    # Body!=0 at plot-to-station time is the D1 seam this predicate marks.
+    from ed_core.flow.predicates import _dest_is_named_station
+
+    return _dest_is_named_station(st)
+
+
+def _exploration_active(runner: Any) -> bool:
+    """Is the body-tour (exploration) mode active for this run?
+
+    LOCKED #9: read runner._body_tour_enabled — the CONFIRMED-wired flag
+    (dispatcher.py:157) that sources ctx.body_tour_enabled (context.py:148).
+    Deliberately does NOT read runner._exploration_mode: that attribute is a
+    PHANTOM (assigned NOWHERE in projects/, always False), so reading it would
+    silently pin exploration OFF forever. Fail-closed to False when unset."""
+    return bool(getattr(runner, "_body_tour_enabled", False))
+
+
+def _arrival_branch(runner: Any) -> str:
+    """Choose the successor SECTION after a clean arrival.
+
+    Precedence is VERBATIM the master spec (MASTER-SPEC.md:66-68):
+      1. _dest_is_system  -> "docking"     (arrived at the terminal destination)
+      2. _exploration_active -> "exploration" (body-tour active on an onward hop)
+      3. else             -> "traversal"   (default: drive the next hop)
+
+    dest_is_system is evaluated FIRST, so an arrived-at-destination run with
+    exploration ON still branches 'docking' (INV-6).
+
+    Boundary-robust: _latest_status / _current_system are read via getattr
+    (default None) so a minimal runner stand-in degrades gracefully. With both
+    None and no route, _dest_is_system returns True (empty-route terminal) —
+    the conservative 'arrived' read, never a crash."""
+    st = getattr(runner, "_latest_status", None)
+    route = _route_of(runner)
+    system = getattr(runner, "_current_system", None)
+    if _dest_is_system(st, route, system):
+        return "docking"
+    if _exploration_active(runner):
+        return "exploration"
+    return "traversal"
+
+
+def transition_to(runner: Any, section: str) -> str:
+    """Fail-closed dispatch of a section's procedure.
+
+    Returns the dispatched procedure NAME on success, or "" on:
+      (i)  abort-recheck positive (point b — read at the TOP, BEFORE _run),
+      (ii) unknown section,
+      (iii) the section's procedure not loaded in runner.procedures.
+    "" is a NAMED operator/abort signal — it NEVER means 'run a blank
+    procedure'. The caller yields to run_live -> _route_sc_exit on "".
+
+    Ordering is LOAD-BEARING (INV-3): the abort-recheck runs before
+    runner._run, which clears self._preempt at dispatcher.py:514. Checking
+    after _run would be blind to a preempt that landed in the window."""
+    # (b) ABORT-RECHECK at the TOP, BEFORE runner._run clears _preempt.
+    if _transition_aborted(runner):
+        return ""
+    proc = _SECTION_TO_PROC.get(section)
+    if proc is None or proc not in getattr(runner, "procedures", {}):
+        return ""                       # unknown / unloaded -> named abort
+    runner._run(proc)
+    return proc
+
+
+def run_arrival_then_branch(runner: Any) -> Optional[str]:
+    """Run the arrival scene, then (abort-permitting) branch to the successor
+    section. REPLACES the bare runner._run("arrival") at every NEW-arrival
+    dispatch site.
+
+    Always returns "arrival" — the EXTERNAL signal the route/classifier
+    contract expects (callers today `return "arrival"` after _run("arrival");
+    this wrapper preserves that so run_event_routes / classify_startup
+    semantics, and the test_activation_e2e arrival assertion, are unchanged
+    (INV-12 / AC11)."""
+    runner._run("arrival")                              # the arrival scene
+    # (a) ABORT-RECHECK between arrival's return and the discriminator read.
+    #     A smack landing mid-arrival sets _smacked / _preempt; do NOT branch
+    #     into the exclusion zone — yield to run_live -> _route_sc_exit.
+    if _transition_aborted(runner):
+        return "arrival"                                # branch suppressed
+    section = _arrival_branch(runner)
+    transition_to(runner, section)
+    return "arrival"
+
+
 # ---------------------------------------------------------------------------
 # Boot classifier (surface #1)
 # ---------------------------------------------------------------------------
@@ -194,7 +381,7 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
                             {"system": runner._current_system,
                              "near_star": None,
                              "reason": "indeterminate"})
-            runner._run("arrival")
+            run_arrival_then_branch(runner)            # C2: arrival + branch
             return "arrival"
 
         # Priority 2: destination IS the local star -> orbit needed
@@ -204,7 +391,7 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
                             {"system": runner._current_system,
                              "near_star": True,
                              "reason": "local_star"})
-            runner._run("arrival")
+            run_arrival_then_branch(runner)            # C2: arrival + branch
             return "arrival"
 
         # Priority 3: fresh arrival (smack guard) -- even a confident
@@ -218,7 +405,7 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
                              "near_star": False,
                              "reason": "fresh_arrival",
                              "jump_age": jump_age})
-            runner._run("arrival")
+            run_arrival_then_branch(runner)            # C2: arrival + branch
             return "arrival"
 
         # Priority 4: stale loiter with a confident non-local-star lock
@@ -300,6 +487,12 @@ def classify_startup(runner: Any) -> Optional[str]:
         if tmpl.state is CSeriesState.STARSMACK:
             if not fsd_cooldown_blocked(st):             # PIN 4: keep legacy AND-cooldown (AC7)
                 return _classify_startup_legacy(runner, st)
+        # C2: a C-series ARRIVAL dispatch runs the orchestrator (arrival +
+        # successor-section branch). All OTHER payloads (startup,
+        # smack_recovery) keep the bare _run — they are not arrival sites.
+        if payload == "arrival":
+            run_arrival_then_branch(runner)
+            return "arrival"
         runner._run(payload)
         return payload
     except Exception as exc:                             # noqa: BLE001
@@ -526,7 +719,11 @@ def _route_fsd_jump(runner: Any, ev: Any) -> Optional[str]:
         runner._navroute_cleared = False
         dispatch_route_complete(runner, ev)
         return "route_complete"
-    runner._run("arrival")
+    # C2: NOT route-complete -> a NEW arrival. Run the arrival scene then
+    # branch to the successor section (dock / exploration / traversal), with
+    # the mandatory abort-recheck closing the exclusion-zone race: a smack
+    # landing mid-arrival yields to _route_sc_exit instead of branching.
+    run_arrival_then_branch(runner)
     return "arrival"
 
 
