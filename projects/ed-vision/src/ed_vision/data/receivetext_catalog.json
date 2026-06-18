@@ -11,10 +11,10 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 2374,
+    "count": 2380,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-06-15T08:38:29Z",
+    "last_seen": "2026-06-17T08:16:55Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
@@ -38,28 +38,37 @@
   "$Commuter_AuthorityScan03;": {
     "category": "other",
     "channel": "npc",
-    "count": 2,
+    "count": 3,
     "first_seen": "2026-06-09T21:34:58Z",
     "from_example": "Jack Henry",
-    "last_seen": "2026-06-09T21:34:58Z",
+    "last_seen": "2026-06-17T06:32:40Z",
     "message_localised": "Will this take long? I've got a schedule to keep."
   },
   "$Commuter_AuthorityScan04;": {
     "category": "other",
     "channel": "npc",
-    "count": 4,
+    "count": 5,
     "first_seen": "2026-06-09T23:16:47Z",
     "from_example": "Winterstein",
-    "last_seen": "2026-06-09T23:56:44Z",
+    "last_seen": "2026-06-17T08:21:07Z",
     "message_localised": "Is this really necessary?"
+  },
+  "$Commuter_AuthorityScan05;": {
+    "category": "other",
+    "channel": "npc",
+    "count": 2,
+    "first_seen": "2026-06-17T06:26:55Z",
+    "from_example": "Beryl Jones",
+    "last_seen": "2026-06-17T08:28:20Z",
+    "message_localised": "On what grounds are you scanning this vessel, officer?"
   },
   "$Commuter_AuthorityScan08;": {
     "category": "other",
     "channel": "npc",
-    "count": 2,
+    "count": 3,
     "first_seen": "2026-06-09T23:23:51Z",
     "from_example": "Alana Clarke",
-    "last_seen": "2026-06-09T23:23:51Z",
+    "last_seen": "2026-06-17T08:26:14Z",
     "message_localised": "You've got no right to scan me, officer!"
   },
   "$ConvoyWedding_Patrol06;": {
@@ -128,10 +137,10 @@
   "$DockingChatter_Allied;": {
     "category": "station",
     "channel": "npc",
-    "count": 8,
+    "count": 10,
     "first_seen": "2026-01-10T04:10:34Z",
     "from_example": "Jameson Memorial",
-    "last_seen": "2026-06-09T23:27:28Z",
+    "last_seen": "2026-06-17T08:20:01Z",
     "message_localised": "An ally like you is always welcome here."
   },
   "$DockingChatter_Cordial;": {
@@ -317,10 +326,10 @@
   "$Police_ThankYouPassedStopAndSearch09;": {
     "category": "authority",
     "channel": "npc",
-    "count": 2,
+    "count": 3,
     "first_seen": "2026-01-10T04:11:00Z",
     "from_example": "System Authority Vessel",
-    "last_seen": "2026-01-10T04:11:00Z",
+    "last_seen": "2026-06-17T06:37:22Z",
     "message_localised": "Move along, Commander, we're done here."
   },
   "$Police_ThankYouPassedStopAndSearch10;": {
@@ -335,10 +344,10 @@
   "$Police_ThankYouPassedStopAndSearch11;": {
     "category": "authority",
     "channel": "npc",
-    "count": 2,
+    "count": 3,
     "first_seen": "2026-05-05T05:50:08Z",
     "from_example": "System Authority Vessel",
-    "last_seen": "2026-05-05T05:50:08Z",
+    "last_seen": "2026-06-17T08:20:37Z",
     "message_localised": "We didn't find anything on you this time."
   },
   "$PowersSecurity_PassedStopAndSearchNoPower09;": {
@@ -398,10 +407,10 @@
   "$STATION_NoFireZone_entered;": {
     "category": "station",
     "channel": "npc",
-    "count": 48,
+    "count": 51,
     "first_seen": "2025-09-18T14:19:11Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-15T07:23:43Z",
+    "last_seen": "2026-06-17T08:19:33Z",
     "message_localised": "No fire zone entered."
   },
   "$STATION_NoFireZone_entered_deployed;": {
@@ -416,19 +425,19 @@
   "$STATION_NoFireZone_exited;": {
     "category": "station",
     "channel": "npc",
-    "count": 46,
+    "count": 47,
     "first_seen": "2025-09-18T14:17:12Z",
     "from_example": "THE WALKING CANE | OWCH",
-    "last_seen": "2026-06-15T07:27:44Z",
+    "last_seen": "2026-06-17T06:38:23Z",
     "message_localised": "No fire zone exited."
   },
   "$STATION_docking_granted;": {
     "category": "station",
     "channel": "npc",
-    "count": 50,
+    "count": 52,
     "first_seen": "2025-09-18T14:19:12Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-15T07:23:46Z",
+    "last_seen": "2026-06-17T08:20:01Z",
     "message_localised": "Docking request granted."
   },
   "$Smuggler_NearDeath04;": {
