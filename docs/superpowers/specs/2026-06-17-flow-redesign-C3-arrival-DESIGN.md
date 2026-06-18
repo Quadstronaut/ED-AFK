@@ -1,4 +1,5 @@
 ﻿<!-- RATIFIED C3 Arrival design. Council task wu9h3dhe8, decision=COMMIT, selected=gen-sonnet-2 (unanimous 4-lens pass), 2026-06-17. Harvested from council result (generator worktree auto-cleaned). DESIGN-ONLY: not yet built/wired. Ledger: .claude/council-ledger.jsonl. -->
+<!-- STATUS 2026-06-18 (L5): DESIGN-ONLY / no-build is LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes (C3 is RATIFIED). The "not yet built/wired" note above is the historical design-only record, not a current prohibition. NO-GUESSING + fail-closed still bind. -->
 
 Design document written to:
 <repo-root>\ED-AFK\.claude\worktrees\wf_df4d5346-8c7-3\docs\superpowers\specs\2026-06-17-C3-arrival-DESIGN.md

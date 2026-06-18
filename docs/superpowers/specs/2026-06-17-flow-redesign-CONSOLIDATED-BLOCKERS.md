@@ -38,7 +38,8 @@ guess (exactly the "ask Operator, no guessing" discipline). Per-council designs 
 Recorded in [[resume-state-2026-06-18-flow-redesign]]. Summary:
 - **#9 exploration flag** → reuse `body_tour_enabled` (VERIFIED wired; C2 predicate must read
   `ctx.body_tour_enabled`, not the phantom `runner._exploration_mode` at boot_routes.py:84).
-- **#6 smack step-6** → `engage_supercruise` (Key_J). *(Moot pending the C4 deviation below.)*
+- **#6 smack step-6** → `engage_supercruise` (Key_J). **LOCKED/SETTLED** (the prior "moot pending the C4
+  deviation" caveat is struck — the deviation was a Claude error, see the resolved block below).
 - **#8 planet-smack** → same as star-smack, parameterized, EXCEPT compass usable the WHOLE time (no
   flip-about: planet has no superbright source / no glare).
 - **#11 docking sequence** → OCR-gated, NOT blind. `1`→`E`→`E`→`D`→`space`→throttle 0; OCR-confirm the
@@ -48,19 +49,22 @@ Recorded in [[resume-state-2026-06-18-flow-redesign]]. Summary:
 - **#13 station-name** → `Status.Destination.Name`, logging-only.
 - **#7 nav_supercruise_star** → assumes ALREADY in SC; it is only the final SC-assist-on-star press.
 
-### ⚠ C4 SMACK IS DEVIATION-BLOCKED (do NOT re-fire/build until reconciled)
-Operator's fresh verbal routine (flip → **target nothing** → engage supercruise → compass-orient →
-**fine-align escape vector** → wait in-SC → nav_supercruise_star) CONFLICTS with his own authored master
-spec (`set_throttle 100` → **nav_target_star** → pitch_compass → **target_ahead** → wait_cooldown_clear →
-engage_jump_clearance → nav_supercruise_star) AND with live memory (compass CV is blind to the real escape
-vector; compass hologram needs a locked target but verbal says target nothing). Operator asked these be
-SURFACED, not patched. He reconciles before C4 proceeds. Full breakdown in the resume-state memory.
+### ✅ C4 SMACK ROUTINE IS LAW — LOCKED/RESOLVED (operator 2026-06-18)
+The earlier "DEVIATION-BLOCKED" framing (an alleged conflict between a verbal routine and the authored
+master spec) was a **CLAUDE ERROR** and is struck — there was never a real contradiction, the routine is
+not re-fire-blocked, and step 6 is settled. The authored 8-step law is confirmed, in order:
+`set_throttle 100` → `nav_target_star` → `pitch_compass` (keep the smack-glare guards) → `target_ahead` →
+`wait_cooldown_clear` → `engage_supercruise` (Key_J — re-enter SC; spawns the escape vector; align-and-hold
+to `SupercruiseEntry`; **NOT** `engage_jump_clearance`/Key_K) → `nav_supercruise_star` → **Traversal**.
+The compass-glare guards and the escape-vector ALIGN-AND-HOLD mechanic are retained ship-safety, not
+deleted by this resolution. Full breakdown in the resume-state memory.
 
 ## C · Intent / design decisions (original — superseded by the LOCKED block above)
 
-6. **Smack step-6: `engage_supercruise` (Key_J) or `engage_jump_clearance` (Key_K)?** (C4 #1, C2 D3).
-   Council's strong read: you meant **`engage_supercruise`** (re-enter SC → the escape-vector
-   align-and-hold path), and `engage_jump_clearance` was a token copied from another scene. Confirm.
+6. **Smack step-6 — RESOLVED/LOCKED (operator 2026-06-18): `engage_supercruise` (Key_J).** (C4 #1, C2 D3.)
+   The council's strong read was correct: step 6 is `engage_supercruise` (re-enter SC → the escape-vector
+   align-and-hold path); the `engage_jump_clearance` (Key_K) token was copied from another scene and was
+   never the chosen step-6 action. No longer open — kept here only as the superseded historical question.
 7. **Does `nav_supercruise_star` handle the SC entry itself, or does the escape-vector ALIGN-AND-HOLD
    ladder** (`orient_compass` + `hold_alignment` until `SupercruiseEntry`) **survive between smack steps
    6 and 7?** (C4 #6). If `nav_supercruise_star` subsumes SC entry, those steps drop.
@@ -82,9 +86,13 @@ SURFACED, not patched. He reconciles before C4 proceeds. Full breakdown in the r
 11. **Docking `E/E/D/space` precondition** (C7 3a): the literal keys = `CycleNextPanel ×2, UI_Right,
     UI_Select` = the `request_docking` *tail* with **no panel-open and no pin**. Does it assume the panel
     is already open on the Contacts station row, or should it be the full `request_docking` macro?
-12. **Docking NFZ gate regression** (C7): the authored `< 7.5 km` OCR loop **replaces your
-    live-verified (2026-06-07) `ReceiveText $STATION_NoFireZone_entered` journal gate** with a
-    calibration-pending OCR loop. Keep the proven journal gate (instead of / alongside the OCR)?
+12. **Docking NFZ vs proximity — RESOLVED/LOCKED (operator 2026-06-18): SEPARATE, both kept.** (C7.)
+    The `< 7.5 km` OCR proximity loop and the live-verified (2026-06-07) `ReceiveText
+    $STATION_NoFireZone_entered` journal gate are SEPARATE, distinct, both kept — NOT a replace
+    (the earlier "replaces your live-verified NFZ gate" framing was a CONFLATION and is struck; ~~replaces
+    NFZ gate~~). NFZ-entry is a fire-safety zone (LARGER than the docking zone); the OCR proximity
+    < 7.5 km is the docking-readiness trigger. (See the LOCKED #12 in the decisions block above — already
+    correct.)
 13. **Station-name source** (C7 3c): `SupercruiseExit` carries no `StationName`. Use
     `Status.Destination.Name` (lowest latency)? And what is the name used for — the flow never consumes
     it after reading (maybe logging only)?

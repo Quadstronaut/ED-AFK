@@ -1,4 +1,5 @@
 ﻿<!-- C-council C1-cv-action-family | task waqq2s5lt | decision=route_back selected= | 2026-06-17 | DESIGN-ONLY (not built/wired) | ledger: .claude/council-ledger.jsonl -->
+<!-- STATUS 2026-06-18 (L5): DESIGN-ONLY / no-build is LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes. The "(not built/wired)" marker above is the historical design-only record, not a current prohibition. NO-GUESSING + fail-closed still bind. -->
 
 DELIVERABLE: a DESIGN-ONLY doc (no code, no commit, no registered-step bodies, no gate flip) at:
 <repo-root>\ED-AFK\.claude\worktrees\wf_e93e77aa-776-2\docs\superpowers\specs\2026-06-17-c1-cv-action-family-DESIGN-gen-opus-1.md

@@ -1,5 +1,20 @@
 ﻿<!-- C-council C4-smack-recovery | task w2vrojo33 | decision=route_back selected=gen-sonnet-3 | 2026-06-17 | DESIGN-ONLY (not built/wired) | ledger: .claude/council-ledger.jsonl -->
 
+> **STATUS UPDATE — RESOLVED/LOCKED (operator 2026-06-18).** Two things below are now settled and are no
+> longer open blockers; the historical candidate analysis is preserved for the audit trail but read it
+> through this resolution:
+> - **Headline blocker #1 (step 6) is RESOLVED: step 6 = `engage_supercruise` (Key_J)** — re-enter SC from
+>   normal space; spawn the escape vector; ALIGN-AND-HOLD to `SupercruiseEntry`. It is **NOT**
+>   `engage_jump_clearance` (Key_K). The "PRIMARY HYPOTHESIS vs LITERAL TOKEN" split below is closed in
+>   favour of the primary hypothesis. The earlier "DEVIATION-BLOCKED" framing was a Claude error and is
+>   struck — the routine is law.
+> - **DESIGN-ONLY / no-build is LIFTED** per the MASTER-SPEC standing rules (building authorized for
+>   ratified scenes). The `(not built/wired)` marker above is the historical record of the design-only
+>   round, not a current prohibition.
+> - The remaining `BLOCKED-ON-CONTRACT(C1)` / `BLOCKED-ON-CONTRACT(C2)` items below are **real contract
+>   gaps** (C1's `nav_target_star`/`nav_supercruise_star` shapes, C2's transition marker) and are NOT part
+>   of the struck framing — they stand until those councils publish.
+
 Candidate design document written to:
 `docs/superpowers/specs/council-briefs/C4-smack-recovery-CANDIDATE.md`
 (in worktree `<repo-root>\ED-AFK\.claude\worktrees\wf_58957ec7-12d-4`)
@@ -38,8 +53,8 @@ This is flagged BLOCKED-ON-KYLE #6 since it may be superseded if nav_supercruise
 
 ---
 
-FULL BLOCKED LIST (8 items):
-1. BLOCKED-ON-KYLE #1 (HEADLINE): step 6 engage_jump_clearance vs engage_supercruise
+FULL BLOCKED LIST (8 items) — item 1 RESOLVED 2026-06-18, see the status block at the top of this doc:
+1. [RESOLVED/LOCKED 2026-06-18 — struck] ~~BLOCKED-ON-KYLE #1 (HEADLINE): step 6 engage_jump_clearance vs engage_supercruise~~ → step 6 = `engage_supercruise` (Key_J); `engage_jump_clearance` was NOT the chosen action.
 2. BLOCKED-ON-CONTRACT(C1): nav_target_star exact contract
 3. BLOCKED-ON-CONTRACT(C1): nav_supercruise_star exact contract
 4. BLOCKED-ON-CONTRACT(C2): Traversal section-transition marker form

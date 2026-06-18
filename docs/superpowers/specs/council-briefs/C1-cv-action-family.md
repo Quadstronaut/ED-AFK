@@ -3,7 +3,9 @@
 You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.** Tier: arch.
 
 ## Binding standing rules
-- **DESIGN-ONLY.** Produce a ratified design + a Operator-blocker list. Do NOT build, edit flight code, or commit.
+- **DESIGN-ONLY.** Produce a ratified design + a Operator-blocker list. *(STATUS 2026-06-18: the no-build
+  clause is LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This
+  bullet records the design-only round this council ran; NO-GUESSING + fail-closed below still bind.)*
 - **NO GUESSING.** Any unknown game-mechanic / bind / journal field / screen layout not settled in the
   cited sources → flag `BLOCKED-ON-KYLE: <question>` in the design + ledger. Read repo code/docs AND
   community ED references (journal & Status.json schema, nav-panel behaviour) before asserting a mechanic.

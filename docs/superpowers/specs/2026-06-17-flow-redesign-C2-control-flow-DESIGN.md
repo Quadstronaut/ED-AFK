@@ -1,4 +1,5 @@
 ﻿<!-- C-council C2-control-flow | task wio65907k | decision=route_back selected= | 2026-06-17 | DESIGN-ONLY (not built/wired) | ledger: .claude/council-ledger.jsonl -->
+<!-- STATUS 2026-06-18 (L5): DESIGN-ONLY / no-build is LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes (the C2 orchestrator code council is in flight). The "(not built/wired)" marker above is the historical design-only record, not a current prohibition. NO-GUESSING + fail-closed still bind. -->
 
 ## C2 Control-Flow / Section-Transition â€” DESIGN (DESIGN-ONLY, no flight-code edits, no commit)
 
