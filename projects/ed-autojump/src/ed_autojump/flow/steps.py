@@ -1481,6 +1481,54 @@ def step_confirm_orbiting(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
     return False
 
 
+def step_reset_power_distribution(ctx: StepContext) -> bool:
+    """Reset the power distributor to balanced -- one ResetPowerDistribution tap
+    (Down arrow). Best-effort, NOT required: a missed press just leaves the pips
+    as they were.
+
+    FOCUS GATE (b047155, restored 2026-06-18 after the 2026-06-08 pip-rip): a prior
+    nav-panel step can leave the left panel open, so firing the Down arrow would
+    walk the panel instead of the pips. _ensure_cockpit_focus presses UI_Back until
+    GuiFocus==0 first; it is a no-op when focus is already 0 (the common case). When
+    focus cannot be restored, SKIP (return True) rather than fire an arrow into an
+    open panel -- a missed reset is harmless, a misfire is not. Logged
+    PipResetSkippedNoFocus so the operator can see the root cause."""
+    if not _ensure_cockpit_focus(ctx):
+        st = ctx.status_supplier()
+        ctx.log("PipResetSkippedNoFocus",
+                {"gui_focus": getattr(st, "gui_focus", None) if st else None})
+        return True
+    return _press(ctx, "ResetPowerDistribution")
+
+
+def step_pips_engines(ctx: StepContext, *, presses: int = 4) -> bool:
+    """All pips to ENG: ResetPowerDistribution then IncreaseEnginesPower x4 (4 = the
+    ENG cap; presses past the cap are in-game no-ops, so over-pressing can never
+    misallocate). Best-effort, NOT required, plain arrow taps -- deliberately NOT
+    input-exclusive so the heat watchdog stays live.
+
+    FOCUS GATE (b047155, restored 2026-06-18): the whole sequence (one Down + four
+    Up arrows) needs cockpit focus -- _ensure_cockpit_focus once at the top, a no-op
+    when GuiFocus==0. When focus cannot be restored, skip the whole sequence and
+    return True (five arrows into a panel would be actively wrong). Logged
+    PipsEnginesSkippedNoFocus. A missing ResetPowerDistribution bind still returns
+    False (bind-level hard failure)."""
+    if not _ensure_cockpit_focus(ctx):
+        st = ctx.status_supplier()
+        ctx.log("PipsEnginesSkippedNoFocus",
+                {"gui_focus": getattr(st, "gui_focus", None) if st else None})
+        return True
+    if not _press(ctx, "ResetPowerDistribution"):
+        return False
+    for _ in range(presses):
+        _press(ctx, "IncreaseEnginesPower")
+    return True
+
+
+# pips: restored 2026-06-18 after the 2026-06-08 rip (operator: pips back; placement
+# reference in pips.md). NOT input_exclusive -- plain arrow taps, heat watchdog live.
+register_step("reset_power_distribution", step_reset_power_distribution)
+register_step("pips_engines", step_pips_engines)
 register_step("confirm_orbiting", step_confirm_orbiting)
 register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
