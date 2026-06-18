@@ -13,7 +13,7 @@ by stripping everything from the first `:#` onward (re-appending `;`), collapsin
 ~970 raw variants into ~46 real tokens. Without this the catalog would be 95%
 near-duplicate per-system-name rows.
 
-DESIGN (stdlib only, apart from an OPTIONAL ed_autojump config import):
+DESIGN (stdlib only, apart from an OPTIONAL ed_core config import):
   * Journal dir comes from the bot config (`cfg.paths.journal_dir_expanded()`),
     so the harvester and the bot always agree. Falls back to the default Saved
     Games path if the import fails (e.g. run outside the venv).
@@ -49,7 +49,7 @@ DATA_DIR = WORKSPACE_ROOT / "ed-vision" / "src" / "ed_vision" / "data"
 CATALOG_PATH = DATA_DIR / "receivetext_catalog.json"
 STATE_PATH = DATA_DIR / ".harvest_state.json"
 
-# Fallback journal dir if the ed_autojump config import is unavailable.
+# Fallback journal dir if the ed_core config import is unavailable.
 DEFAULT_JOURNAL_DIR = (
     Path(os.path.expandvars(r"%USERPROFILE%"))
     / "Saved Games" / "Frontier Developments" / "Elite Dangerous"
@@ -104,16 +104,18 @@ def normalize_token(message: str) -> str:
 def resolve_journal_dir() -> tuple[Path, str]:
     """Return (journal_dir, source-label). Prefer the bot config so the
     harvester and the bot agree; fall back to the default Saved Games path."""
-    # Make the project's src/ importable when run by the venv python.
-    src = PROJECT_ROOT / "src"
-    if src.is_dir() and str(src) not in sys.path:
-        sys.path.insert(0, str(src))
+    # Make the workspace packages importable when run by the venv python.
+    # Post-reorg, load_config lives in ed-core (projects/ed-core/src); the bot's
+    # config.toml still lives at the ed-autojump project root.
+    for src in (WORKSPACE_ROOT / "ed-core" / "src", PROJECT_ROOT / "src"):
+        if src.is_dir() and str(src) not in sys.path:
+            sys.path.insert(0, str(src))
     try:
-        from ed_autojump.config import load_config
+        from ed_core.config import load_config
 
         cfg_path = PROJECT_ROOT / "config.toml"
         cfg = load_config(cfg_path if cfg_path.is_file() else None)
-        return cfg.paths.journal_dir_expanded(), "ed_autojump.config"
+        return cfg.paths.journal_dir_expanded(), "ed_core.config"
     except Exception as exc:  # noqa: BLE001 — fall back, never abort on import
         print(f"[harvest] config import failed ({exc!r}); using default journal dir")
         return DEFAULT_JOURNAL_DIR, "default-fallback"
