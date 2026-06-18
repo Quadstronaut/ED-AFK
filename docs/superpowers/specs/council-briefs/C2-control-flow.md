@@ -15,10 +15,12 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
 >   `runner._exploration_mode` (boot_routes.py:84, never set).
 > - **STILL BLOCKED:** D1 (Status.Destination station schema — operator live test: plot-to-station, read
 >   `Destination.Body != 0`). D5/D6 minor (Exploration→Traversal via completion; route_complete_park scoop
->   knob stays 0.99). Do NOT re-fire until D1 lands.
+>   knob stays 0.99). Do NOT re-run this council until D1 lands.
 
 ## Binding standing rules
-- **DESIGN-ONLY.** Ratified design + Operator-blocker list. Do NOT build, edit flight code, or commit.
+- **DESIGN-ONLY.** Ratified design + Operator-blocker list. *(STATUS 2026-06-18: the no-build clause is LIFTED
+  per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This bullet records the
+  design-only round this council ran; NO-GUESSING + fail-closed still bind.)*
 - **NO GUESSING.** Unknown mechanic/bind/journal field/layout not settled in the cited sources →
   `BLOCKED-ON-KYLE: <question>`. Read repo code/docs AND community ED docs (journal + Status.json schema)
   before asserting.

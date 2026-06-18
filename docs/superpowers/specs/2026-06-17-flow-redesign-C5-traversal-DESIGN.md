@@ -1,4 +1,5 @@
 ﻿<!-- C-council C5-traversal | task wp54008cx | decision=commit selected=gen-sonnet-2 | 2026-06-17 | DESIGN-ONLY (not built/wired) | ledger: .claude/council-ledger.jsonl -->
+<!-- STATUS 2026-06-18 (L5): DESIGN-ONLY / no-build is LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes; C5 Traversal is RATIFIED and buildable now. The "(not built/wired)" marker above is the historical design-only record, not a current prohibition. NO-GUESSING + fail-closed still bind. -->
 
 ## COUNCIL C5 â€” TRAVERSAL SCENE â€” DESIGN DOCUMENT (gen-sonnet-2)
 

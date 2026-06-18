@@ -1,4 +1,5 @@
 ﻿<!-- C-council C6-exploration | task wch5bsydi | decision=route_back selected= | 2026-06-17 | DESIGN-ONLY (not built/wired) | ledger: .claude/council-ledger.jsonl -->
+<!-- STATUS 2026-06-18 (L5): DESIGN-ONLY / no-build is LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes. (L2: Exploration is permanent, first-class scope — not a side-quest.) The "(not built/wired)" marker above is the historical design-only record, not a current prohibition. NO-GUESSING + fail-closed still bind. -->
 
 ## C6 EXPLORATION SCENE â€” design + runnable seam (gen-opus-1)
 

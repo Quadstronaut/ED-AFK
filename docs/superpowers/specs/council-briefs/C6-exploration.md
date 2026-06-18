@@ -3,7 +3,9 @@
 You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.** Tier: feature.
 
 ## Binding standing rules
-- **DESIGN-ONLY.** Ratified design + Operator-blocker list. Do NOT build, edit flight code, or commit.
+- **DESIGN-ONLY.** Ratified design + Operator-blocker list. *(STATUS 2026-06-18: the no-build clause is LIFTED
+  per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This bullet records the
+  design-only round this council ran; NO-GUESSING + fail-closed still bind.)*
 - **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-KYLE: <question>`. Read docs.
 
 ## Shared context — read FIRST

@@ -1,32 +1,40 @@
 # COUNCIL C4 — SMACK RECOVERY SCENE (ED-AFK flow redesign, 2026-06-17)
 
-> ⛔ **DO NOT RE-FIRE — DEVIATION-BLOCKED (2026-06-18).** The operator's fresh verbal routine ("flip →
-> target NOTHING → engage supercruise → compass-orient → fine-align ESCAPE VECTOR → wait in-SC →
-> nav_supercruise_star") CONFLICTS with the authored scope below ("nav_target_star → pitch_compass →
-> target_ahead → wait_cooldown_clear → engage_jump_clearance") AND with live memory (compass CV is blind to
-> the real escape vector; compass needs a locked target but verbal targets nothing). The operator must
-> reconcile his memory against this spec + the live findings FIRST. See
-> [[resume-state-2026-06-18-flow-redesign]] / the CONSOLIDATED-BLOCKERS doc. Step-6 verb is settled
-> (`engage_supercruise`, Key_J) but moot until the routine itself is reconciled.
+> ✅ **SMACK ROUTINE IS LAW — LOCKED/RESOLVED (operator 2026-06-18).** The earlier
+> "DEVIATION-BLOCKED / DO-NOT-RE-FIRE / target-nothing / verbal-vs-written contradiction" banner was a
+> **CLAUDE ERROR** — there was never a real conflict, and it is struck. The authored 8-step routine
+> below is the law, in order: (1) `set_throttle 100` → (2) `nav_target_star` → (3) `pitch_compass`
+> [keep the smack-glare guards] → (4) `target_ahead` → (5) `wait_cooldown_clear` →
+> (6) `engage_supercruise` (Key_J — re-enter SC; spawns the escape vector; ALIGN-AND-HOLD to
+> `SupercruiseEntry`; **NOT** `engage_jump_clearance`/Key_K) → (7) `nav_supercruise_star` →
+> (8) → **Traversal**. **Step 6 is settled — do not re-open or hedge.** The escape-vector ALIGN-AND-HOLD
+> mechanic and the compass-glare guards are retained as ship-safety (not deleted by this resolution).
+> Ref [[resume-state-2026-06-18-flow-redesign]] / the CONSOLIDATED-BLOCKERS doc.
 
 You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.** Tier: feature.
 
 ## Binding standing rules
-- **DESIGN-ONLY.** Ratified design + Operator-blocker list. Do NOT build, edit flight code, or commit.
+- **DESIGN-ONLY.** Ratified design + Operator-blocker list. *(STATUS 2026-06-18: the no-build clause is
+  LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This bullet is
+  the historical record of the design-only round the council ran; NO-GUESSING + fail-closed below still
+  bind.)*
 - **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-KYLE: <question>`. Read docs.
 
 ## Shared context — read FIRST
 - `docs/superpowers/specs/2026-06-17-flow-redesign-MASTER-SPEC.md` (operator intent + settled truths).
 
-## YOUR SCOPE — design the SMACK RECOVERY scene exactly as authored
+## YOUR SCOPE — design the SMACK RECOVERY scene exactly as authored (LOCKED 2026-06-18)
 1. `set_throttle 100`
 2. `nav_target_star`
 3. `pitch_compass`
 4. `target_ahead`
 5. `wait_cooldown_clear`
-6. `engage_jump_clearance` — operator note "(enter supercruise)". **BLOCKED-ON-KYLE (do not guess):**
-   clarify whether this is `engage_supercruise` (re-enter SC from NORMAL space after a smack) vs a
-   hyperspace jump-clearance. The two are different mechanics.
+6. `engage_supercruise` (Key_J) — **SETTLED/LOCKED (operator 2026-06-18).** Re-enter SC from NORMAL space
+   after the smack; this spawns the BLUE/CYAN escape vector the ship must ALIGN-AND-HOLD to
+   `SupercruiseEntry`. This is the SC-entry mechanic, **NOT** `engage_jump_clearance` (Key_K, the
+   hyperspace jump-clearance loop). The earlier "(enter supercruise)" note vs the
+   `engage_jump_clearance` token was resolved in the operator's favour of `engage_supercruise` — it is
+   no longer a `BLOCKED-ON-KYLE`. (`engage_jump_clearance` named here only to mark what was NOT chosen.)
 7. `nav_supercruise_star`
 8. → **Traversal**
 

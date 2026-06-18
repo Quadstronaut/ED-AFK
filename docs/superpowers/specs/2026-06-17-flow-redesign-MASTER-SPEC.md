@@ -10,8 +10,12 @@ settled game-truths; councils design AGAINST it. **It decides the WHAT; councils
   invent it. (Ref [[no-assumptions-ever]], [[ask-kyle-to-test-game-mechanics]].)
 - **Read the documentation** — repo code/docs AND community ED references (journal/Status.json schema,
   nav-panel behaviour) before asserting a mechanic.
-- **DESIGN-ONLY.** Produce a ratified design doc + a Operator-blocker list. Do **not** build, edit flight
-  code, or commit. (The live flight path stays untouched until Operator signs each design off.)
+- **DESIGN-ONLY / no-build is LIFTED (operator 2026-06-18).** Building is now **authorized** for ratified
+  scenes — the C5 Traversal and C2 orchestrator code councils are in flight. The prior STANDING RULE
+  ("Do not build, edit flight code, or commit; the live flight path stays untouched until Operator signs each
+  design off") is **superseded**. Only the no-build clause is lifted; **NO GUESSING** (above) and
+  fail-closed (below) remain fully in force — a ratified design still gates every unknown on Operator and
+  every new action still fails closed.
 - Honour [[no-arbitrary-timed-waits]] (gates are journal events / Status flags, not wall-clock) EXCEPT
   where the operator explicitly wrote a `wait Ns` below — those are operator-chosen and kept as written,
   but flag any that SHOULD be an event gate.
@@ -66,14 +70,18 @@ settled game-truths; councils design AGAINST it. **It decides the WHAT; councils
 5. branch: **if** current system == destination → **Docking** ·
    **elif** exploration == active → **Exploration** · **else** → **Traversal**
 
-### Smack Recovery
+### Smack Recovery  — **LAW, LOCKED/RESOLVED (operator 2026-06-18)**
+The 8-step routine is settled, in order. The earlier "DEVIATION-BLOCKED / target-nothing /
+verbal-vs-written contradiction" framing was a **Claude error** and is struck — there is no conflict.
 1. `set_throttle 100`
 2. `nav_target_star`
-3. `pitch_compass`
+3. `pitch_compass`   *(keep the smack-glare guards `behind_confirm_reads` / `behind_fill_max`)*
 4. `target_ahead`
 5. `wait_cooldown_clear`
-6. `engage_jump_clearance` *(operator note: "enter supercruise")* — **BLOCKED-ON-KYLE:** clarify whether
-   this is `engage_supercruise` (re-enter SC after a smack, in normal space) vs a hyperspace jump-clearance.
+6. `engage_supercruise` (Key_J) — **SETTLED.** Re-enter SC from normal space after the smack; this
+   spawns the BLUE/CYAN escape vector the ship ALIGN-AND-HOLDs to `SupercruiseEntry`. This is the SC-entry
+   mechanic, **NOT** `engage_jump_clearance` (Key_K, the hyperspace jump-clearance loop). No longer a
+   `BLOCKED-ON-KYLE`.
 7. `nav_supercruise_star`
 8. → **Traversal**
 
