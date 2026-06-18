@@ -12,12 +12,12 @@ import json
 import time
 from pathlib import Path
 
-from ed_autojump.flow.context import StepContext
-from ed_autojump.flow.interpreter import run_procedure
-from ed_autojump.flow.loader import load_procedures
-from ed_autojump.keys import DirectInputSender, parse_binds
-from ed_autojump.launcher.focus import focus_ed_window
-from ed_autojump.status.status import StatusReader
+from ed_core.flow.context import StepContext
+from ed_core.flow.interpreter import run_procedure
+from ed_core.flow.loader import load_procedures
+from ed_core.keys import DirectInputSender, parse_binds
+from ed_core.launcher.focus import focus_ed_window
+from ed_core.status.status import StatusReader
 
 ROOT = Path(__file__).resolve().parents[1]
 ED_DIR = Path.home() / "Saved Games" / "Frontier Developments" / "Elite Dangerous"

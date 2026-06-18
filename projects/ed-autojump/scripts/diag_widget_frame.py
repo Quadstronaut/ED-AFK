@@ -18,8 +18,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ed_autojump.config import load_config
-from ed_autojump.vision.widget_ring import WidgetRingReader
+from ed_core.config import load_config
+from ed_vision.widget_ring import WidgetRingReader
 
 src = Path(sys.argv[1])
 full = cv2.imread(str(src))

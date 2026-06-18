@@ -17,7 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ed_autojump.vision.cyan_reader import CyanDotReader, _MIN_AREA
+from ed_vision.cyan_reader import CyanDotReader, _MIN_AREA
 
 reader = CyanDotReader()
 PAT = re.compile(r"orient_(\d+)_i(\d+)_s(\d+)\.png$")

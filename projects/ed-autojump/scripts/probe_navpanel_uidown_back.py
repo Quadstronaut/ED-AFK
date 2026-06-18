@@ -111,7 +111,7 @@ def _screenshot(label: str, stamp: str, dry: bool) -> Optional[Path]:
               flush=True)
         return None
     try:
-        from ed_autojump.vision.capture import GdiGrabber
+        from ed_vision.capture import GdiGrabber
         frame = GdiGrabber((0, 0, 1920, 1080)).grab()
         out_path = CALIB_DIR / f"navprobe_{label}_{stamp}.png"
         cv2.imwrite(str(out_path), frame)
@@ -509,11 +509,11 @@ def main() -> None:
 
     # Build sender.
     if dry:
-        from ed_autojump.keys import NullSender, parse_binds
+        from ed_core.keys import NullSender, parse_binds
         sender = NullSender(parse_binds(BINDS_PATH))
     else:
-        from ed_autojump.keys import DirectInputSender, parse_binds
-        from ed_autojump.launcher.focus import focus_ed_window
+        from ed_core.keys import DirectInputSender, parse_binds
+        from ed_core.launcher.focus import focus_ed_window
         sender = DirectInputSender(parse_binds(BINDS_PATH))
         if not focus_ed_window():
             print("[probe] ABORT: could not focus ED window — NOT sending any keys.",
