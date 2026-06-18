@@ -1,5 +1,14 @@
 # COUNCIL C4 — SMACK RECOVERY SCENE (ED-AFK flow redesign, 2026-06-17)
 
+> ⛔ **DO NOT RE-FIRE — DEVIATION-BLOCKED (2026-06-18).** The operator's fresh verbal routine ("flip →
+> target NOTHING → engage supercruise → compass-orient → fine-align ESCAPE VECTOR → wait in-SC →
+> nav_supercruise_star") CONFLICTS with the authored scope below ("nav_target_star → pitch_compass →
+> target_ahead → wait_cooldown_clear → engage_jump_clearance") AND with live memory (compass CV is blind to
+> the real escape vector; compass needs a locked target but verbal targets nothing). The operator must
+> reconcile his memory against this spec + the live findings FIRST. See
+> [[resume-state-2026-06-18-flow-redesign]] / the CONSOLIDATED-BLOCKERS doc. Step-6 verb is settled
+> (`engage_supercruise`, Key_J) but moot until the routine itself is reconciled.
+
 You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.** Tier: feature.
 
 ## Binding standing rules

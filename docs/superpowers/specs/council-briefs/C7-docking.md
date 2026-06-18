@@ -2,6 +2,20 @@
 
 You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.** Tier: arch.
 
+> 📌 **ROUND-2 PINNED (operator 2026-06-18) — apply, do not re-litigate:**
+> - **Request-docking sequence is OCR-GATED, NOT blind.** `1` (open nav panel) → `E` → `E` (page right to
+>   the Contacts tab) → `D` (cursor right onto the REQUEST DOCKING button) → `space` (select) →
+>   `set_throttle 0`. **OCR-confirm the REQUEST DOCKING button label before pressing** (no-blind spec). It
+>   is a full open-from-scratch sequence — do NOT assume the panel is already open or a row pinned.
+> - **NFZ ≠ docking-ready.** Entering the no-fire zone does NOT mean close enough to dock. The docking
+>   trigger is the **proximity gate** (OCR distance-to-station < 7.5 km). The `ReceiveText
+>   $STATION_NoFireZone_entered` journal event is a SEPARATE fire-safety concern — keep both, distinct; do
+>   NOT collapse the proximity loop into the NFZ event.
+> - **Station-name source = `Status.Destination.Name`** (logging-only; flow never consumes it downstream).
+> - **STILL OWED:** a contacts-tab station-distance frame at approach range + a km/Mm distance parser
+>   calibrated to it (READ layer only parses Ls/Ly today). nav_target_star / nav_supercruise_target come
+>   from C1 (blocked on the detail-page frame).
+
 ## Binding standing rules
 - **DESIGN-ONLY.** Ratified design + Operator-blocker list. Do NOT build, edit flight code, or commit.
 - **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-KYLE: <question>`. Read repo +

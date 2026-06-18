@@ -2,6 +2,21 @@
 
 You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.** Tier: arch.
 
+> 📌 **ROUND-2 PINNED (operator 2026-06-18) — apply, do not re-litigate:**
+> - **D10/D4 transition mechanism = RESOLVED: Python orchestrator.** `_SECTION_TO_PROC` map +
+>   `transition_to(runner, section)` + `run_arrival_then_branch` in ed_autojump, registered via the
+>   classifier/event-route surfaces at activate() (NO core→domain import). TOML `goto` rejected.
+> - **MANDATORY abort-recheck:** read `_preempt`/`_smacked`/`should_abort()` at TWO points — (a) in
+>   run_arrival_then_branch BETWEEN `_run("arrival")` and the discriminator read; (b) at top of
+>   transition_to before `runner._run(section)`. If set → don't branch, yield to run_live → `_route_sc_exit`.
+> - **D2 exploration flag = RESOLVED: reuse `body_tour_enabled`.** VERIFIED wired (config.py:78 →
+>   dispatcher.py:122/157/462 → context.py:148 → steps_body_tour.py:72 + arrival.toml:83). FIX: the
+>   `exploration_active` predicate must read `ctx.body_tour_enabled`, NOT the phantom
+>   `runner._exploration_mode` (boot_routes.py:84, never set).
+> - **STILL BLOCKED:** D1 (Status.Destination station schema — operator live test: plot-to-station, read
+>   `Destination.Body != 0`). D5/D6 minor (Exploration→Traversal via completion; route_complete_park scoop
+>   knob stays 0.99). Do NOT re-fire until D1 lands.
+
 ## Binding standing rules
 - **DESIGN-ONLY.** Ratified design + Operator-blocker list. Do NOT build, edit flight code, or commit.
 - **NO GUESSING.** Unknown mechanic/bind/journal field/layout not settled in the cited sources →
