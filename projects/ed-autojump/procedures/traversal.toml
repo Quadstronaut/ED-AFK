@@ -1,0 +1,69 @@
+# TRAVERSAL — the steady-state A->B hyperspace hop. Operator-verbatim sequence
+# (MASTER-SPEC "Traversal"): wait 5s -> target_next_route -> set_throttle 100 ->
+# wait 3s -> orient_compass -> orient_widget_ring -> engage_jump_clearance.
+#
+# STANDALONE procedure. There is NO goto / chaining primitive (model.py defines
+# only Step/OnRequiredFail/Procedure); inter-scene entry (how Arrival / Smack /
+# Exploration hand off INTO this) is the C2 deliverable and is OUT OF SCOPE
+# here. The loader discovers this file by directory glob (loader.py:79), so
+# dropping it in procedures/ IS the registry wiring.
+#
+# Its jump tail (target_next_route -> set_throttle -> orient_compass ->
+# orient_widget_ring -> engage_jump_clearance, with retry_from=target_next_route)
+# is byte-for-byte the proven dock_resume.toml tail. Traversal differs only by
+# the two LEADING operator waits and by the absence of auto_launch /
+# wait_masslock_clear (no station mass lock to clear in steady state).
+#
+# Honk OMITTED on purpose: Arrival owns honking (design I2). NO parallel_tracks.
+#
+# step kinds (tag at start of each step comment):
+#   wait    passive block — no input sent (here: operator wall-clock pacing)
+#   gated   keypress with Status.json precondition (fails closed on bad flag)
+#   tap     atomic keypress, no precondition
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+
+# BLOCKED-ON-KYLE (carried from C5 design; NOT resolved in this build):
+#   B1 inter-scene ENTRY contract (C2-owned) — traversal built standalone here.
+#   B2 should `wait 3s` (idx 3) gate on an at-speed Status/journal signal?
+#      Operator literal kept verbatim.
+#   B3 should `wait 5s` (idx 0) gate on an SC-assist/orbit-acquired signal
+#      (esp. the Smack->Traversal path)? Operator literal kept verbatim.
+#   B4 Exploration->Traversal entry throttle/SC state (C2/C6-owned).
+
+[on_required_fail]
+# A required fail re-runs the target-next -> orient ladder — the same anchor
+# dock_resume / arrival use for the jump leg. retry_from resolves to the FIRST
+# (and only) target_next_route, index 1. No retry_anchor and no
+# retry_from_if_supercruise: traversal is a single steady-state lane with one
+# retry target (the operator waits ride along on a retry by design — see idx 3).
+retry_from = "target_next_route"
+max_retries = 3
+backoff_s = 2.0
+
+steps = [
+  # wait | 0 operator pacing BEFORE locking the hop. NOT a gate (wall-clock).
+  # Sits before the retry anchor (index 1), so a jump-leg fail never re-runs it.
+  { action = "wait", s = 5.0 },
+  # gated | 1 lock the NEXT SYSTEM in the route. RETRY ANCHOR via retry_from
+  # (the FIRST target_next_route = index 1). Required: no hop, no jump.
+  { action = "target_next_route", required = true },
+  # tap | 2 full burn. NON-required — a missing throttle bind is tolerated
+  # (ED auto-dethrottles on arrival; never gate the lane on it). pct mirrors
+  # dock_resume.toml byte-for-byte.
+  { action = "set_throttle", pct = 100 },
+  # wait | 3 operator pacing AFTER the burn, BEFORE orient. NOT a gate. This is
+  # at/after the retry anchor's resume point, so it re-runs on a jump-leg retry
+  # (intended: settle the burn again before re-orienting).
+  { action = "wait", s = 3.0 },
+  # vision | 4 coarse compass align to the hop. Required: fails CLOSED with no
+  # vision wired (no compass_reader -> the step returns False -> retry/abort,
+  # never a blind jump).
+  { action = "orient_compass", required = true },
+  # vision | 5 fine widget-ring align. Required, but a no-op TRUE when the
+  # widget_ring flag is off (degrade-on-miss is the step's own concern).
+  { action = "orient_widget_ring", required = true },
+  # gated | 6 TERMINAL — FSD jump + clearance loop (input_exclusive). NO step
+  # after it: the interpreter's witchspace pause holds the (non-existent) next
+  # step gated on FSDJump, so no hold_alignment tail is needed (design I8).
+  { action = "engage_jump_clearance", required = true },
+]
