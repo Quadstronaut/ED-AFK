@@ -46,7 +46,7 @@ guess (exactly the "ask Operator, no guessing" discipline). Per-council designs 
 
 Recorded in [[resume-state-2026-06-18-flow-redesign]]. Summary:
 - **#9 exploration flag** → reuse `body_tour_enabled` (VERIFIED wired; C2 predicate must read
-  `ctx.body_tour_enabled`, not the phantom `runner._exploration_mode` at boot_routes.py:84).
+  `ctx.body_tour_enabled`, not the phantom `runner._exploration_mode` at boot_routes.py:84). ✅ **FIXED 2026-06-21 (cc50366):** both `_exploration_active` AND `build_determine_context` (:84) now read `_body_tour_enabled`; the phantom is read by no executable flight code; EXPLORATION scene reachable, still degrades to legacy (no standalone proc).
 - **#6 smack step-6** → `engage_supercruise` (Key_J). **LOCKED/SETTLED** (the prior "moot pending the C4
   deviation" caveat is struck — the deviation was a Claude error, see the resolved block below).
 - **#8 planet-smack** → same as star-smack, parameterized, EXCEPT compass usable the WHOLE time (no

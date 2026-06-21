@@ -12,7 +12,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
 > - **D2 exploration flag = RESOLVED: reuse `body_tour_enabled`.** VERIFIED wired (config.py:78 →
 >   dispatcher.py:122/157/462 → context.py:148 → steps_body_tour.py:72 + arrival.toml:83). FIX: the
 >   `exploration_active` predicate must read `ctx.body_tour_enabled`, NOT the phantom
->   `runner._exploration_mode` (boot_routes.py:84, never set).
+>   `runner._exploration_mode` (boot_routes.py:84). ✅ APPLIED 2026-06-21 (cc50366): both `_exploration_active` and `build_determine_context`:84 now read `_body_tour_enabled`; phantom eliminated.
 > - **D1 RESOLVED 2026-06-21** (`D1-DESTINATION-DISCRIMINATOR-FINDING.md`): station iff `Body!=0 AND
 >   Name!=currentSystemName` — a locked STAR is `Body!=0` too, so the bare binary is REFUTED. D5/D6 minor (Exploration→Traversal via completion; route_complete_park scoop
 >   knob stays 0.99). Do NOT re-run this council until D1 lands.
