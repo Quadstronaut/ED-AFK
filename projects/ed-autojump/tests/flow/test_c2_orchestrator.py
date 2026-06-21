@@ -399,6 +399,60 @@ def test_source_grep_new_predicate_does_not_read_phantom():
 
 
 # ===========================================================================
+# 2026-06-21 code council (run wf_ccff331d-506) — the 3 exploration-determination
+# fixes: FIX-1 phantom->body_tour at build_determine_context; FIX-2 EXPLORATION
+# stays ("fallback", None); FIX-3 capture-at-plot local-star guard.
+# ===========================================================================
+
+def test_build_determine_context_reads_body_tour_not_phantom():
+    # FIX-1 (D-PHANTOM): the C-series determination GATE must read the SAME
+    # real flag _exploration_active does, NOT the never-set _exploration_mode
+    # phantom (which kept the EXPLORATION scene unreachable). Bytecode is
+    # ground truth (mirrors the helper test above).
+    from ed_autojump.flow.boot_routes import build_determine_context
+    co = build_determine_context.__code__
+    referenced = set(co.co_names) | {c for c in co.co_consts
+                                     if isinstance(c, str)}
+    assert "_body_tour_enabled" in referenced
+    assert "_exploration_mode" not in referenced
+
+
+def test_state_to_proc_exploration_is_fallback_and_map_total():
+    # FIX-2 (D-MAPPING): EXPLORATION deliberately stays ("fallback", None) —
+    # no standalone exploration proc exists, so routing it would dispatch a
+    # non-existent proc (ship-unsafe). The map must stay total over CSeriesState.
+    from ed_autojump.flow.boot_routes import _STATE_TO_PROC
+    from ed_core.boot.scenes import CSeriesState
+    assert _STATE_TO_PROC[CSeriesState.EXPLORATION] == ("fallback", None)
+    assert set(_STATE_TO_PROC) == set(CSeriesState)
+
+
+def test_captured_name_is_local_star_guard():
+    # FIX-3 (D-GUARD): the capture-at-plot fast path must exclude a locked
+    # arrival STAR (Body!=0, Name==system) from station classification, using
+    # the SAME naming rule the settle loop uses, and FAIL CLOSED (treat as
+    # star -> park) on any unprovable/empty input.
+    from ed_autojump.flow.boot_routes import _captured_name_is_local_star as g
+    assert g("Robigo", "Robigo") is True          # primary star = bare system
+    assert g("Robigo A", "Robigo") is True         # secondary "<system> X"
+    assert g("Robigo Mines", "Robigo") is False    # a real station -> may dock
+    assert g("Robigo AB", "Robigo") is False       # multi-char suffix != secondary
+    assert g(None, "Robigo") is True               # fail-closed: missing name
+    assert g("", "Robigo") is True                 # fail-closed: empty name
+    assert g("Robigo", None) is True               # fail-closed: missing system
+    assert g("Robigo", "") is True                 # fail-closed: empty system
+
+
+def test_dispatch_route_complete_wires_the_local_star_guard():
+    # FIX-3 wiring: the guard must actually be CALLED in the fast path, not
+    # merely defined. Source-level proof; the behavioural dock path is covered
+    # by test_dock.py's existing captured-station test (verified unregressed).
+    import inspect as _inspect
+    from ed_autojump.flow.boot_routes import dispatch_route_complete
+    assert "_captured_name_is_local_star" in _inspect.getsource(dispatch_route_complete)
+
+
+# ===========================================================================
 # Group F — _dest_is_system over the REAL parsers (INV-7)
 # ===========================================================================
 

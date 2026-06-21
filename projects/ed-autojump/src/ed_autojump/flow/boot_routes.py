@@ -81,7 +81,7 @@ def build_determine_context(runner: Any) -> DetermineContext:
         events=(),                                       # EMPTY — no events buffer (LBF1/AC11)
         route_empty=not bool(route),                     # None / [] -> True
         arrival_latch=_ensure_latch(runner),             # SAME instance E3 arms
-        exploration_mode=bool(getattr(runner, "_exploration_mode", False)),
+        exploration_mode=bool(getattr(runner, "_body_tour_enabled", False)),
         fsd_cooldown=fsd_cooldown_blocked(st),           # reads same st, not runner._latest_status
         smacked=bool(runner._smacked),
         paused=bool(getattr(runner, "_paused", False)),
@@ -131,6 +131,12 @@ _STATE_TO_PROC: dict[CSeriesState, tuple] = {
     CSeriesState.NO_ROUTE:    ("idle",     "NoRouteOnStartup"),
     CSeriesState.TRAVERSAL:   ("fallback", None),               # Robigo fast-resume guard (AC8)
     CSeriesState.REFUEL:      ("fallback", None),
+    # DECIDE-no-edit (2026-06-21 code council): no standalone exploration proc
+    # exists; the explore action runs inert via arrival.toml's opt-in `explore`
+    # step. Routing here to ("run","exploration") would dispatch a non-existent
+    # proc -> a ship-unsafe guess against an unbuilt operator stub. With the
+    # phantom-flag fix, the EXPLORATION scene is now reachable but still degrades
+    # to legacy here == current live behaviour.
     CSeriesState.EXPLORATION: ("fallback", None),
     CSeriesState.PAUSE:       ("fallback", None),
     CSeriesState.RESUME:      ("fallback", None),
@@ -250,9 +256,11 @@ def _exploration_active(runner: Any) -> bool:
 
     LOCKED #9: read runner._body_tour_enabled — the CONFIRMED-wired flag
     (dispatcher.py:157) that sources ctx.body_tour_enabled (context.py:148).
-    Deliberately does NOT read runner._exploration_mode: that attribute is a
-    PHANTOM (assigned NOWHERE in projects/, always False), so reading it would
-    silently pin exploration OFF forever. Fail-closed to False when unset."""
+    As of 2026-06-21 build_determine_context (the C-series determination gate)
+    ALSO reads _body_tour_enabled, so both exploration gates agree on the SAME
+    real flag and the old _exploration_mode PHANTOM (assigned NOWHERE in
+    projects/) is read by NO executable flight code. Fail-closed to False when
+    unset."""
     return bool(getattr(runner, "_body_tour_enabled", False))
 
 
@@ -563,6 +571,31 @@ def _is_route_complete(runner: Any, ev: Any) -> bool:
     addr = getattr(ev, "system_address", None)
     return addr is not None and addr == final[0]
 
+
+def _captured_name_is_local_star(name: "str | None", system_name: "str | None") -> bool:
+    """Is the capture-at-plot NAME the local (arrival) system's star?
+
+    Mirrors _destination_is_local_star's naming rule (primary star = bare
+    system name; secondary = "<system> X", one trailing letter) but operates on
+    the captured NAME alone -- the capture tuple (system_address, body, name)
+    cannot re-read live Destination. FAILS CLOSED: returns True ("treat as star,
+    do not dock") whenever either arg is missing/empty, so an unprovable capture
+    parks rather than driving a dock at a bare star. Gives the capture-at-plot
+    fast path the same local-star exclusion the settle loop already has, so a
+    locked arrival STAR (Body!=0, Name==system) is never mis-classified as a
+    station (2026-06-21 code council, D-GUARD)."""
+    if not name or not system_name:
+        return True                       # unprovable -> treat as star (park, never dock)
+    nm = name.strip()
+    if nm == system_name:
+        return True                       # primary star = bare system name
+    if (nm.startswith(system_name + " ")
+            and len(nm) == len(system_name) + 2
+            and nm[-1].isalpha()):
+        return True                       # secondary star "<system> X"
+    return False
+
+
 def dispatch_route_complete(runner: Any, ev: Any) -> None:
     """Terminal ROUTE COMPLETE handler. SUCCESS, not an abort -- positive
     wording, no auto-restart, no retry. The live loop simply sees no
@@ -593,7 +626,8 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
     if (captured is not None
             and captured[0] == arrival_addr
             and captured[1] != 0
-            and captured[2] and not captured[2].startswith("$")):
+            and captured[2] and not captured[2].startswith("$")
+            and not _captured_name_is_local_star(captured[2], system)):
         is_station = True
         station_name = captured[2]
     else:
