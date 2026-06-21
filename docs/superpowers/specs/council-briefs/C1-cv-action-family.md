@@ -20,9 +20,11 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
 
 ## YOUR SCOPE — design these, nothing else
 1. **Details-page button-bar CV-navigation primitive** (shared substrate): open a nav-panel ROW's DETAIL
-   page, OCR the LABEL above the highlighted button (`LOCK DESTINATION` / `UNLOCK DESTINATION`,
-   `ACTIVATE SUPERCRUISE ASSIST` / `DEACTIVATE SUPERCRUISE ASSIST`), move the row-submenu cursor to the
-   desired button, press it ONCE.
+   page, OCR the LABEL above the highlighted button (`LOCK DESTINATION` / `UNLOCK DESTINATION`; the
+   SC-assist label is BODY-TYPE-DEPENDENT — `SUPERCRUISE ASSIST AND ORBIT` (orbitable body) or plain
+   `SUPERCRUISE ASSIST` (station) when OFF, `DEACTIVATE SUPERCRUISE ASSIST` when ON — NOT the assumed
+   `ACTIVATE SUPERCRUISE ASSIST`; live-confirmed 2026-06-21, see C1-DETAIL-PAGE fixtures), move the
+   row-submenu cursor to the desired button, press it ONCE.
 2. **`nav_target_star`** — ensure the main star is the LOCKED destination. Idempotent **single** select.
    Detect already-locked-on-star via the `UNLOCK DESTINATION` label (a locked row shows UNLOCK). If
    already locked → no-op done; else press lock ONCE. Verify via `Status.Destination` == system. NOT ×2.

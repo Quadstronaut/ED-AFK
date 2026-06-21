@@ -7,10 +7,14 @@ Supercruise Assist has NO dedicated keybind in Elite Dangerous. You cannot
 press one key to turn it on. The only way to toggle it is through the UI:
 open the left ("navigation") panel, select a destination body to open its
 *detail pane*, and there — to the right of the body's name — sits the
-"LOCK AND SUPERCRUISE" control. Activating that control engages assist and
-flies you to the body automatically. When assist is already running the
-same control reads "DEACTIVATE SUPERCRUISE ASSIST" instead, but its screen
-position (one step right of the selected row) is unchanged.
+Supercruise Assist control. Activating that control engages assist and
+flies you to the body. (LABEL, live-confirmed 2026-06-21: OFF reads
+"SUPERCRUISE ASSIST AND ORBIT" for an orbitable body or plain "SUPERCRUISE
+ASSIST" for a station — NOT "LOCK AND SUPERCRUISE"; ON reads "DEACTIVATE
+SUPERCRUISE ASSIST". This macro is keystroke-blind and reads no label, so
+the names are descriptive only.) When assist is already running the same
+control reads "DEACTIVATE SUPERCRUISE ASSIST", but its screen position
+(one step right of the selected row) is unchanged.
 
 WHY THIS IS BLIND (no vision / no CV)
 -------------------------------------

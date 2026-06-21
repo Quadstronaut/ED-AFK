@@ -14,7 +14,7 @@ Procâ†’proc transition does not exist in the interpreter/loader/model: `mod
 
 ### Discriminators (AC3), placement `ed_core/flow/predicates.py`, fail-closed:
 - `dest_is_system(st, route, system_name)`: NavRoute-empty PRIMARY, `_destination_is_local_star is True` CORROBORANT. None route â†’ empty â†’ True â†’ safe terminal Docking.
-- `dest_is_station(st)` = `_dest_is_named_station(st)` verbatim (Body!=0 + non-`$` Name); `system` is the negation (Body==0). status=None â†’ False.
+- `dest_is_station(st)` — **RESOLVED 2026-06-21 (`D1-DESTINATION-DISCRIMINATOR-FINDING.md`):** station iff `Body!=0 AND Name!=currentSystemName`. `_dest_is_named_station` (Body!=0 + non-`$` Name) ALONE is INSUFFICIENT — a locked arrival STAR is also Body!=0 (Name==system); the live route-complete path adds `local_star is False` (boot_routes.py:626-630). `system` = Body==0 OR (Body!=0 AND Name==system). The bare `Body!=0 ⇒ station` binary is REFUTED. status=None â†’ False.
 - `exploration_active(runner)` = `bool(getattr(runner,"_exploration_mode",False))` â€” D2-BLOCKED, fails closed to False.
 
 ### Arrival branch table (AC4, verbatim + precedence): `if dest_is_system â†’ docking; elif exploration_active â†’ exploration; else â†’ traversal`. Smackâ†’Traversal and Explorationâ†’Traversal are unconditional `transition_to(runner,"traversal")` (D5: Exploration hands off by procedure completion, not internal goto).

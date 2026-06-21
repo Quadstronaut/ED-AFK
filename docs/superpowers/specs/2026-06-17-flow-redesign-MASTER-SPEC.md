@@ -36,10 +36,12 @@ settled game-truths; councils design AGAINST it. **It decides the WHAT; councils
   `tests/fixtures/navpanel/{shinrarta_populated_1080.png, lhs2509_unexplored_1080.png}`.
 - **Details-page button bar** (operator frames, image refs in this session): a row's detail page has a
   horizontal button bar navigated with the row submenu cursor; the LABEL above the highlighted button
-  states its action — `LOCK DESTINATION` / `UNLOCK DESTINATION` (a locked row shows UNLOCK), and
-  `ACTIVATE SUPERCRUISE ASSIST` / `DEACTIVATE SUPERCRUISE ASSIST`. Real frames: image #6 (supercruise
-  button highlighted, SC-assist active), image #7 (UNLOCK DESTINATION = this row is the locked dest).
-  **Operator still owes more detail-page frames** (the LOCK-state + button positions) — councils flag this.
+  states its action — `LOCK DESTINATION` / `UNLOCK DESTINATION` (a locked row shows UNLOCK), and the
+  SC-assist button whose label is **BODY-TYPE-DEPENDENT** (live-confirmed 2026-06-21): OFF reads
+  `SUPERCRUISE ASSIST AND ORBIT` (orbitable body) or plain `SUPERCRUISE ASSIST` (station) — **NOT** the
+  assumed `ACTIVATE SUPERCRUISE ASSIST`; ON reads `DEACTIVATE SUPERCRUISE ASSIST`.
+  ✅ **CAPTURED 2026-06-21** — `tests/fixtures/navpanel/navpanel_detail_{lock,unlock,sc_activate,sc_deactivate,sc_assist_station}_1080.png`.
+  Bar is HORIZONTAL (UI_Right walk holds).
 
 ## NEW CV ACTIONS (corrected semantics — operator 2026-06-17)
 - **`nav_target_star`** — ensure the MAIN STAR is the locked destination. **Single select, NOT ×2.**
@@ -122,7 +124,9 @@ verbal-vs-written contradiction" framing was a **Claude error** and is struck �
   `ed_autojump/flow/boot_routes.py`, `ed_core/boot/scenes.py`.) Design how Arrival branches and scenes chain.
 - **`exploration == active`** flag source (config `body_tour_enabled`? a new exploration-mode flag?).
 - **`current system == destination`** / **`destination == system|station`** — read from `Status.json`
-  `Destination` (Name/System/Body) — confirm the exact discriminator (system vs station) from real schema.
+  `Destination` (Name/System/Body). ✅ **RESOLVED 2026-06-21 (`D1-DESTINATION-DISCRIMINATOR-FINDING.md`):**
+  station iff `Body != 0 AND Name != currentSystemName` (a locked STAR is also `Body!=0`, Name==system;
+  `Body==0` = a whole-system / next-hop target). Read at route-complete. The bare `Body!=0` binary is REFUTED.
 - Per-ship CV regions (#19) apply to all new CV crops — region must come from the per-ship resolver, not
   a constant. Bot is single-ship Mandalay.
 
