@@ -1,5 +1,10 @@
 # C1 KEYSTONE — detail-page button-bar frame capture (for Operator, in-game)
 
+> ✅ **CAPTURED 2026-06-21 — keystone unblocked.** All 4 detail frames committed:
+> `navpanel_detail_{lock,unlock,sc_activate,sc_deactivate}_1080.png` (+ bonus `..._sc_assist_station`). Bar is
+> HORIZONTAL (UI_Right walk holds). CORRECTION: SC-assist OFF reads `SUPERCRUISE ASSIST AND ORBIT` (body) /
+> plain `SUPERCRUISE ASSIST` (station), NOT `ACTIVATE SUPERCRUISE ASSIST`.
+
 **This is the single keystone unblock.** C1 (`nav_target_star` / `nav_supercruise_star` /
 `nav_supercruise_target` / `nav_supercruise_unexplored`) and everything that builds on it
 (C3 arrival, C4 smack, C6 exploration, C7 docking) are blocked on ONE missing fixture:
@@ -36,10 +41,10 @@ redesign builds until these land.
    - First button reads **UNLOCK DESTINATION**.
    - Save → `navpanel_detail_unlock_1080.png`
 
-3. **SC-assist OFF — `ACTIVATE SUPERCRUISE ASSIST`**
+3. **SC-assist OFF — `SUPERCRUISE ASSIST AND ORBIT` (body) / plain `SUPERCRUISE ASSIST` (station)**
    - Must be **in supercruise** (the SC-assist button only exists in SC).
    - Open a body's detail pane, `UI_Right` to the supercruise-assist button (assist OFF).
-   - Reads **ACTIVATE SUPERCRUISE ASSIST**. Screenshot the FULL bar (button order + position).
+   - Reads **SUPERCRUISE ASSIST AND ORBIT** (orbitable body) or plain **SUPERCRUISE ASSIST** (station). Screenshot the FULL bar.
    - Save → `navpanel_detail_sc_activate_1080.png`
 
 4. **SC-assist ON — `DEACTIVATE SUPERCRUISE ASSIST`**

@@ -1,5 +1,12 @@
 # IN-GAME CAPTURE / TEST SHEET — one session, start to finish (2026-06-21)
 
+> ✅ **STATUS 2026-06-21 — SESSION DONE except #8.** All C1 detail frames (#1–#4) + the bonus station-assist
+> frame + #7 (km + REQUEST DOCKING) are CAPTURED and committed. **#5 (D1) and #6 (unexplored) are RESOLVED**
+> (`D1-DESTINATION-DISCRIMINATOR-FINDING.md`, `2026-06-21-COUNCIL-INCONSISTENCY-REGISTER.md`). Only **#8**
+> (planet purple-vector + no-vector smack) remains, deferred by the operator. CORRECTION: the SC-assist OFF
+> label is `SUPERCRUISE ASSIST AND ORBIT` (body) / plain `SUPERCRUISE ASSIST` (station), **NOT** `ACTIVATE
+> SUPERCRUISE ASSIST`; and a locked STAR is `Body!=0` too (D1 rule = `Body!=0 AND Name!=system`).
+
 Everything the flow-redesign is currently blocked on, in **one runnable ED session**, ordered by
 game state so you fly a single natural loop. Sources: the C1 keystone checklist
 (`C1-DETAIL-PAGE-FRAME-CAPTURE.md`) + the locked flow-redesign blockers
@@ -30,11 +37,11 @@ Chair-side buildable work is exhausted — **nothing more compiles into the live
 |---|---|---|---|---|
 | 1 | Detail pane — **LOCK DESTINATION** | frame | C1 (→C3/C4/C6/C7) | `navpanel_detail_lock_1080.png` |
 | 2 | Detail pane — **UNLOCK DESTINATION** | frame | C1 | `navpanel_detail_unlock_1080.png` |
-| 3 | Detail pane — **ACTIVATE SUPERCRUISE ASSIST** | frame | C1 | `navpanel_detail_sc_activate_1080.png` |
+| 3 | Detail pane — **SUPERCRUISE ASSIST AND ORBIT** / plain **SUPERCRUISE ASSIST** (station) — ✅CAPTURED | frame | C1 | `navpanel_detail_sc_activate_1080.png` |
 | 4 | Detail pane — **DEACTIVATE SUPERCRUISE ASSIST** | frame | C1 | `navpanel_detail_sc_deactivate_1080.png` |
 | 5 | **Plot-to-station** Status.json read | test/data | C2 system-vs-station branch (D1) | (paste values / ping me) |
 | 6 | **SC-assist on unexplored** — drop vs orbit | test/answer | C6 exploration | (answer in words) |
-| 7 | **Contacts-tab station distance** (km range) | frame | C7 docking gate | `navpanel_contacts_station_km_1080.png` |
+| 7 | **Station km distance + REQUEST DOCKING** ✅CAPTURED | frame | C7 docking gate | `navpanel_nav_station_km_1080.png` + `navpanel_contacts_request_docking_1080.png` |
 | 8 | **Planet-smack purple vector** + **no-vector drop** | frames | G2 smack discriminator | `smack_planet_purple_vector_1080.png`, `smack_no_vector_drop_1080.png` |
 
 The four C1 frames (#1–4) are **the keystone** — capture those first; everything CV in the redesign rides on them.
@@ -67,8 +74,9 @@ The whole C2 system-vs-station branch hinges on this one discriminator.
    (orbital / outpost / settlement) — not just a system.
 2. With that route set, the live `Status.json` `Destination` block is what I need:
    `…\Saved Games\Frontier Developments\Elite Dangerous\Status.json`
-3. **What confirms it:** `Destination.Body != 0` and `Destination.Name` = the station name.
-   (A plain system/star destination has `Body == 0` — that's the contrast that lets the bot tell them apart.)
+3. **What confirms it (RESOLVED 2026-06-21 — `D1-DESTINATION-DISCRIMINATOR-FINDING.md`):** station iff
+   `Destination.Body != 0` **AND** `Destination.Name != currentSystemName`. A locked STAR is ALSO `Body!=0`
+   (Name==system); `Body==0` = a whole-system / next-hop target. The bare "star = `Body==0`" claim is REFUTED.
 
 **Delivery (easiest wins):** either paste the `Destination` object here, **or** just ping me while the
 station route is set and I'll read `Status.json` myself.
@@ -82,7 +90,7 @@ The SC-assist button only exists in supercruise, so do these on your way out.
 **Frames #3 / #4 — SC-assist button states:**
 1. In SC, open a body's detail pane (`1` → highlight → space).
 2. `UI_Right` across the bar to the supercruise-assist button.
-   - Assist **OFF** → reads **ACTIVATE SUPERCRUISE ASSIST** → **📸 frame #3** (full bar) →
+   - Assist **OFF** → reads **SUPERCRUISE ASSIST AND ORBIT** (body) / plain **SUPERCRUISE ASSIST** (station), NOT `ACTIVATE` → **📸 frame #3** (full bar, CAPTURED) →
      `navpanel_detail_sc_activate_1080.png`
    - Engage assist, reopen the same button, assist **ON** → reads **DEACTIVATE SUPERCRUISE ASSIST**
      → **📸 frame #4** (full bar) → `navpanel_detail_sc_deactivate_1080.png`

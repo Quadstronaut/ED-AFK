@@ -136,8 +136,10 @@ def _dest_is_system(st, route, system_name) -> bool:
 **`_dest_is_station(st) -> bool`** — **THE D1-BLOCKED PREDICATE, ISOLATED**:
 ```python
 def _dest_is_station(st) -> bool:
-    # BLOCKED-ON-D1: confirm Status.Destination.Body != 0 => station
-    # (operator must test: undock -> plot-station -> read Status.json).
+    # RESOLVED-D1 (2026-06-21, D1-DESTINATION-DISCRIMINATOR-FINDING.md): station iff
+    # Body!=0 AND Name!=currentSystemName. The bare Body!=0 binary is REFUTED (a locked
+    # arrival STAR is Body!=0 too, Name==system). _dest_is_named_station ALONE is
+    # insufficient at route-complete; the live path adds local_star is False (boot_routes.py:626-630).
     # Until D1 is confirmed in-game, this predicate's REAL-WORLD correctness is
     # unverified. It fails CLOSED: a non-station / unread dest reads False, and the
     # arrival branch falls through to Traversal (never a blind drive into a station).

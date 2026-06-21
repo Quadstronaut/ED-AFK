@@ -17,11 +17,13 @@ guess (exactly the "ask Operator, no guessing" discipline). Per-council designs 
 
 ## A · FRAMES to capture in-game (the biggest unblock)
 
-1. **Detail-page button-bar frames — THE keystone.** A nav-panel row's DETAIL page in BOTH states:
-   (a) the lock button reading `LOCK DESTINATION` and `UNLOCK DESTINATION`, (b) the supercruise button
-   reading `ACTIVATE` and `DEACTIVATE SUPERCRUISE ASSIST` — showing the full button bar + button order.
+1. ✅ **Detail-page button-bar frames — THE keystone — CAPTURED 2026-06-21.** A nav-panel row's DETAIL
+   page in BOTH states: (a) the lock button `LOCK DESTINATION` / `UNLOCK DESTINATION`, (b) the SC-assist
+   button — label is BODY-TYPE-DEPENDENT: `SUPERCRUISE ASSIST AND ORBIT` (orbitable body) or plain
+   `SUPERCRUISE ASSIST` (station) when OFF, `DEACTIVATE SUPERCRUISE ASSIST` when ON (NOT the assumed
+   `ACTIVATE...`). Fixtures: `tests/fixtures/navpanel/navpanel_detail_{lock,unlock,sc_activate,sc_deactivate,sc_assist_station}_1080.png`.
    Unblocks **C1** (the entire `nav_target_star` / `nav_supercruise_*` family), which **C3/C4/C6/C7 all
-   build on.** (Same ask as G1 BK-6.) Nothing CV in the redesign builds without this.
+   build on.** Bar is HORIZONTAL (UI_Right walk holds).
 2. **Contacts-tab station-distance frame** — the station distance at approach range, to see whether it
    reads in `km`/`Mm` and on which tab. The READ layer only parses `Ls`/`Ly` today, so the `< 7.5 km`
    docking gate (C7) needs a new km-parser calibrated against a real frame. None exists.
@@ -33,12 +35,12 @@ guess (exactly the "ask Operator, no guessing" discipline). Per-council designs 
 
 ## B · Game-truth to test in-game (quick live checks)
 
-4. **Status.Destination station schema** (C2 D1): undock → plot a route to a **station** → read
-   `Status.json`; confirm `Destination.Body != 0` (+ Name) distinguishes a station from a system/star
-   (Body = 0). The whole system-vs-station branch (Arrival → Docking vs Traversal) hinges on this.
-5. **Does SC-assist on an UNEXPLORED row DROP the ship, or ORBIT it?** (C6 B3/B4): if it drops you into
-   normal space, the explore loop needs a re-engage branch or it strands. (Memory says SC-assist orbits
-   bodies in SC and only drops at stations/POI — but unexplored bodies are the untested case.)
+4. ✅ **Status.Destination station schema** (C2 D1) — **RESOLVED 2026-06-21** (`D1-DESTINATION-DISCRIMINATOR-FINDING.md`):
+   station iff `Body != 0 AND Name != currentSystemName`. A locked STAR is ALSO `Body!=0` (Name==system);
+   `Body==0` = whole-system / next-hop. The bare `Body!=0 ⇒ station` binary is REFUTED. Read at route-complete.
+5. ✅ **SC-assist on an UNEXPLORED row** (C6 B3/B4) — **RESOLVED 2026-06-21**: it ORBITS (stays in SC), same
+   as any body — no strand-drop, **no re-engage branch needed**. (operator-reported; pin a fixture before
+   deleting any speculative recovery branch.)
 
 ## ✅ C · Intent / design decisions — ALL LOCKED (operator 2026-06-18)
 
