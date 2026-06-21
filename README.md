@@ -1,4 +1,10 @@
+<div align="center">
+
+<a id="top"></a>
+
 # ED-AFK
+
+**An experiment in AI-driven workflows acting on an external data source** · *alpha*
 
 <p>
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white">
@@ -8,9 +14,45 @@
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange">
 </p>
 
+<p>
+  <img alt="last commit" src="https://img.shields.io/github/last-commit/Quadstronaut/ED-AFK">
+  <img alt="repo size" src="https://img.shields.io/github/repo-size/Quadstronaut/ED-AFK">
+  <img alt="top language" src="https://img.shields.io/github/languages/top/Quadstronaut/ED-AFK">
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Quadstronaut/ED-AFK/test.yml?label=tests">
+</p>
+
 ---
 
-## What it is
+[![What it is](https://img.shields.io/badge/What_it_is-informational?style=for-the-badge)](#what-it-is)
+[![What it does](https://img.shields.io/badge/What_it_does-informational?style=for-the-badge)](#what-it-does)
+[![How to use it](https://img.shields.io/badge/How_to_use_it-informational?style=for-the-badge)](#how-to-use-it)
+[![How it's built](https://img.shields.io/badge/How_it's_built-informational?style=for-the-badge)](#how-its-put-together)
+[![ToS Warning](https://img.shields.io/badge/ToS_Warning-red?style=for-the-badge)](#terms-of-service-warning)
+[![How it operates](https://img.shields.io/badge/How_it_operates-informational?style=for-the-badge)](#how-it-operates)
+[![Problems](https://img.shields.io/badge/Problems-informational?style=for-the-badge)](#problems)
+[![Contributing](https://img.shields.io/badge/Contributing-informational?style=for-the-badge)](#contributing)
+[![Licensing](https://img.shields.io/badge/Licensing-informational?style=for-the-badge)](#licensing)
+
+</div>
+
+---
+
+## At a glance
+
+| | |
+|---|---|
+| **Platform** | Windows (PC *Elite Dangerous: Odyssey*) |
+| **Language** | Python 3.11+ |
+| **Status** | Alpha — working experiment, not a finished product |
+| **License (root)** | MIT |
+| **License (ed-autojump)** | AGPL-3.0-or-later |
+| **Shippable tool** | `ed-autojump` |
+
+---
+
+<a id="what-it-is"></a>
+
+## 🔭 What it is
 
 ED-AFK is an experiment in **AI-driven workflows** and how well they can read,
 interpret, and act on an **external data source** in real time. The whole point
@@ -25,7 +67,11 @@ data feeds of any consumer application (see the Terms-of-Service section for
 why that matters). The repository is a layered, six-package Python workspace
 that turns that feed into decisions and decisions into synthetic input.
 
-## What it does
+---
+
+<a id="what-it-does"></a>
+
+## ⚙️ What it does
 
 The engine watches the external data source, decides what state the world is
 in, and runs the procedure that matches. Concretely, for the *Elite Dangerous*
@@ -41,7 +87,11 @@ strand the controlled process. No marketing claims are made here; the honest
 status is that this is a working experiment, not a finished product. The combat
 and trading packages are Phase-1 scaffolds that register nothing yet.
 
-## How to use it
+---
+
+<a id="how-to-use-it"></a>
+
+## 🚀 How to use it
 
 1. **Windows + Python 3.11+.** This targets PC *Elite Dangerous: Odyssey*. The
    external application must be running and in foreground focus.
@@ -58,10 +108,15 @@ and trading packages are Phase-1 scaffolds that register nothing yet.
    timings/counts in place. The loader validates each procedure at startup and
    refuses to run on an unknown action, unbound key, or bad reference.
 
+> [!CAUTION]
 > Do not run this against the live service. See the Terms-of-Service section
 > below — this is for **LEARNING PURPOSES ONLY**.
 
-## How it's put together
+---
+
+<a id="how-its-put-together"></a>
+
+## 🏗️ How it's put together
 
 A layered, six-package workspace under `projects/`. The dependency direction is
 the load-bearing fact, so the convention is pinned explicitly:
@@ -92,25 +147,34 @@ One line of intent per package (all six):
 - **ed-combat** — combat domain, a Phase-1 scaffold that registers nothing yet.
 - **ed-trading** — trading domain, a Phase-1 scaffold that registers nothing yet.
 
-## Terms of Service warning
+---
 
-Running this against the production, live *Elite Dangerous* game **violates the
-*Elite Dangerous* Terms of Service.** Plainly: **do not do it.** Automating
-gameplay on the live service can get an account actioned, and this project is
-not endorsed by or affiliated with Frontier Developments. This software is
-provided for **LEARNING PURPOSES ONLY** — as a study of AI-driven workflows
-against a structured external data source.
+<a id="terms-of-service-warning"></a>
 
-*Elite Dangerous* was chosen for exactly one reason: it exposes a **unique,
-highly structured, high-output log format.** The game continuously writes the
-**Player Journal** (a line-delimited JSON event stream), **Status.json** (a
-live flag/state snapshot), and **NavRoute.json** (the plotted route). Few
-consumer applications publish anything like this volume of clean, well-typed,
-real-time machine-readable state. That feed is what makes the game an ideal
-external data source for the experiment — the value is the data shape, not the
-gameplay.
+## ⚠️ Terms of Service warning
 
-## How it operates
+> [!CAUTION]
+> Running this against the production, live *Elite Dangerous* game **violates the
+> *Elite Dangerous* Terms of Service.** Plainly: **do not do it.** Automating
+> gameplay on the live service can get an account actioned, and this project is
+> not endorsed by or affiliated with Frontier Developments. This software is
+> provided for **LEARNING PURPOSES ONLY** — as a study of AI-driven workflows
+> against a structured external data source.
+>
+> *Elite Dangerous* was chosen for exactly one reason: it exposes a **unique,
+> highly structured, high-output log format.** The game continuously writes the
+> **Player Journal** (a line-delimited JSON event stream), **Status.json** (a
+> live flag/state snapshot), and **NavRoute.json** (the plotted route). Few
+> consumer applications publish anything like this volume of clean, well-typed,
+> real-time machine-readable state. That feed is what makes the game an ideal
+> external data source for the experiment — the value is the data shape, not the
+> gameplay.
+
+---
+
+<a id="how-it-operates"></a>
+
+## 🔁 How it operates
 
 Three readers feed a dispatcher; the dispatcher selects a procedure; the
 interpreter runs that procedure's ordered steps and **fails closed**; each step
@@ -140,7 +204,11 @@ journal tail, dispatcher routing, and interpreter step-walking are exercised
 against recorded event logs and fakes, not against a guaranteed-reliable live
 session. Treat live behavior as unproven.
 
-## What people should do if they have a problem
+---
+
+<a id="problems"></a>
+
+## 🐛 What people should do if they have a problem
 
 Open an issue at `https://github.com/Quadstronaut/ED-AFK/issues`. Include the
 relevant slice of the Player Journal and `Status.json` (anonymize commander and
@@ -150,7 +218,11 @@ per-step success and fails closed, the failing step name is usually the fastest
 route to a diagnosis. Do not attach data captured from the live service if doing
 so would put your account at risk.
 
-## What people should do if they want to contribute
+---
+
+<a id="contributing"></a>
+
+## 🤝 What people should do if they want to contribute
 
 Contributions are welcome as pull requests against `master`. Keep changes small
 and well-scoped so any single commit is cleanly revertable. Behavior changes
@@ -160,7 +232,11 @@ shippable `ed-autojump` distribution falls under AGPL-3.0-or-later (see
 Licensing), while the rest of the workspace root is MIT. Open an issue first for
 anything large so the design can be discussed before you build it.
 
-## Licensing
+---
+
+<a id="licensing"></a>
+
+## 📄 Licensing
 
 - **Repository root: MIT** — see `LICENSE` (its first line reads `MIT License`).
 - **`ed-autojump` distribution: AGPL-3.0-or-later** — see
@@ -173,7 +249,8 @@ carries AGPL-3.0-or-later obligations. If you do **not** ship the bundled model,
 the **OpenCV fallback backend needs no weights at all** and that obligation does
 not attach.
 
-Third-party attributions (full chain in `THIRD_PARTY_NOTICES.md`):
+<details>
+<summary>Third-party attributions (full chain in <code>THIRD_PARTY_NOTICES.md</code>)</summary>
 
 | Source | License | Used for |
 |---|---|---|
@@ -182,6 +259,12 @@ Third-party attributions (full chain in `THIRD_PARTY_NOTICES.md`):
 | [EDCD/EDDN](https://github.com/EDCD/EDDN) | BSD-2-Clause | Schema field reference for journal/exploration events |
 | [EDCD/FDevIDs](https://github.com/EDCD/FDevIDs) | MIT | Module Item IDs |
 
+</details>
+
 ---
 
+<div align="center">
+
 a 👨🏻‍🚀 Quadstronaut project of https://starhold.dev/
+
+</div>
