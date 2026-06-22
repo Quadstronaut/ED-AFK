@@ -683,7 +683,11 @@ def _destination_dock_kind(runner: Any) -> "str | None":
 # live nav_panel_reader's calibrated region overrides it when present.
 _DEFAULT_NAVLIST_REGION = (505, 435, 410, 330)
 # Max |OCR-row-y - read-band-cy| (full-frame px) to call them the SAME row.
-_ROW_CONFIRM_TOL_PX = 40
+# Real measured dy for the CORRECT row is ~5-6px (Jameson/tyriedgoea/lhs2509
+# fixtures); the row pitch is ~37px. 18 = half-pitch: 3x the real slack yet well
+# below an adjacent row, so a name-match on the wrong row can't slip through on a
+# coincidental y (council adversarial-review hardening 2026-06-22).
+_ROW_CONFIRM_TOL_PX = 18
 
 
 def _selected_row_confirmed(frame: Any, band_cy: int, dest_name: "str | None",
@@ -748,13 +752,23 @@ def _destination_icon_is_star(runner: Any) -> "bool | None":
     Returns True (CV confirms STAR), False (CV confirms NON_STAR), or None
     (unwired / no highlighted row / unreadable -> abstain). FAIL-CLOSED: the CV
     path NEVER raises into the terminal handler -- any error is an abstain, and
-    the name decision stands."""
+    the name decision stands.
+
+    NOTE: superseded by _destination_dock_kind for the route-complete decision;
+    kept for smack / other callers. Holds the exclusive-input guard around the
+    grab for the SAME reason (council 2026-06-22): the panel-open window must
+    pause the heat watchdog so it can't inject a keypress mid-grab."""
     grabber = getattr(runner, "_navpanel_icon_grabber", None)
     if grabber is None:
         return None
     try:
         from ed_vision.navpanel_icons import selected_row_icon, STAR, NON_STAR
-        frame = grabber()
+        guard = getattr(runner, "_exclusive_input", None)
+        if callable(guard):
+            with guard():
+                frame = grabber()
+        else:
+            frame = grabber()
         if frame is None:
             return None
         verdict = selected_row_icon(frame).get("verdict")
