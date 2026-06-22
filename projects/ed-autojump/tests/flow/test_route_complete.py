@@ -528,22 +528,35 @@ def test_navpanel_icon_grabber_kwarg_wires_onto_runner():
 # ---- council fixes: concurrency guard + name-confirmation (ruling C) ---------
 
 def test_dock_kind_holds_exclusive_input_during_grab():
-    """Council BLOCKER fix: the panel-open grab runs UNDER the runner's exclusive-
-    input guard so the heat watchdog daemon can't inject a DeployHeatSink keypress
-    into the open panel mid-grab. The guard is held while grabber() runs and
-    released after."""
+    """Council BLOCKER fix: the open/walk/grab/close runs UNDER the runner's
+    exclusive-input guard so the heat watchdog daemon can't inject a DeployHeatSink
+    keypress into the open panel. The guard is held while the grab runs, released
+    after."""
     sender = FakeSender()
     r = _runner(sender)
+    r._dock_target_name = lambda: "Anywhere"   # need a dest name to reach the grab
     saw = {}
 
     def grab():
         saw["exclusive"] = r.input_exclusive()
-        return None                     # frame None -> abstain; we assert the guard
+        return None                     # frame1 None -> abstain; we assert the guard
 
     r._navpanel_icon_grabber = grab
     assert _br._destination_dock_kind(r) is None
     assert saw["exclusive"] is True     # guard held during the grab
     assert r.input_exclusive() is False  # released after
+
+
+def test_dock_kind_no_dest_name_abstains_before_grab():
+    """No destination name (can't name-match the row) -> abstain BEFORE touching the
+    panel: the grabber is never called."""
+    sender = FakeSender()
+    r = _runner(sender)
+    r._dock_target_name = lambda: None
+    calls = []
+    r._navpanel_icon_grabber = lambda: calls.append(1) or None
+    assert _br._destination_dock_kind(r) is None
+    assert calls == []                  # never opened the panel
 
 
 def _ocr_line(text, y, wh=16):
@@ -578,36 +591,53 @@ def test_selected_row_confirmed_matches_destination_row():
     assert conf("Jameson Memorial", full_y, []) is False      # no OCR lines
 
 
-@pytest.mark.skipif(not _WINRT, reason="WinRT OCR not available in this env")
-@pytest.mark.parametrize("fixture,dest,expect", [
-    ("navpanel_nav_station_km_1080.png", "Jameson Memorial", "dock"),
-    ("tyriedgoea_kn-o_b47-1_full.png", "Tyriedgoea KN-O B47-1 A", "park"),
-])
-def test_dock_kind_real_frame_name_confirmed(fixture, dest, expect):
-    """End-to-end on REAL frames: grab -> localize -> WinRT name-confirm -> verdict.
-    Jameson (station, name-confirmed) -> dock; tyriedgoea (star) -> park."""
-    cv2 = pytest.importorskip("cv2")
+def _seq_grabber(*names):
+    """A bare full-frame grab returning the named REAL fixtures in sequence
+    (frame1 for the OCR row-match, frame2 after the simulated cursor-walk)."""
+    import cv2
     from pathlib import Path
-    fp = Path(__file__).resolve().parents[1] / "fixtures" / "navpanel" / fixture
-    img = cv2.imread(str(fp))
-    r = _runner(FakeSender())
-    r._navpanel_icon_grabber = lambda: img
-    r._dock_target_name = lambda: dest
-    assert _br._destination_dock_kind(r) == expect
+    base = Path(__file__).resolve().parents[1] / "fixtures" / "navpanel"
+    frames = [cv2.imread(str(base / n)) for n in names]
+    it = iter(frames)
+    return lambda: next(it)
 
 
 @pytest.mark.skipif(not _WINRT, reason="WinRT OCR not available in this env")
-def test_dock_kind_real_frame_wrong_dest_name_abstains():
-    """Ruling C safety on a real frame: the selected row (Jameson) is NOT the
-    claimed destination -> name-confirm fails -> None (router fails closed to
-    PARK), never trusting a wrong-row read."""
-    cv2 = pytest.importorskip("cv2")
-    from pathlib import Path
-    fp = (Path(__file__).resolve().parents[1] / "fixtures" / "navpanel"
-          / "navpanel_nav_station_km_1080.png")
-    img = cv2.imread(str(fp))
+def test_dock_kind_real_frame_unselected_station_walks_and_docks():
+    """The headline case: the destination station is NOT the cursor row. grab1 =
+    Jameson UNSELECTED (cursor on the row-0 system, shinrarta_populated) -> OCR
+    name-matches Jameson at its on-screen row -> cursor-walk -> grab2 = Jameson
+    SELECTED (navpanel_nav_station) -> read NON_STAR -> DOCK. This is what the
+    over-park bug broke; the walk fixes it."""
+    pytest.importorskip("cv2")
     r = _runner(FakeSender())
-    r._navpanel_icon_grabber = lambda: img
+    r._navpanel_icon_grabber = _seq_grabber(
+        "shinrarta_populated_1080.png",        # grab1: Jameson unselected (row 2)
+        "navpanel_nav_station_km_1080.png")    # grab2: Jameson now selected
+    r._dock_target_name = lambda: "Jameson Memorial"
+    assert _br._destination_dock_kind(r) == "dock"
+
+
+@pytest.mark.skipif(not _WINRT, reason="WinRT OCR not available in this env")
+def test_dock_kind_real_frame_star_destination_parks():
+    """A STAR destination (the arrival star is row 0, already selected): name-match
+    -> walk (row 0, pin only) -> read STAR -> PARK (the GLIESE catastrophe guard)."""
+    pytest.importorskip("cv2")
+    r = _runner(FakeSender())
+    r._navpanel_icon_grabber = _seq_grabber(
+        "tyriedgoea_kn-o_b47-1_full.png",      # grab1: star at row 0 (selected)
+        "tyriedgoea_kn-o_b47-1_full.png")      # grab2: still the star row
+    r._dock_target_name = lambda: "Tyriedgoea KN-O B47-1 A"
+    assert _br._destination_dock_kind(r) == "park"
+
+
+@pytest.mark.skipif(not _WINRT, reason="WinRT OCR not available in this env")
+def test_dock_kind_real_frame_dest_not_on_screen_abstains():
+    """Ruling C safety: the destination name is on NO row -> resolve_row None -> no
+    walk, no read -> None (router fails closed to PARK), never a wrong-row read."""
+    pytest.importorskip("cv2")
+    r = _runner(FakeSender())
+    r._navpanel_icon_grabber = _seq_grabber("shinrarta_populated_1080.png")
     r._dock_target_name = lambda: "Some Far Station Not On Screen"
     assert _br._destination_dock_kind(r) is None
 

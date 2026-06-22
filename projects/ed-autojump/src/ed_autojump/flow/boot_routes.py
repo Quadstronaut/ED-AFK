@@ -623,50 +623,62 @@ def _destination_dock_kind(runner: Any) -> "str | None":
     Jameson Memorial station -> dock). The grabber's contract: a FULL-frame BGR
     grab with the nav panel OPEN and the locked destination row highlighted.
 
-    NAME-CONFIRMED (council 2026-06-22, ruling C): the selected orange bar is the
-    CURSOR row, INDEPENDENT of the locked-destination row, so a glyph read is
-    trusted ONLY when an OCR name-match confirms the cursor sits ON the
-    destination; otherwise this abstains (-> None) and the router fails closed to
-    PARK rather than trust a wrong-row read. CONCURRENCY (council 2026-06-22,
-    blocker): the open/grab/close window holds the runner's exclusive-input guard
-    so the heat watchdog can't inject a keypress into the open panel.
+    NAME-MATCH + WALK (council 2026-06-22, ruling C): the selected orange bar is
+    the CURSOR row, which on a fresh panel open is the row-0 arrival STAR — NEVER
+    the destination station. So we OCR the panel, NAME-match the destination row,
+    WALK the cursor onto it (the same pin + UI_Down mechanic request_docking uses),
+    and read THAT row's icon. A defensive name-confirm verifies the walk landed;
+    if it didn't (or OCR/name is unavailable), abstain (-> None) and the router
+    fails closed to PARK rather than trust a wrong row. CONCURRENCY (council
+    blocker): the whole open/walk/grab/close holds the runner's exclusive-input
+    guard so the heat watchdog can't inject a keypress into the open panel.
 
-    Reads runner._navpanel_icon_grabber (Optional[Callable[[], frame]]); UNWIRED
-    (None) -> None. FAIL-CLOSED: any exception -> None (never raises into the
-    terminal handler)."""
+    runner._navpanel_icon_grabber is the BARE full-frame grab; UNWIRED (None) or no
+    destination name -> None. FAIL-CLOSED: any exception -> None (never raises into
+    the terminal handler)."""
     grabber = getattr(runner, "_navpanel_icon_grabber", None)
     if grabber is None:
         return None
+    dest_name = None
+    getter = getattr(runner, "_dock_target_name", None)
+    if callable(getter):
+        dest_name = getter()
+    if not dest_name:
+        return None                          # no dest name -> can't name-match -> name fallback
+    sender = getattr(runner, "sender", None)
+    if sender is None:
+        return None
+    region = _DEFAULT_NAVLIST_REGION
+    reader = getattr(runner, "nav_panel_reader", None)
+    if reader is not None and getattr(reader, "region", None):
+        region = tuple(reader.region)
     try:
         from ed_vision.navpanel_icons import selected_destination_icon
+        from ed_core.executor.navpanel import grab_navpanel_destination
+
+        sleeper = getattr(runner, "sleeper", None) or (lambda _s: None)
+
+        def _resolve(frame1):
+            return _resolve_destination_row(frame1, dest_name, region)
+
         # CONCURRENCY (council blocker): hold the exclusive-input guard for the
-        # whole open/grab/close so the heat watchdog daemon pauses and can't
-        # inject DeployHeatSink into the open panel. Tolerate a fake runner
-        # without the guard (unit tests).
+        # whole open/walk/grab/close so the heat watchdog daemon pauses.
         guard = getattr(runner, "_exclusive_input", None)
         if callable(guard):
             with guard():
-                frame = grabber()
+                frame = grab_navpanel_destination(sender, grabber, _resolve,
+                                                  sleeper=sleeper)
         else:
-            frame = grabber()
+            frame = grab_navpanel_destination(sender, grabber, _resolve,
+                                              sleeper=sleeper)
         if frame is None:
-            return None
+            return None                       # row unresolved / grab failed -> name fallback
         verdict = selected_destination_icon(frame)
         action = verdict.get("action")
         if action not in ("dock", "park"):
             return None                       # no confident read -> name fallback
-        # RULING C: trust the read only when the SELECTED row IS the destination,
-        # confirmed by NAME. A wrong-row / unconfirmable read -> None -> the router
-        # fails closed to PARK (over-park a far station is fail-safe; blind-docking
-        # is not). dest name from the live Destination / captured dock target.
-        dest_name = None
-        getter = getattr(runner, "_dock_target_name", None)
-        if callable(getter):
-            dest_name = getter()
-        region = _DEFAULT_NAVLIST_REGION
-        reader = getattr(runner, "nav_panel_reader", None)
-        if reader is not None and getattr(reader, "region", None):
-            region = tuple(reader.region)
+        # Defensive: the walk should have selected the destination; confirm by
+        # NAME. A walk that missed -> abstain -> router fails closed to PARK.
         if not _selected_row_confirmed(frame, verdict.get("cy", -1),
                                        dest_name, region):
             if runner.record is not None:
@@ -675,6 +687,29 @@ def _destination_dock_kind(runner: Any) -> "str | None":
             return None
         return action
     except Exception:                        # noqa: BLE001 — CV abstains
+        return None
+
+
+def _resolve_destination_row(frame: Any, dest_name: str, region) -> "int | None":
+    """On-screen row index of the destination, by OCR name-match, or None.
+
+    OCRs the nav-list region (WinRT ocr_detailed) and fuzzy-matches dest_name to a
+    row (match_row_by_name). The index is the on-screen row order = the UI_Down
+    walk distance from row 0. No WinRT / no lines / no match -> None. Never raises."""
+    try:
+        import numpy as np
+        from ed_vision.navpanel_reader import match_row_by_name
+        from ed_vision.ocr_winrt import available, ocr_detailed
+
+        if not available():
+            return None
+        rx, ry, rw, rh = region
+        crop = np.asarray(frame)[ry:ry + rh, rx:rx + rw]
+        lines = ocr_detailed(crop)
+        if not lines:
+            return None
+        return match_row_by_name(dest_name, [ln.text for ln in lines])
+    except Exception:                        # noqa: BLE001 — can't resolve -> abstain
         return None
 
 
