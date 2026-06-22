@@ -195,6 +195,45 @@ def parse_nav_panel_rows(
     return out
 
 
+def match_row_by_name(
+    target_name: Optional[str],
+    ocr_lines: Sequence[str],
+    *,
+    fuzzy: float = 0.78,
+) -> Optional[int]:
+    """The on-screen row index whose OCR'd name best-matches ``target_name``.
+
+    OCR-noise-robust IDENTITY/LOCATOR for the route-complete re-target: the bot
+    temp-targets the arrival star to get around it, then must re-acquire the TRUE
+    station by NAME off the nav panel. Both sides are normalized (_normalize:
+    upper, collapse whitespace, strip the punctuation OCR invents); we keep the
+    row whose SequenceMatcher ratio is highest AND clears ``fuzzy``. None when no
+    row clears the floor (caller falls back to the SelectTarget walk).
+
+    Mirrors _system_prefix_match's proven fuzzy tolerance (0.78) so a single-char
+    OCR slip ("Jameson Memoriai" vs "Jameson Memorial") still matches while a
+    genuinely different row does not. NAME is the locator; the ICON is the kind
+    authority (a name-match never decides dock-vs-park). PURE."""
+    if not target_name:
+        return None
+    norm_target = _normalize(target_name)
+    if not norm_target:
+        return None
+    best_idx: Optional[int] = None
+    best_ratio = 0.0
+    for idx, line in enumerate(ocr_lines):
+        if not line or not line.strip():
+            continue
+        norm_line = _normalize(line)
+        if not norm_line:
+            continue
+        ratio = SequenceMatcher(None, norm_line, norm_target).ratio()
+        if ratio >= fuzzy and ratio > best_ratio:
+            best_ratio = ratio
+            best_idx = idx
+    return best_idx
+
+
 # ---------------------------------------------------------------------------
 # Layer 2: SELECT  (pure)
 # ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ from ed_core.journal import (
     parse_event,
 )
 from tests.flow import FakeSender
+from ed_vision.navpanel_reader import NavBody
 import ed_autojump.flow.boot_routes as _br
 from ed_autojump.flow.boot_routes import classify_startup, dispatch_route_complete
 
@@ -176,6 +177,93 @@ def test_dock_target_station_falls_back_to_navpanel():
 def test_dock_target_station_no_status_presses_t_only():
     sender = FakeSender()
     ctx = StepContext(sender=sender, sleeper=lambda s: None)  # no status wiring
+    assert STEP_REGISTRY["dock_target_station"](ctx) is True
+    assert sender.actions() == ["SelectTarget"]
+
+
+# --- Q2 / AC11: NAME-DRIVEN re-target (OCR the panel, target the matched row) -
+
+class _FakeNavReaderForDock:
+    """Stands in for NavPanelReader: .parse(frame, system) -> NavBody[] (row_index
+    is the absolute on-screen position the cursor walks to)."""
+    def __init__(self, bodies):
+        self._bodies = bodies
+
+    def parse(self, frame, system):
+        return self._bodies
+
+
+def test_dock_target_station_name_driven_targets_matched_row():
+    """AC11: reader+grabber wired, the captured station name matches a panel row;
+    the step walks the nav-panel cursor to THAT row (target_via_navpanel) and
+    confirms the lock by name. The arrival STAR is the live lock at entry, so the
+    name path is the one that re-acquires the station."""
+    sender = FakeSender()
+    # Entry lock is the STAR (body=0), so the already-locked guard does NOT short
+    # the step; after the name macro runs, the station is locked.
+    states = [_status(dest_name="Sol", dest_body=0)] + [
+        _status(dest_name="Jameson Memorial", dest_body=4)] * 4
+
+    def supplier():
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    bodies = [
+        NavBody(row_index=0, name="Sol A", designator="A", raw="Sol A"),
+        NavBody(row_index=2, name="Jameson Memorial", designator="",
+                raw="Jameson Memorial"),
+    ]
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, status_supplier=supplier,
+        nav_panel_reader=_FakeNavReaderForDock(bodies),
+        nav_panel_grabber=lambda: object(),               # any non-None frame
+        current_system_supplier=lambda: "Sol",
+        dock_target_name_supplier=lambda: "Jameson Memorial")
+    assert STEP_REGISTRY["dock_target_station"](ctx) is True
+    acts = sender.actions()
+    # The nav-panel target macro ran (FocusLeftPanel ... UI_Select), and the
+    # legacy SelectTarget fallback did NOT (name path won).
+    assert "FocusLeftPanel" in acts
+    assert "SelectTarget" not in acts
+    # Walked DOWN to the matched row (row_index=2 -> >=2 UI_Down presses incl pin).
+    assert acts.count("UI_Down") >= 2
+
+
+def test_dock_target_station_name_abstain_falls_back_to_legacy():
+    """AC11: the name lookup ABSTAINS (no row matches the captured name) -> the
+    step falls through to the legacy SelectTarget -> confirm path. The reader is
+    wired but yields no matching row."""
+    sender = FakeSender()
+    states = [_status(dest_name="Sol", dest_body=0)] * 2 + [
+        _status(dest_name="Jameson Memorial", dest_body=4)] * 4
+
+    def supplier():
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    bodies = [NavBody(row_index=0, name="Sol A", designator="A", raw="Sol A")]
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, status_supplier=supplier,
+        nav_panel_reader=_FakeNavReaderForDock(bodies),
+        nav_panel_grabber=lambda: object(),
+        current_system_supplier=lambda: "Sol",
+        dock_target_name_supplier=lambda: "Nowhere Station")   # no panel match
+    assert STEP_REGISTRY["dock_target_station"](ctx) is True
+    # Name path abstained -> legacy SelectTarget ran; the name macro did NOT.
+    assert sender.actions() == ["SelectTarget"]
+
+
+def test_dock_target_station_name_unwired_falls_back_to_legacy():
+    """No nav_panel_reader/grabber (every existing call site) -> name path is
+    skipped entirely -> legacy SelectTarget. Zero regression."""
+    sender = FakeSender()
+    states = [_status(dest_body=0)] * 2 + [
+        _status(dest_name="Jameson Memorial", dest_body=4)] * 4
+
+    def supplier():
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    ctx = StepContext(sender=sender, sleeper=lambda s: None,
+                      status_supplier=supplier,
+                      dock_target_name_supplier=lambda: "Jameson Memorial")
     assert STEP_REGISTRY["dock_target_station"](ctx) is True
     assert sender.actions() == ["SelectTarget"]
 
