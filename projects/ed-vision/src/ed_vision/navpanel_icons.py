@@ -237,3 +237,45 @@ def scan_navpanel_rows(frame: Any, n_rows: int = 10) -> list:
         verdict, score = classify_icon_scored(arr[y0:y1, x0:x1])
         out.append({"row": row, "rect": rect, "verdict": verdict, "score": score})
     return out
+
+
+def selected_row_icon(frame: Any, n_rows: int = 12) -> dict:
+    """Find the SELECTED (orange-highlighted) nav-list row and classify its
+    leading icon — the body KIND of the row the cursor/lock currently sits on.
+
+    A selected row paints a solid orange highlight bar, so its icon cell reads
+    mostly orange (fraction > SELECTED_ORANGE_FRAC) — the SAME tell classify_icon
+    uses to take its dark-hole-star branch. Among rows 0..n_rows-1 the MOST-orange
+    qualifying row wins (exactly one row is highlighted in practice). Returns
+        {"row", "verdict", "score", "orange_frac", "rect"}
+    with row=-1 / verdict=NONE when NO row is highlighted (panel closed, nothing
+    selected, or the frame is too small) — the caller treats that as ABSTAIN.
+
+    This is the route-complete star-vs-station read: open the nav panel with the
+    locked DESTINATION highlighted, grab a FULL frame, call this. Full-frame
+    geometry (row_cell_rect), so pass a FULL-frame BGR grab with the panel OPEN
+    (see module docstring). PURE; never raises."""
+    import numpy as np
+
+    none = {"row": -1, "verdict": NONE, "score": 0.0, "orange_frac": 0.0,
+            "rect": None}
+    arr = np.asarray(frame)
+    if arr.ndim != 3 or arr.shape[2] < 3:
+        return none
+    h, w = arr.shape[:2]
+    best = none
+    for row in range(max(0, n_rows)):
+        x, y, cw, ch = row_cell_rect(h, row)
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(w, x + cw), min(h, y + ch)
+        if x1 - x0 < 4 or y1 - y0 < 4:
+            continue
+        cell = arr[y0:y1, x0:x1]
+        ofrac = float(_orange(cell).mean())
+        if ofrac <= SELECTED_ORANGE_FRAC or ofrac <= best["orange_frac"]:
+            continue
+        verdict, score = classify_icon_scored(cell)
+        best = {"row": row, "verdict": verdict, "score": score,
+                "orange_frac": round(ofrac, 4),
+                "rect": (x0, y0, x1 - x0, y1 - y0)}
+    return best
