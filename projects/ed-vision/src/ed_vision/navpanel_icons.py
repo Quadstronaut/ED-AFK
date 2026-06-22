@@ -287,6 +287,139 @@ def classify_icon_kind(cell: Any, registry: Any = None) -> dict:
         return {"action": "park", "kind": "", "score": 0.0}
 
 
+# ===========================================================================
+# DYNAMIC selected-row localization (real-frame validated 2026-06-22)
+#
+# The fixed ROW0_CY / ICON_X0 geometry (selected_row_kind / selected_row_icon
+# below) is SYSTEM-SPECIFIC and was the cluster-D failure: the list top shifts
+# with the system-name header height, and the icon's x shifts with the row's
+# INDENT (a body row's glyph sits ~x528, a system row ~x540, a station ~x572 at
+# 1080p). A fixed coordinate reads the wrong band on a real frame.
+#
+# This path takes NO fixed row/icon coordinate. It (1) finds the SELECTED orange
+# bar by its per-row orange peak in the nav-list window, then (2) finds the body
+# glyph as the LEFTMOST compact dark blob inside that bar (the icon is dark-on-
+# orange in a selected row; text is wider and further right), and (3) classifies
+# THAT cell. VALIDATED on real captures: tyriedgoea (star->park), lhs2509
+# (star->park), shinrarta (star->park), Jameson Memorial (station->dock).
+# ===========================================================================
+
+# Nav-list search window @1080p reference (full-frame px). Excludes the right-
+# side target/contact panels (which also glow orange). Resolution-aware (_scale).
+NAVLIST_X0, NAVLIST_X1 = 280, 940
+NAVLIST_Y0, NAVLIST_Y1 = 430, 800
+# Icon-column search band inside the bar — right of the sort-arrow/divider, left
+# of where the longest names run. The glyph is found within this x range.
+GLYPH_SCAN_X0, GLYPH_SCAN_X1 = 495, 660
+SELECTED_ROW_FRAC = 0.45    # row mean-orange (over the list width) above this -> selected bar
+GLYPH_MIN_W, GLYPH_MAX_W = 10, 46   # icon-blob width bounds (1080p px) — excludes the thin divider + wide text
+GLYPH_MIN_AREA = 60
+
+
+def _selected_band(om: Any) -> Optional[tuple]:
+    """(y0, y1, cy) of the TOPMOST near-solid orange row in the nav-list window
+    — the selected/destination row (top of the distance-sorted list on arrival).
+    None if no row clears SELECTED_ROW_FRAC (panel closed / nothing selected).
+    `om` is the full-frame orange mask as float32 {0,1}."""
+    import numpy as np
+
+    h = om.shape[0]
+    x0, x1 = _scale(NAVLIST_X0, h), _scale(NAVLIST_X1, h)
+    y0w, y1w = _scale(NAVLIST_Y0, h), _scale(NAVLIST_Y1, h)
+    rowfrac = om[y0w:y1w, x0:x1].mean(axis=1)
+    hits = np.where(rowfrac > SELECTED_ROW_FRAC)[0]
+    if not len(hits):
+        return None
+    run = [int(hits[0])]                      # topmost contiguous run = the bar
+    for y in hits[1:]:
+        if y - run[-1] <= 2:
+            run.append(int(y))
+        else:
+            break
+    yy0, yy1 = run[0] + y0w, run[-1] + y0w
+    return yy0, yy1, (yy0 + yy1) // 2
+
+
+def _locate_glyph(om: Any, y0: int, y1: int) -> Optional[tuple]:
+    """Leftmost compact DARK blob inside the selected orange bar = the body icon.
+    Returns (cx, cy, w, h) full-frame, or None. The thin vertical divider (w<min)
+    and the wide name text (further right) are excluded by the size + leftmost
+    rule. cv2/numpy lazy-imported."""
+    import cv2
+    import numpy as np
+
+    h = om.shape[0]
+    gx0, gx1 = _scale(GLYPH_SCAN_X0, h), _scale(GLYPH_SCAN_X1, h)
+    band_h = y1 - y0
+    dark = (om[y0:y1, gx0:gx1] < 0.5).astype(np.uint8)   # dark glyph inside the bright bar
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
+    wmin, wmax = _scale(GLYPH_MIN_W, h), _scale(GLYPH_MAX_W, h)
+    amin = _scale(GLYPH_MIN_AREA, h)
+    cands = []
+    for i in range(1, n):
+        x, y, w, hh, area = (stats[i, 0], stats[i, 1], stats[i, 2],
+                             stats[i, 3], stats[i, 4])
+        if wmin <= w <= wmax and 8 <= hh <= band_h and area >= amin:
+            cands.append((gx0 + int(x), y0 + int(y), int(w), int(hh)))
+    if not cands:
+        return None
+    cands.sort(key=lambda c: c[0])            # leftmost = icon; text is wider & right
+    x, y, w, hh = cands[0]
+    return (x + w // 2, y + hh // 2, w, hh)
+
+
+def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
+    """DOCK-vs-PARK verdict for the SELECTED (locked-destination) nav-list row,
+    via dynamic localization (no fixed row/icon coordinate). The route-complete
+    determination's authoritative read. Real-frame validated 2026-06-22.
+
+    Returns {"action","verdict","kind","score","glyph","cy"} where action is:
+        "park"    -- the icon is a STAR (confident). THE CATASTROPHE GUARD: an
+                     off-pattern arrival star (GLIESE 293 B) the name pass mis-
+                     flagged a station is vetoed to PARK here, never blind-docked.
+        "dock"    -- a NON-STAR body glyph (station/outpost/carrier/megaship),
+                     OR a positive registry dock-kind match (the extensible path).
+        "abstain" -- panel closed / no selected bar / no locatable glyph /
+                     unreadable. The caller uses its NAME fallback (NOT a park
+                     veto), so an unreadable frame NEVER regresses docking.
+
+    PURE over the frame; never raises (any error -> abstain)."""
+    none = {"action": "abstain", "verdict": NONE, "kind": "", "score": 0.0,
+            "glyph": None, "cy": -1}
+    try:
+        import numpy as np
+
+        arr = np.asarray(frame)
+        if arr.ndim != 3 or arr.shape[2] < 3 or arr.shape[0] < 64:
+            return none
+        om = _orange(arr).astype(np.float32)
+        band = _selected_band(om)
+        if band is None:
+            return none
+        y0, y1, cy = band
+        g = _locate_glyph(om, y0, y1)
+        if g is None:
+            return none
+        cx, gcy, gw, gh = g
+        half = (max(gw, gh) + 8) // 2
+        cell = arr[gcy - half: gcy + half + 1, cx - half: cx + half + 1]
+        verdict, score = classify_icon_scored(cell)
+        reg = classify_icon_kind(cell, registry)
+        if verdict == STAR:
+            action = "park"          # confident star -> veto (catastrophe guard)
+        elif reg.get("action") == "dock" and reg.get("score", 0.0) >= KIND_MATCH_MIN:
+            action = "dock"          # positive, extensible registry dock-kind
+        elif verdict == NON_STAR:
+            action = "dock"          # a non-star body at a route destination = dockable
+        else:
+            return none              # NONE / unreadable glyph -> abstain (name fallback)
+        return {"action": action, "verdict": verdict, "kind": reg.get("kind", ""),
+                "score": round(float(score), 4),
+                "glyph": (int(cx), int(gcy), int(gw), int(gh)), "cy": int(cy)}
+    except Exception:               # noqa: BLE001 — pure fn, fail to abstain
+        return none
+
+
 def selected_row_kind(frame: Any, registry: Any = None, n_rows: int = 12) -> dict:
     """Find the SELECTED (orange-highlighted) nav-list row and classify its icon
     against the registry -> the locked destination's dock-vs-park verdict.
