@@ -8,11 +8,20 @@ terminal-idle guard."""
 
 from types import SimpleNamespace
 
+import numpy as np
+import pytest
+
 from ed_autojump.flow.dispatcher import FlowRunner, _CLEAR_JOIN_WINDOW_S
 from ed_core.flow.model import Procedure, Step
 from tests.flow import FakeSender
 import ed_autojump.flow.boot_routes as _br
 from ed_autojump.flow.boot_routes import classify_startup, dispatch_route_complete
+
+try:
+    from ed_vision.ocr_winrt import available as _winrt_available
+    _WINRT = _winrt_available()
+except Exception:  # noqa: BLE001
+    _WINRT = False
 
 
 def _ev(name, **fields):
@@ -514,6 +523,93 @@ def test_navpanel_icon_grabber_kwarg_wires_onto_runner():
     r = FlowRunner(procedures={}, sender=sender, navpanel_icon_grabber=grab)
     assert r._navpanel_icon_grabber is grab
     assert FlowRunner(procedures={}, sender=sender)._navpanel_icon_grabber is None
+
+
+# ---- council fixes: concurrency guard + name-confirmation (ruling C) ---------
+
+def test_dock_kind_holds_exclusive_input_during_grab():
+    """Council BLOCKER fix: the panel-open grab runs UNDER the runner's exclusive-
+    input guard so the heat watchdog daemon can't inject a DeployHeatSink keypress
+    into the open panel mid-grab. The guard is held while grabber() runs and
+    released after."""
+    sender = FakeSender()
+    r = _runner(sender)
+    saw = {}
+
+    def grab():
+        saw["exclusive"] = r.input_exclusive()
+        return None                     # frame None -> abstain; we assert the guard
+
+    r._navpanel_icon_grabber = grab
+    assert _br._destination_dock_kind(r) is None
+    assert saw["exclusive"] is True     # guard held during the grab
+    assert r.input_exclusive() is False  # released after
+
+
+def _ocr_line(text, y, wh=16):
+    """A fake ocr_winrt.OcrLine (text + .y + words[0].h) for the confirmation."""
+    return SimpleNamespace(
+        text=text, y=y,
+        words=[SimpleNamespace(text=text.split()[0], x=0.0, y=float(y),
+                               w=10.0, h=float(wh))])
+
+
+def test_selected_row_confirmed_matches_destination_row():
+    """Ruling C: trust the read ONLY when the selected row's OCR name matches the
+    destination AND its y coincides with the read band. Mismatched name, wrong-row
+    y, missing name, and no-OCR-lines all -> False (caller abstains -> fail-closed)."""
+    from ed_vision import ocr_winrt as o
+    region = (505, 435, 410, 330)
+    ry, wh, ln_y = region[1], 16, 100
+    full_y = int(ry + (ln_y - o._PAD) / o._UPSCALE + (wh / o._UPSCALE) / 2.0)
+    lines = [_ocr_line("JAMESON MEMORIAL", ln_y, wh),
+             _ocr_line("OTHER BODY", ln_y + 300, wh)]
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+
+    def conf(dest, cy, lns=lines):
+        return _br._selected_row_confirmed(frame, cy, dest, region,
+                                           ocr_detail=lambda _c: lns)
+
+    assert conf("Jameson Memorial", full_y) is True           # name + row match
+    assert conf("Jameson Memoriai", full_y) is True           # fuzzy OCR slip
+    assert conf("Nowhere Station", full_y) is False           # name mismatch
+    assert conf("Jameson Memorial", full_y + 300) is False    # right name, wrong row
+    assert conf(None, full_y) is False                        # no dest name
+    assert conf("Jameson Memorial", full_y, []) is False      # no OCR lines
+
+
+@pytest.mark.skipif(not _WINRT, reason="WinRT OCR not available in this env")
+@pytest.mark.parametrize("fixture,dest,expect", [
+    ("navpanel_nav_station_km_1080.png", "Jameson Memorial", "dock"),
+    ("tyriedgoea_kn-o_b47-1_full.png", "Tyriedgoea KN-O B47-1 A", "park"),
+])
+def test_dock_kind_real_frame_name_confirmed(fixture, dest, expect):
+    """End-to-end on REAL frames: grab -> localize -> WinRT name-confirm -> verdict.
+    Jameson (station, name-confirmed) -> dock; tyriedgoea (star) -> park."""
+    cv2 = pytest.importorskip("cv2")
+    from pathlib import Path
+    fp = Path(__file__).resolve().parents[1] / "fixtures" / "navpanel" / fixture
+    img = cv2.imread(str(fp))
+    r = _runner(FakeSender())
+    r._navpanel_icon_grabber = lambda: img
+    r._dock_target_name = lambda: dest
+    assert _br._destination_dock_kind(r) == expect
+
+
+@pytest.mark.skipif(not _WINRT, reason="WinRT OCR not available in this env")
+def test_dock_kind_real_frame_wrong_dest_name_abstains():
+    """Ruling C safety on a real frame: the selected row (Jameson) is NOT the
+    claimed destination -> name-confirm fails -> None (router fails closed to
+    PARK), never trusting a wrong-row read."""
+    cv2 = pytest.importorskip("cv2")
+    from pathlib import Path
+    fp = (Path(__file__).resolve().parents[1] / "fixtures" / "navpanel"
+          / "navpanel_nav_station_km_1080.png")
+    img = cv2.imread(str(fp))
+    r = _runner(FakeSender())
+    r._navpanel_icon_grabber = lambda: img
+    r._dock_target_name = lambda: "Some Far Station Not On Screen"
+    assert _br._destination_dock_kind(r) is None
 
 
 # ---- _maybe_startup terminal-idle on restart --------------------------------

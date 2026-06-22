@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Optional
 
 # The ONLY two actions. Validated at load; anything else is a ValueError.
@@ -107,9 +107,23 @@ def load_registry(path: Optional[Path] = None) -> tuple[IconKind, ...]:
             raise ValueError(
                 f"{where}: action {action!r} is not one of "
                 f"{sorted(_VALID_ACTIONS)} (template={template!r})")
+        # Path-traversal guard (council 2026-06-22 security lens): a template is a
+        # BARE filename living in the assets dir. Reject separators / .. / absolute
+        # / drive so an operator-dropped row (the no-code extension path) can never
+        # point load outside the package. Belt-and-suspenders: also verify the
+        # resolved path stays under tdir.
+        if ("/" in template or "\\" in template or ".." in template
+                or PurePath(template).is_absolute() or PurePath(template).drive):
+            raise ValueError(
+                f"{where}: template {template!r} must be a bare filename in {tdir} "
+                f"(no path separators, '..', or drive)")
+        resolved = (tdir / template).resolve()
+        if tdir.resolve() not in resolved.parents:
+            raise ValueError(
+                f"{where}: template {template!r} resolves outside {tdir}")
         # Template file must EXIST (loud) -- a manifest pointing at a missing PNG
         # would silently never match -> a kind that can never dock. Catch it now.
-        if not (tdir / template).is_file():
+        if not resolved.is_file():
             raise ValueError(
                 f"{where}: template file {template!r} not found in {tdir}")
         if template in seen_templates:

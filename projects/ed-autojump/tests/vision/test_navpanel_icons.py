@@ -303,3 +303,17 @@ def test_selected_destination_icon_never_raises_on_garbage():
                 np.zeros((2, 2, 3), np.uint8),
                 np.zeros((40, 40, 3), np.uint8)):
         assert ni.selected_destination_icon(bad)["action"] == "abstain"
+
+
+@pytest.mark.parametrize("bad", ["../evil.png", "sub/dir.png", "a\\b.png"])
+def test_registry_rejects_path_traversal_template(tmp_path, bad):
+    """Council security lens: a template name with a path separator / .. is
+    rejected loudly so an operator-dropped row (the no-code extension path) can
+    never load outside the package assets dir."""
+    m = tmp_path / "registry.toml"
+    m.write_text(f'[[icon]]\ntemplate = "{bad}"\nkind = "x"\naction = "dock"\n',
+                 encoding="utf-8")
+    reg.clear_cache()
+    with pytest.raises(ValueError):
+        reg.load_registry(m)
+    reg.clear_cache()
