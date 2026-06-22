@@ -597,47 +597,50 @@ def _captured_name_is_local_star(name: "str | None", system_name: "str | None") 
 
 
 def _destination_dock_kind(runner: Any) -> "str | None":
-    """Registry-driven CV read of the locked destination's DOCK-vs-PARK kind.
+    """CV read of the locked destination's DOCK-vs-PARK kind from its nav-panel
+    type-icon. Three-state — the distinction the router depends on:
+        "dock"  -- the selected row's icon is a NON-STAR body glyph
+                   (station / outpost / carrier / megaship), or a POSITIVE
+                   registry dock-kind match. Triggers the dock drive.
+        "park"  -- the selected row's icon is a STAR (confident). The CATASTROPHE
+                   GUARD: an off-pattern arrival star (GLIESE 293 B) the name pass
+                   mis-flagged a station is VETOED to PARK here, never blind-docked.
+        None    -- ABSTAIN: grabber unwired (default), grabber returned None,
+                   panel closed / no selected bar / no locatable glyph, or any
+                   exception. The router's NAME FALLBACK governs.
 
-    GENERALISES _destination_icon_is_star (kept below for smack / other callers):
-    instead of a star/non-star boolean it returns the registry ACTION for the
-    highlighted (locked-destination) row's type-icon:
-        "dock"  -- a POSITIVE registry dock-kind icon matched (station / carrier /
-                   megaship / outpost). The ONLY trigger for a dock drive.
-        "park"  -- a registry park-kind matched (star / planet / settlement / ...)
-                   OR the classifier abstained-as-park (no confident match).
-        None    -- ABSTAIN at the WIRING level: grabber unwired (the default),
-                   grabber returned None, no highlighted row, or any exception.
+    CRITICAL (the docking-regression fix): an ABSTAIN is None, NOT "park". The
+    earlier registry path returned "park" on a low-confidence read, which the
+    router treats as a confident veto -> it would PARK at every real station
+    until the CV is perfectly calibrated. Distinguishing "couldn't read" (None ->
+    name dock) from "confidently a star" ("park" -> veto) is what makes wiring the
+    grabber SAFE rather than a regression.
 
-    Localization (GEOMETRY §3): the grabber's contract is a FULL-frame BGR grab
-    with the nav panel OPEN and the locked DESTINATION row highlighted. We use
-    selected_row_kind (navpanel_icons), which finds the orange-highlighted row by
-    its highlight bar and classifies that cell against the registry. selected_row_
-    kind itself never raises and returns row=-1/action="park" on no highlight; we
-    map a no-highlight read to None (WIRING abstain) so the router's NAME-FALLBACK
-    governs, distinct from a CONFIRMED park.
+    Localization: selected_destination_icon (navpanel_icons) takes NO fixed row/
+    icon coordinate — it finds the selected orange bar by its orange peak, the
+    glyph as the leftmost compact dark blob in the bar, and classifies that cell.
+    Real-frame validated 2026-06-22 (tyriedgoea/lhs2509/shinrarta stars -> park,
+    Jameson Memorial station -> dock). The grabber's contract: a FULL-frame BGR
+    grab with the nav panel OPEN and the locked destination row highlighted.
 
     Reads runner._navpanel_icon_grabber (Optional[Callable[[], frame]]); UNWIRED
-    (None) by default -> None, exactly like _destination_icon_is_star today, so
-    this ABSTAINS until the operator calibrates the panel-open grab. FAIL-CLOSED:
-    any exception -> None (never raises into the terminal handler)."""
+    (None) -> None. FAIL-CLOSED: any exception -> None (never raises into the
+    terminal handler)."""
     grabber = getattr(runner, "_navpanel_icon_grabber", None)
     if grabber is None:
         return None
     try:
-        from ed_vision.navpanel_icons import selected_row_kind
+        from ed_vision.navpanel_icons import selected_destination_icon
         frame = grabber()
         if frame is None:
             return None
-        verdict = selected_row_kind(frame)
-        if verdict.get("row", -1) < 0:
-            return None                      # no highlighted row -> WIRING abstain
+        verdict = selected_destination_icon(frame)
         action = verdict.get("action")
         if action == "dock":
             return "dock"
         if action == "park":
             return "park"
-        return None
+        return None                          # "abstain" -> WIRING abstain -> name fallback
     except Exception:                        # noqa: BLE001 — CV abstains
         return None
 

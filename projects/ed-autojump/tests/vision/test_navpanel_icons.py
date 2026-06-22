@@ -242,3 +242,64 @@ def test_classify_icon_kind_never_raises_on_garbage():
                 np.zeros((2, 2, 3), np.uint8)):
         v = ni.classify_icon_kind(bad)
         assert v["action"] == "park"
+
+
+# ---------------------------------------------------------------------------
+# DYNAMIC selected_destination_icon — REAL full-frame captures (2026-06-22)
+#
+# This is the route-complete authoritative read, and the test the cluster-D
+# xfail never had: it runs on actual 1920x1080 nav-panel grabs, not synthetic
+# canvases. Localizes the selected bar + body glyph with NO fixed coordinate.
+#   tyriedgoea / lhs2509 / shinrarta -> selected row is a STAR  -> action park
+#   Jameson Memorial (Shinrarta Dezhra) -> selected row is a STATION -> action dock
+# ---------------------------------------------------------------------------
+
+STAR_FRAMES = [
+    "tyriedgoea_kn-o_b47-1_full.png",   # body row, star, flush-left glyph
+    "lhs2509_unexplored_1080.png",      # system row, star, indented glyph (cyan heading marker)
+    "shinrarta_populated_1080.png",     # populated system, selected top row = star/system
+]
+STATION_FRAME = "navpanel_nav_station_km_1080.png"   # Jameson Memorial (Orbis)
+
+
+@pytest.mark.parametrize("name", STAR_FRAMES)
+def test_selected_destination_icon_real_star_parks(name):
+    """A real selected-row STAR -> action='park', verdict STAR. THE catastrophe
+    guard: an off-pattern arrival star the name pass mis-flagged a station is
+    vetoed to PARK here, never blind-docked."""
+    frame = cv2.imread(str(FIX / name))
+    assert frame is not None
+    v = ni.selected_destination_icon(frame)
+    assert v["action"] == "park", v
+    assert v["verdict"] == ni.STAR
+    assert v["score"] >= ni.STAR_CC_MIN
+    assert v["glyph"] is not None
+
+
+def test_selected_destination_icon_real_station_docks():
+    """A real selected-row STATION (Jameson Memorial) -> action='dock'. The
+    NON-STAR body glyph at a route destination is a dockable structure."""
+    frame = cv2.imread(str(FIX / STATION_FRAME))
+    assert frame is not None
+    v = ni.selected_destination_icon(frame)
+    assert v["action"] == "dock", v
+    assert v["verdict"] == ni.NON_STAR
+
+
+def test_selected_destination_icon_closed_panel_abstains():
+    """No selected orange bar (panel closed / dark frame) -> action='abstain' so
+    the router uses its NAME fallback (NOT a park veto): an unreadable frame
+    NEVER regresses docking."""
+    dark = np.full((1080, 1920, 3), 8, dtype=np.uint8)
+    v = ni.selected_destination_icon(dark)
+    assert v["action"] == "abstain"
+    assert v["glyph"] is None
+
+
+def test_selected_destination_icon_never_raises_on_garbage():
+    """PURE: malformed inputs -> abstain, never raise."""
+    for bad in (np.zeros((5,), np.uint8),
+                np.zeros((10, 10), np.uint8),
+                np.zeros((2, 2, 3), np.uint8),
+                np.zeros((40, 40, 3), np.uint8)):
+        assert ni.selected_destination_icon(bad)["action"] == "abstain"
