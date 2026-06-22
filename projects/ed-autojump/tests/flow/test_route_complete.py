@@ -410,26 +410,45 @@ def test_route_complete_overlay_uses_event_and_status_slots():
     assert all("[ABORTED]" not in t for t in ov.status_lines)
 
 
-# ---- icon-CV veto: confirmed STAR downgrades a name-flagged station to park --
-# The GLIESE 293 B class (live 2026-06-21): an off-pattern arrival STAR whose
-# name is unrelated to the system defeats the name heuristics, which mis-flag it
-# a station. The nav-panel column-0 ICON is the authoritative kind signal; a
-# positive STAR confirmation VETOES the dock and parks instead. The CV read is
-# monkeypatched here (the perception primitive is validated in the vision tests),
-# so these exercise the WIRING in dispatch_route_complete without cv2.
+# ---- icon ROUTER: registry-driven dock-vs-park at route-complete -------------
+# The name pass (capture-at-plot / settle) only LOCATES a specific-body candidate
+# (name_says_station). The icon registry is the KIND authority. Four branches:
+#   dock-kind icon            -> DOCK
+#   park-kind icon (star/...)  -> PARK + RouteCompleteIconVetoStar (GLIESE class)
+#   None + grabber UNWIRED     -> name fallback = today's DOCK (no regression)
+#   None + grabber WIRED       -> fail-closed PARK + RouteCompleteDockKindAbstained
+# _destination_dock_kind is monkeypatched for the dock/park branches (the
+# perception is validated in the vision tests); the unwired/wired-abstain branches
+# exercise the REAL helper (grabber None / grabber-returns-None) without cv2.
 
-def test_icon_veto_downgrades_station_to_park(monkeypatch):
-    """CV confirms the locked destination is a STAR -> the name-based station
-    decision is VETOED: park runs, dock does NOT, RouteCompleteIconVetoStar is
-    recorded."""
-    monkeypatch.setattr(_br, "_destination_icon_is_star", lambda r: True)
-    sender = FakeSender()
-    records = []
+def _station_runner(sender, records):
     st = _status(dest_name="Jameson Memorial", dest_body=4, dest_system=12345)
     r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
     r._current_system = "Destination Sys"
     _arm_final_waypoint(r, 12345, "Destination Sys")
     r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    return r
+
+
+def test_icon_router_dock_kind_docks(monkeypatch):
+    """A positive registry dock-kind icon -> DOCK (the icon promotes, not just
+    vetoes): dock runs, park does NOT, RouteCompleteStation recorded."""
+    monkeypatch.setattr(_br, "_destination_dock_kind", lambda r: "dock")
+    sender = FakeSender(); records = []
+    r = _station_runner(sender, records)
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
+                   system_address=12345, timestamp=_ts(10)))
+    assert "SetSpeed50" in sender.actions()               # dock ran
+    assert "SetSpeedZero" not in sender.actions()         # NOT parked
+    assert any(n == "RouteCompleteStation" for n, _ in records)
+
+
+def test_icon_router_park_kind_vetoes_to_park(monkeypatch):
+    """CV confirms a park-kind (the GLIESE 293 B off-pattern STAR the name pass
+    mis-flagged) -> PARK, RouteCompleteIconVetoStar recorded, dock NOT run."""
+    monkeypatch.setattr(_br, "_destination_dock_kind", lambda r: "park")
+    sender = FakeSender(); records = []
+    r = _station_runner(sender, records)
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
     assert "SetSpeedZero" in sender.actions()             # parked
@@ -437,39 +456,30 @@ def test_icon_veto_downgrades_station_to_park(monkeypatch):
     assert any(n == "RouteCompleteIconVetoStar" for n, _ in records)
 
 
-def test_icon_abstain_leaves_name_station_decision(monkeypatch):
-    """CV abstains (None: unwired / panel closed / unreadable) -> the name-based
-    decision stands unchanged -> dock runs, exactly as before the veto existed
-    (ZERO regression when the grab is uncalibrated)."""
-    monkeypatch.setattr(_br, "_destination_icon_is_star", lambda r: None)
-    sender = FakeSender()
-    records = []
-    st = _status(dest_name="Jameson Memorial", dest_body=4, dest_system=12345)
-    r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
-    r._current_system = "Destination Sys"
-    _arm_final_waypoint(r, 12345, "Destination Sys")
-    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+def test_icon_router_unwired_falls_back_to_name_dock():
+    """Grabber UNWIRED (default) -> _destination_dock_kind returns None and the
+    router falls back to today's NAME decision: name_says_station -> DOCK. NO
+    docking regression while CV is uncalibrated; logged RouteCompleteIconUnwiredNameDock."""
+    sender = FakeSender(); records = []
+    r = _station_runner(sender, records)
+    assert getattr(r, "_navpanel_icon_grabber", None) is None   # unwired default
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
-    assert "SetSpeed50" in sender.actions()               # dock ran (unchanged)
-    assert not any(n == "RouteCompleteIconVetoStar" for n, _ in records)
+    assert "SetSpeed50" in sender.actions()               # dock ran (today's behavior)
+    assert any(n == "RouteCompleteIconUnwiredNameDock" for n, _ in records)
 
 
-def test_icon_non_star_does_not_veto_a_real_station(monkeypatch):
-    """CV confirms NON_STAR (a real station's icon) -> NO veto: the dock decision
-    stands. The veto only fires on a POSITIVE star, never on a station read."""
-    monkeypatch.setattr(_br, "_destination_icon_is_star", lambda r: False)
-    sender = FakeSender()
-    records = []
-    st = _status(dest_name="Jameson Memorial", dest_body=4, dest_system=12345)
-    r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
-    r._current_system = "Destination Sys"
-    _arm_final_waypoint(r, 12345, "Destination Sys")
-    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+def test_icon_router_wired_but_abstains_fails_closed_to_park():
+    """Grabber WIRED but the read abstains (here: returns a None frame) -> FAIL
+    CLOSED to PARK, never a blind dock; logged RouteCompleteDockKindAbstained."""
+    sender = FakeSender(); records = []
+    r = _station_runner(sender, records)
+    r._navpanel_icon_grabber = lambda: None      # wired, but yields no frame -> abstain
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
-    assert "SetSpeed50" in sender.actions()               # dock ran
-    assert not any(n == "RouteCompleteIconVetoStar" for n, _ in records)
+    assert "SetSpeedZero" in sender.actions()             # fail-closed park
+    assert "SetSpeed50" not in sender.actions()           # NOT docked
+    assert any(n == "RouteCompleteDockKindAbstained" for n, _ in records)
 
 
 def test_destination_icon_is_star_unwired_abstains():
