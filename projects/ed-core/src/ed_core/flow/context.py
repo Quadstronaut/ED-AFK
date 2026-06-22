@@ -180,6 +180,16 @@ class StepContext:
     nav_panel_reader: Optional[Any] = None
     nav_panel_grabber: Optional[Callable[[], Any]] = None
 
+    # NAME-DRIVEN dock re-target (Q2 / route-complete redesign): the station NAME
+    # the route-complete decision identified (capture-at-plot _dock_target[2], or
+    # the settle-loop's resolved Destination.Name). step_dock_target_station OCRs
+    # the nav panel (nav_panel_reader+nav_panel_grabber) and targets the ROW whose
+    # name best-matches this (navpanel_reader.match_row_by_name), so the bot can
+    # temp-target the arrival star to get around it then re-acquire the TRUE
+    # station by name. None / no reader / no match -> the legacy SelectTarget ->
+    # confirm -> Contacts walk (every existing unit test stays on that path).
+    dock_target_name_supplier: Callable[[], Optional[str]] = lambda: None
+
     # DOCKED-MENU detector frame source (full-frame BGR .grab). When wired,
     # confirm_menu_item / station_services_macro read the live docked menu via
     # vision.station_menu.detect_menu_item to know which item is highlighted

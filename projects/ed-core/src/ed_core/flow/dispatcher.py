@@ -359,6 +359,27 @@ class FlowRunner:
     def event_time(self, name: str) -> Optional[float]:
         return self._event_times.get(name)
 
+    def _dock_target_name(self) -> Optional[str]:
+        """The station NAME the dock flow should re-acquire by name (Q2).
+
+        Prefers the capture-at-plot name (_dock_target[2]) -- the live
+        Destination has been overwritten to the arrival star by every
+        TargetNextRouteSystem along the route, so the captured name is the
+        durable identity. Falls back to the live Destination.Name (the settle
+        loop resolves it ~1.09s post-jump). None when neither is a usable,
+        non-symbolic name -> step_dock_target_station takes its legacy walk."""
+        cap = self._dock_target
+        if cap is not None:
+            name = (cap[2] or "").strip()
+            if name and not name.startswith("$"):
+                return name
+        st = self._latest_status
+        dest = getattr(st, "destination", None) if st is not None else None
+        name = (getattr(dest, "name", "") or "").strip() if dest is not None else ""
+        if name and not name.startswith("$"):
+            return name
+        return None
+
     def _jump_age(self) -> Optional[float]:
         """Seconds since the last FSDJump, per the EVENT'S OWN journal
         timestamp. None when no FSDJump has been seen. Evaluated at call time
@@ -476,6 +497,10 @@ class FlowRunner:
             body_tour_min_bodies=self._body_tour_min_bodies,
             nav_panel_reader=self.nav_panel_reader,
             nav_panel_grabber=self.nav_panel_grabber,
+            # Name-driven dock re-target (Q2): the captured station name, else
+            # the live Destination's name. step_dock_target_station matches it
+            # against the OCR'd nav panel to target the station's row by name.
+            dock_target_name_supplier=self._dock_target_name,
             station_menu_grabber=self.station_menu_grabber,
             # Current ship model (journal LoadGame/Loadout latch) â€” feeds the
             # dock blind-maneuver's ship-size pitch duration.

@@ -8,6 +8,7 @@ planet-rich frame, which has no fixture yet.
 
 from ed_vision.navpanel_reader import (
     NavBody,
+    match_row_by_name,
     next_unexplored,
     parse_nav_panel_rows,
 )
@@ -25,6 +26,53 @@ PANEL_LINES = [
     "Sifi YE-F b25-6 A 3        9,810 Ls",   # 5 planet
     "Pru Aescs WP-Q d5-12       11.4 Ly",    # 6 NEARBY SYSTEM -> drop
 ]
+
+
+# ---------------------------------------------------------------------------
+# match_row_by_name (Q2 / AC12): OCR-noise-robust NAME -> row index
+# ---------------------------------------------------------------------------
+
+def test_match_row_by_name_exact():
+    lines = ["NAV BEACON", "Jameson Memorial", "Sol A 1"]
+    assert match_row_by_name("Jameson Memorial", lines) == 1
+
+
+def test_match_row_by_name_tolerates_single_char_ocr_slip():
+    """AC12: a single-char OCR slip ('Memoriai' vs 'Memorial') still clears the
+    0.78 fuzzy floor and matches the right row."""
+    lines = ["NAV BEACON", "Jameson Memoriai", "Sol A 1"]
+    assert match_row_by_name("Jameson Memorial", lines) == 1
+
+
+def test_match_row_by_name_wrong_row_does_not_match():
+    """AC12: a genuinely different name clears NO row -> None (below the floor)."""
+    lines = ["NAV BEACON", "Robigo Mines", "Sol A 1"]
+    assert match_row_by_name("Jameson Memorial", lines) is None
+
+
+def test_match_row_by_name_picks_highest_ratio_on_ties():
+    """Two plausible rows -> the higher SequenceMatcher ratio wins."""
+    lines = ["Jameson Memoria", "Jameson Memorial"]   # second is exact
+    assert match_row_by_name("Jameson Memorial", lines) == 1
+
+
+def test_match_row_by_name_normalizes_punctuation_and_case():
+    """Both sides normalize (upper, collapse ws, strip OCR punctuation)."""
+    lines = ["  jameson   memorial!! "]
+    assert match_row_by_name("JAMESON MEMORIAL", lines) == 0
+
+
+def test_match_row_by_name_none_target_or_empty_lines():
+    assert match_row_by_name(None, ["Jameson Memorial"]) is None
+    assert match_row_by_name("", ["Jameson Memorial"]) is None
+    assert match_row_by_name("Jameson Memorial", []) is None
+    assert match_row_by_name("Jameson Memorial", ["", "   "]) is None
+
+
+def test_match_row_by_name_fuzzy_floor_respected():
+    """A name that only weakly overlaps stays below the default 0.78 floor."""
+    lines = ["Jamb Mortal"]
+    assert match_row_by_name("Jameson Memorial", lines) is None
 
 
 def test_parse_keeps_in_system_bodies_drops_nearby_systems():

@@ -740,6 +740,15 @@ def step_dock_target_station(
     if st0 is not None and _dest_is_named_station(st0):
         ctx.log("DockTargetStation", {"via": "already_locked"})
         return True
+    # NAME-DRIVEN re-target (Q2): the bot temp-targets the arrival STAR to get
+    # around it, so the live lock is the star, not the station. When the nav-panel
+    # reader + grabber are wired AND a target NAME is known, OCR the panel, match
+    # the station's ROW by name (match_row_by_name), and walk the cursor to it.
+    # This re-acquires the TRUE station by identity. Any abstain (unwired / no
+    # name / no name-match / confirm fails) falls through to the legacy
+    # SelectTarget -> confirm -> Contacts walk below (every existing unit test).
+    if _name_driven_dock_target(ctx, settle_s=settle_s, verify_reads=verify_reads):
+        return True
     if not _press(ctx, "SelectTarget"):
         return False
     if ctx.status_supplier() is None:
@@ -772,6 +781,74 @@ def step_dock_target_station(
             return True
         ctx.sleeper(settle_s)
     ctx.log("DockTargetStationFailed", {})
+    return False
+
+
+def _name_driven_dock_target(
+    ctx: StepContext, *, settle_s: float, verify_reads: int,
+) -> bool:
+    """Target the station ROW by NAME off the OCR'd nav panel (Q2 / AC11).
+
+    ABSTAINS (returns False, caller falls through to the legacy walk) when:
+      - the nav-panel reader OR grabber is not wired (every unit test),
+      - no target name is known (dock_target_name_supplier returns None),
+      - the OCR/parse yields no rows or no row clears the name-match floor,
+      - the macro confirm doesn't land on a named station.
+
+    On a name match it walks target_via_navpanel(rows_down=row_index) to lock the
+    matched row, then confirms via _dest_is_named_station. PURE-ish: catches the
+    sender KeyError (unbound macro) as an abstain, never raises.
+
+    The NAME is identity/locator only; it does NOT decide dock-vs-park (the icon
+    router already did, upstream in dispatch_route_complete)."""
+    reader = getattr(ctx, "nav_panel_reader", None)
+    grabber = getattr(ctx, "nav_panel_grabber", None)
+    if reader is None or grabber is None:
+        return False
+    name_sup = getattr(ctx, "dock_target_name_supplier", None)
+    target_name = name_sup() if callable(name_sup) else None
+    if not target_name:
+        return False
+    try:
+        from ed_vision.navpanel_reader import match_row_by_name
+        system = ctx.current_system_supplier()
+        frame = grabber()
+        if frame is None:
+            return False
+        bodies = reader.parse(frame, system)          # NavBody[] with row_index
+        if not bodies:
+            return False
+        names = [b.name for b in bodies]
+        idx = match_row_by_name(target_name, names)
+        if idx is None:
+            return False
+        row_index = bodies[idx].row_index
+    except Exception:                                  # noqa: BLE001 — abstain
+        ctx.log("DockTargetNameAbstained", {"reason": "ocr_or_match_error"})
+        return False
+
+    from ..executor.navpanel import target_via_navpanel
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    try:
+        target_via_navpanel(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s,
+                            rows_down=row_index, pin_to_top=True)
+    except KeyError:
+        ctx.log("BindMissing", {"step": "dock_target_station_by_name"})
+        return False
+    # Confirm the lock landed on a named station; no status wiring -> the macro
+    # is the step (mirrors the legacy fallback's no-status behavior).
+    if ctx.status_supplier() is None:
+        ctx.log("DockTargetStation", {"via": "name_row", "row": row_index})
+        return True
+    for _ in range(verify_reads):
+        st = ctx.status_supplier()
+        if _dest_is_named_station(st):
+            ctx.log("DockTargetStation", {"via": "name_row", "row": row_index})
+            return True
+        ctx.sleeper(settle_s)
+    ctx.log("DockTargetNameAbstained", {"reason": "confirm_failed",
+                                        "row": row_index})
     return False
 
 
