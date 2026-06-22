@@ -623,6 +623,14 @@ def _destination_dock_kind(runner: Any) -> "str | None":
     Jameson Memorial station -> dock). The grabber's contract: a FULL-frame BGR
     grab with the nav panel OPEN and the locked destination row highlighted.
 
+    NAME-CONFIRMED (council 2026-06-22, ruling C): the selected orange bar is the
+    CURSOR row, INDEPENDENT of the locked-destination row, so a glyph read is
+    trusted ONLY when an OCR name-match confirms the cursor sits ON the
+    destination; otherwise this abstains (-> None) and the router fails closed to
+    PARK rather than trust a wrong-row read. CONCURRENCY (council 2026-06-22,
+    blocker): the open/grab/close window holds the runner's exclusive-input guard
+    so the heat watchdog can't inject a keypress into the open panel.
+
     Reads runner._navpanel_icon_grabber (Optional[Callable[[], frame]]); UNWIRED
     (None) -> None. FAIL-CLOSED: any exception -> None (never raises into the
     terminal handler)."""
@@ -631,18 +639,93 @@ def _destination_dock_kind(runner: Any) -> "str | None":
         return None
     try:
         from ed_vision.navpanel_icons import selected_destination_icon
-        frame = grabber()
+        # CONCURRENCY (council blocker): hold the exclusive-input guard for the
+        # whole open/grab/close so the heat watchdog daemon pauses and can't
+        # inject DeployHeatSink into the open panel. Tolerate a fake runner
+        # without the guard (unit tests).
+        guard = getattr(runner, "_exclusive_input", None)
+        if callable(guard):
+            with guard():
+                frame = grabber()
+        else:
+            frame = grabber()
         if frame is None:
             return None
         verdict = selected_destination_icon(frame)
         action = verdict.get("action")
-        if action == "dock":
-            return "dock"
-        if action == "park":
-            return "park"
-        return None                          # "abstain" -> WIRING abstain -> name fallback
+        if action not in ("dock", "park"):
+            return None                       # no confident read -> name fallback
+        # RULING C: trust the read only when the SELECTED row IS the destination,
+        # confirmed by NAME. A wrong-row / unconfirmable read -> None -> the router
+        # fails closed to PARK (over-park a far station is fail-safe; blind-docking
+        # is not). dest name from the live Destination / captured dock target.
+        dest_name = None
+        getter = getattr(runner, "_dock_target_name", None)
+        if callable(getter):
+            dest_name = getter()
+        region = _DEFAULT_NAVLIST_REGION
+        reader = getattr(runner, "nav_panel_reader", None)
+        if reader is not None and getattr(reader, "region", None):
+            region = tuple(reader.region)
+        if not _selected_row_confirmed(frame, verdict.get("cy", -1),
+                                       dest_name, region):
+            if runner.record is not None:
+                runner.record("RouteCompleteDockKindRowUnconfirmed",
+                              {"name_station": dest_name})
+            return None
+        return action
     except Exception:                        # noqa: BLE001 — CV abstains
         return None
+
+
+# Nav-list region (full-frame px @1080p) the icon read OCRs to NAME-confirm the
+# selected row == destination. Matches navpanel_reader.DEFAULT_NAV_REGION; the
+# live nav_panel_reader's calibrated region overrides it when present.
+_DEFAULT_NAVLIST_REGION = (505, 435, 410, 330)
+# Max |OCR-row-y - read-band-cy| (full-frame px) to call them the SAME row.
+_ROW_CONFIRM_TOL_PX = 40
+
+
+def _selected_row_confirmed(frame: Any, band_cy: int, dest_name: "str | None",
+                            region, ocr_detail=None) -> bool:
+    """True iff the SELECTED (read) row IS the locked destination, by NAME.
+
+    Ruling C (council 2026-06-22): OCR the nav-list region, find the row whose
+    name fuzzy-matches dest_name, and require its on-screen y to coincide with the
+    read band (within one row pitch). No dest name / no OCR engine / no name match
+    / wrong row -> False, so the caller abstains and the router fails closed. The
+    WinRT OCR (ocr_detailed) returns per-line bboxes; without it (engine absent)
+    we cannot confirm and conservatively return False. PURE-ish; never raises
+    (any error -> False). ocr_detail is injectable for tests."""
+    if not dest_name or band_cy is None or band_cy < 0:
+        return False
+    try:
+        import numpy as np
+        from ed_vision.navpanel_reader import match_row_by_name
+
+        if ocr_detail is None:
+            from ed_vision.ocr_winrt import available, ocr_detailed
+            if not available():
+                return False
+            ocr_detail = ocr_detailed
+        from ed_vision import ocr_winrt as _o
+
+        rx, ry, rw, rh = region
+        arr = np.asarray(frame)
+        crop = arr[ry:ry + rh, rx:rx + rw]
+        lines = ocr_detail(crop)
+        if not lines:
+            return False
+        idx = match_row_by_name(dest_name, [ln.text for ln in lines])
+        if idx is None:
+            return False
+        ln = lines[idx]
+        wh = ln.words[0].h if getattr(ln, "words", None) else 0.0
+        # map the matched line's crop-y (upscaled + padded) back to full-frame y
+        full_y = ry + (ln.y - _o._PAD) / _o._UPSCALE + (wh / _o._UPSCALE) / 2.0
+        return abs(full_y - band_cy) <= _ROW_CONFIRM_TOL_PX
+    except Exception:                        # noqa: BLE001 — can't confirm -> abstain
+        return False
 
 
 def _destination_icon_is_star(runner: Any) -> "bool | None":
