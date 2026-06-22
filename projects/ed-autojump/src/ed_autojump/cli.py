@@ -414,6 +414,10 @@ def cmd_run(args) -> int:
     # names so the FlowRunner call always sees them.
     nav_panel_reader = nav_panel_grabber = None
     station_menu_grabber = None
+    # Route-complete dock-vs-park icon classifier frame source. None -> the
+    # route-complete router falls back to the name heuristics (today's dock, no
+    # regression). Set below on a keyed run when capture is available.
+    navpanel_icon_grabber = None
     if args.engage_keys:
         from ed_vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
@@ -425,6 +429,20 @@ def cmd_run(args) -> int:
         station_menu_grabber = build_station_menu_grabber(cfg)
         if station_menu_grabber is not None:
             print("vision: docked-menu detector ON (full-frame grab)")
+        # Route-complete icon classifier: bare full-frame grab composed with the
+        # open-panel/close keystroke wrapper (sender is in scope here). The router
+        # (boot_routes.dispatch_route_complete) reads the selected destination
+        # row's icon to decide DOCK (station/carrier) vs PARK (star/planet) and to
+        # VETO an off-pattern arrival star a name heuristic mis-flagged a station.
+        from ed_vision.capture import build_navpanel_icon_grabber
+        from ed_core.executor.navpanel import grab_navpanel_frame
+        _navpanel_icon_full_frame = build_navpanel_icon_grabber(cfg)
+        if _navpanel_icon_full_frame is not None:
+            navpanel_icon_grabber = (
+                lambda _grab=_navpanel_icon_full_frame:
+                grab_navpanel_frame(sender, _grab))
+            print("vision: route-complete icon classifier ON "
+                  "(panel-open full-frame grab; star->park veto active)")
         if nav_panel_reader is not None:
             print(f"exploration: nav-panel identity targeting ON "
                   f"(region={tuple(cfg.exploration.nav_panel_region)}) "
@@ -591,6 +609,7 @@ def cmd_run(args) -> int:
         nav_panel_reader=nav_panel_reader,
         nav_panel_grabber=nav_panel_grabber,
         station_menu_grabber=station_menu_grabber,
+        navpanel_icon_grabber=navpanel_icon_grabber,
         visited_logger=visited_logger,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),

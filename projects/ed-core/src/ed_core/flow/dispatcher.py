@@ -128,6 +128,7 @@ class FlowRunner:
         nav_panel_reader: Optional[Any] = None,
         nav_panel_grabber: Optional[Callable[[], Any]] = None,
         station_menu_grabber: Optional[Callable[[], Any]] = None,
+        navpanel_icon_grabber: Optional[Callable[[], Any]] = None,
         visited_logger: Optional[Any] = None,
         scoop_rate_fn: Optional[Callable[[str], Optional[float]]] = None,
         dest_is_named_station_fn: Optional[Callable[[Any], bool]] = None,
@@ -203,10 +204,14 @@ class FlowRunner:
         # the nav panel OPEN and the locked destination highlighted, read by
         # boot_routes.dispatch_route_complete to confirm the destination's body
         # KIND by its column-0 icon (star vs station) -- the authoritative signal
-        # the name heuristics only approximate. UNWIRED (None) by default, so the
-        # route-complete decision falls back to the name heuristics until the
-        # operator calibrates the panel-open grab.
-        self._navpanel_icon_grabber = None
+        # the name heuristics only approximate. None -> route-complete falls back
+        # to the name heuristics (today's dock, no regression).
+        #
+        # WIRED 2026-06-22: cli.py composes capture.build_navpanel_icon_grabber
+        # (bare full-frame grab) with executor.navpanel.grab_navpanel_frame (the
+        # open-panel/close keystroke wrapper) and passes it here on a keyed live
+        # run. Still None when keys are off or capture is unavailable.
+        self._navpanel_icon_grabber = navpanel_icon_grabber
         # Witchspace latch (hyperspace loading screen). SET on a Hyperspace
         # StartJump (JumpType=="Hyperspace"), CLEARED on FSDJump (~18s window,
         # journal-confirmed). While set the interpreter PAUSES every step â€”

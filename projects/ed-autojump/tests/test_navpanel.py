@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ed_autojump.executor.navpanel import (
     engage_supercruise_assist,
+    grab_navpanel_frame,
     target_via_navpanel,
 )
 from ed_core.keys import parse_binds
@@ -122,3 +123,50 @@ def test_target_via_navpanel_all_actions_bound():
     sender = _sender()
     target_via_navpanel(sender, sleeper=lambda _s: None)
     assert len(sender.events) == 4
+
+
+# ── grab_navpanel_frame: open panel -> ONE full-frame grab (panel open,
+# destination highlighted) -> close panel. The route-complete icon classifier's
+# frame source wrapper. Fail-soft: grab/bind errors return None, panel still closes.
+
+def test_grab_navpanel_frame_opens_grabs_closes():
+    """FocusLeftPanel (open) -> grab -> FocusLeftPanel (close); the grab fires
+    AFTER the open and BEFORE the close, and the frame is returned."""
+    sender = _sender()
+    sleeper = _RecordingSleeper()
+    sentinel = object()
+    seen = {}
+
+    def grab():
+        seen["presses_at_grab"] = len(sender.actions())   # 1 -> open done, close pending
+        return sentinel
+
+    frame = grab_navpanel_frame(sender, grab, sleeper=sleeper, settle_s=0.4)
+    assert frame is sentinel
+    assert sender.actions() == ["FocusLeftPanel", "FocusLeftPanel"]
+    assert seen["presses_at_grab"] == 1
+    assert sleeper.calls == [0.4, 0.4]
+
+
+def test_grab_navpanel_frame_closes_even_if_grab_raises():
+    """A grab that raises -> None, but the panel is STILL closed (no stuck-open
+    panel) and the terminal handler never sees the exception."""
+    sender = _sender()
+
+    def grab():
+        raise RuntimeError("capture backend died")
+
+    frame = grab_navpanel_frame(sender, grab, sleeper=lambda _s: None)
+    assert frame is None
+    assert sender.actions() == ["FocusLeftPanel", "FocusLeftPanel"]   # opened AND closed
+
+
+def test_grab_navpanel_frame_open_failure_returns_none():
+    """If even opening the panel fails (e.g., unbound key) -> None, no crash,
+    nothing to close."""
+    class _BoomSender:
+        def press(self, *a, **k):
+            raise KeyError("FocusLeftPanel")
+
+    assert grab_navpanel_frame(_BoomSender(), lambda: object(),
+                               sleeper=lambda _s: None) is None

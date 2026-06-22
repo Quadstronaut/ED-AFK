@@ -60,6 +60,54 @@ from ed_core.keys.sender import Sender
 DEFAULT_SETTLE_S = 0.4
 
 
+def grab_navpanel_frame(
+    sender: Sender,
+    full_frame_grab: Callable[[], object],
+    *,
+    sleeper: Callable[[float], None] = time.sleep,
+    settle_s: float = DEFAULT_SETTLE_S,
+    panel_focus_action: str = "FocusLeftPanel",
+):
+    """Open the left nav panel, capture ONE full-frame grab with the panel open
+    and the locked destination row highlighted, then close the panel. Returns
+    the frame (whatever `full_frame_grab()` returns), or None on any failure.
+
+    This is the open/close wrapper for the route-complete icon classifier's
+    bare full-frame grabber (capture.build_navpanel_icon_grabber). The split
+    mirrors the SC-assist macro: the frame SOURCE is a pure grab; the UI
+    sequence that makes "panel OPEN, destination highlighted" true lives here,
+    where the sender is in scope.
+
+        panel_focus_action  -> open the left nav panel; on a route-complete
+                               arrival the locked destination is the highlighted
+                               row (the classifier reads the selected orange bar)
+        full_frame_grab()   -> capture the frame
+        panel_focus_action  -> close the panel (restore pre-grab UI state)
+
+    A `settle_s` sleep lets the open/close animation finish. FAIL-SOFT: a missing
+    bind (KeyError) or any grab error returns None so the caller falls back to
+    its name heuristics — a failed determination read NEVER crashes the terminal
+    route-complete handler. Best effort to close the panel even if the grab
+    raised, so a failed read can't leave the panel stuck open."""
+    try:
+        sender.press(panel_focus_action)
+        sleeper(settle_s)
+    except Exception:  # noqa: BLE001 — couldn't even open; nothing to close.
+        return None
+    frame = None
+    try:
+        frame = full_frame_grab()
+    except Exception:  # noqa: BLE001 — grab failed; still close the panel below.
+        frame = None
+    finally:
+        try:
+            sender.press(panel_focus_action)
+            sleeper(settle_s)
+        except Exception:  # noqa: BLE001 — close best-effort.
+            pass
+    return frame
+
+
 def engage_supercruise_assist(
     sender: Sender,
     *,

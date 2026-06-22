@@ -375,6 +375,36 @@ def build_station_menu_grabber(cfg: Any) -> Optional[Callable[[], Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Nav-panel ICON grabber factory (route-complete dock-vs-park determination)
+# ---------------------------------------------------------------------------
+
+def build_navpanel_icon_grabber(cfg: Any) -> Optional[Callable[[], Any]]:
+    """Return a FULL-FRAME .grab callable for the route-complete icon
+    classifier (navpanel_icons.selected_destination_icon), or None if capture
+    is unavailable.
+
+    Full frame because the classifier localizes the selected row + its body
+    glyph DYNAMICALLY (no fixed crop) — it must see the whole nav list, so the
+    grabber must not pre-crop. Mirrors build_station_menu_grabber exactly: a
+    full-screen ScreenGrabber, deliberately UNNAMED (a named full-screen grab
+    would flash a debug box over the entire screen).
+
+    This is only the FRAME SOURCE. The nav panel must be OPEN with the
+    destination highlighted when it fires — the caller wraps it with the
+    open/close keystroke sequence (executor.navpanel.grab_navpanel_frame), the
+    same split as station_menu (bare grab here, UI sequence at the call site).
+    NEVER raises; on failure the consumer fails closed (grabber=None -> the
+    route-complete router falls back to the name heuristics)."""
+    try:
+        capture_backend = getattr(cfg.vision, "capture_backend", "gdi")
+        grabber = ScreenGrabber((0, 0, 0, 0), backend=capture_backend)
+        return grabber.grab
+    except Exception as e:  # noqa: BLE001 — consumer fails closed on None.
+        log.warning("nav-panel icon grabber unavailable (%s); icon CV off", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Sun-region grabber factory
 # ---------------------------------------------------------------------------
 
