@@ -183,6 +183,154 @@ def classify_icon(cell: Any) -> str:
     return classify_icon_scored(cell)[0]
 
 
+# ===========================================================================
+# MULTI-KIND correlation (route-complete dock-vs-park) — EXTENDS the glyph
+# pipeline above, does NOT rebuild it.
+#
+# classify_icon reduced the world to STAR / NON_STAR against ONE canonical star.
+# classify_icon_kind generalises: correlate the SAME polarity-invariant,
+# bbox-normalised glyph mask against EVERY registry template, argmax, and map the
+# winning template's registry ACTION (park|dock). ABSTAIN-as-PARK (action="park",
+# kind="", score below KIND_MATCH_MIN) on no confident match — fail closed: the
+# ONLY route to action="dock" is a POSITIVE registry dock-kind match.
+# ===========================================================================
+
+# Min argmax correlation to trust a registry-kind verdict. Below this -> abstain
+# (action="park"). Same family of separation as STAR_CC_MIN; set conservatively
+# so a noisy read parks rather than docks.
+KIND_MATCH_MIN = 0.50
+
+# Cache of (registry-id -> [(IconKind, normalised-template-mask)]). Keyed by the
+# id() of the loaded registry tuple so a test that swaps registries rebuilds.
+_KIND_TEMPLATES: dict[int, list] = {}
+
+
+def _registry_templates(registry):
+    """(IconKind, normalised-mask) pairs for every registry row, built once and
+    cached. The reg-*.png templates are PRE-NORMALISED MASK_N white-on-black glyph
+    masks (baked from real icon crops through the same reduction the live cell
+    uses), so they load as a direct binary mask (img > 127) -- exactly the
+    column0 _load_template pattern. A template whose PNG won't decode is skipped
+    (the loader already guaranteed the FILE exists; an undecodable image is a
+    packaging fault that degrades that ONE kind to never-match == park, never a
+    crash)."""
+    import cv2
+
+    key = id(registry)
+    cached = _KIND_TEMPLATES.get(key)
+    if cached is not None:
+        return cached
+    base = Path(__file__).parent / "assets" / "navpanel_icons"
+    pairs: list = []
+    for ik in registry:
+        img = cv2.imread(str(base / ik.template), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+        mask = img > 127
+        if not mask.any():
+            continue
+        # Defensive: a hand-dropped template that ISN'T already MASK_N gets
+        # resized to MASK_N so the correlation shapes always match.
+        if mask.shape != (MASK_N, MASK_N):
+            mask = cv2.resize(mask.astype("uint8") * 255, (MASK_N, MASK_N),
+                              interpolation=cv2.INTER_NEAREST) > 127
+        pairs.append((ik, mask))
+    _KIND_TEMPLATES[key] = pairs
+    return pairs
+
+
+def classify_icon_kind(cell: Any, registry: Any = None) -> dict:
+    """Multi-kind verdict for one icon cell (BGR ndarray) against the registry.
+
+    Returns {"action","kind","score"}. action is "park" | "dock" (the registry
+    vocabulary); kind is the winning template's human label; score is the argmax
+    TM_CCOEFF_NORMED. NO confident match (score < KIND_MATCH_MIN, blank cell,
+    unreadable glyph, empty registry) -> {"action":"park","kind":"","score":...}
+    — ABSTAIN-as-PARK, the fail-closed terminal. PURE; never raises."""
+    out = {"action": "park", "kind": "", "score": 0.0}
+    try:
+        import cv2
+        import numpy as np
+
+        if registry is None:
+            from .navpanel_icon_registry import load_registry
+            registry = load_registry()
+
+        arr = np.asarray(cell)
+        if arr.ndim != 3 or arr.shape[2] < 3 or arr.shape[0] < 4 or arr.shape[1] < 4:
+            return out
+        gm = _glyph_mask(arr)
+        if float(gm.mean()) < GLYPH_MIN_FRAC:
+            return out
+        norm = _normalize_mask(gm)
+        if norm is None:
+            return out
+        pairs = _registry_templates(registry)
+        if not pairs:
+            return out
+        nf = norm.astype(np.float32)
+        best_ik = None
+        best_score = -2.0
+        for ik, tmpl in pairs:
+            score = float(cv2.matchTemplate(nf, tmpl.astype(np.float32),
+                                            cv2.TM_CCOEFF_NORMED)[0, 0])
+            if score > best_score:
+                best_score = score
+                best_ik = ik
+        out["score"] = round(best_score, 4)
+        if best_ik is None or best_score < KIND_MATCH_MIN:
+            return out          # abstain -> park (fail closed)
+        out["action"] = best_ik.action
+        out["kind"] = best_ik.kind
+        return out
+    except Exception:           # noqa: BLE001 — pure fn, fail closed to park
+        return {"action": "park", "kind": "", "score": 0.0}
+
+
+def selected_row_kind(frame: Any, registry: Any = None, n_rows: int = 12) -> dict:
+    """Find the SELECTED (orange-highlighted) nav-list row and classify its icon
+    against the registry -> the locked destination's dock-vs-park verdict.
+
+    Mirrors selected_row_icon's most-orange-row search, but yields the registry
+    KIND verdict instead of STAR/NON_STAR. Returns
+        {"row","action","kind","score","orange_frac","rect"}
+    with row=-1 / action="park" / kind="" when NO row is highlighted (panel
+    closed / nothing selected / frame too small) — the caller treats that as
+    ABSTAIN, which is itself the fail-closed park. PURE; never raises.
+
+    Full-frame geometry (row_cell_rect): pass a FULL-frame BGR grab with the nav
+    panel OPEN and the locked destination highlighted."""
+    none = {"row": -1, "action": "park", "kind": "", "score": 0.0,
+            "orange_frac": 0.0, "rect": None}
+    try:
+        import numpy as np
+
+        arr = np.asarray(frame)
+        if arr.ndim != 3 or arr.shape[2] < 3:
+            return none
+        h, w = arr.shape[:2]
+        best = none
+        best_ofrac = 0.0
+        for row in range(max(0, n_rows)):
+            x, y, cw, ch = row_cell_rect(h, row)
+            x0, y0 = max(0, x), max(0, y)
+            x1, y1 = min(w, x + cw), min(h, y + ch)
+            if x1 - x0 < 4 or y1 - y0 < 4:
+                continue
+            cell = arr[y0:y1, x0:x1]
+            ofrac = float(_orange(cell).mean())
+            if ofrac <= SELECTED_ORANGE_FRAC or ofrac <= best_ofrac:
+                continue
+            kind = classify_icon_kind(cell, registry)
+            best_ofrac = ofrac
+            best = {"row": row, "action": kind["action"], "kind": kind["kind"],
+                    "score": kind["score"], "orange_frac": round(ofrac, 4),
+                    "rect": (x0, y0, x1 - x0, y1 - y0)}
+        return best
+    except Exception:           # noqa: BLE001 — pure fn, fail closed to park
+        return none
+
+
 def row_cell_rect(frame_height: int, row: int) -> tuple[int, int, int, int]:
     """The icon cell for `row` as a full-frame (x, y, w, h), scaled to height —
     the box the CV debug overlay outlines (green hit / red miss)."""

@@ -1,0 +1,86 @@
+# Nav-panel type-icon REGISTRY (the operator-extensible kind table).
+#
+# Each [[icon]] row maps ONE template glyph (a PNG in THIS directory) to a body
+# KIND and the ACTION the route-complete router takes when the locked-destination
+# row matches that glyph.
+#
+# action vocabulary (the ONLY two; validated loud at load):
+#   "park"  -> hold in orbit under SC-assist (stars, planets, anything not a dock)
+#   "dock"  -> run the dock flow (stations, carriers, megaships, outposts)
+#
+# FAIL-CLOSED CONTRACT: the matcher ABSTAINS-as-PARK on no confident match, so a
+# glyph NOT listed here (or a low-confidence read) parks. The ONLY path to a DOCK
+# is a POSITIVE, confident match against a row whose action == "dock".
+#
+# TEMPLATES are NORMALIZED glyph masks (reg-*.png): each is a MASK_N white-on-black
+# mask baked from a real icon crop through the SAME reduction the live cell uses
+# (see assets/.../README.md "regenerating templates"). Drop a new reg-<kind>.png
+# and add one row to extend; see README.md.
+
+# --- PARK kinds (stars / planets / surface points) -------------------------
+[[icon]]
+template = "reg-star.png"
+kind = "star"
+action = "park"
+notes = "4-point star glyph. The catastrophe guard: a locked arrival STAR parks, never docks."
+
+[[icon]]
+template = "reg-system.png"
+kind = "system"
+action = "park"
+notes = "nearby-system / cross glyph. Not a dockable body."
+
+[[icon]]
+template = "reg-planet.png"
+kind = "planet"
+action = "park"
+notes = "planet crescent. Auto-orbit in SC."
+
+[[icon]]
+template = "reg-settlement.png"
+kind = "settlement"
+action = "park"
+notes = "planetary settlement marker. Not an orbital-dock target."
+
+[[icon]]
+template = "reg-settlement-surface-port.png"
+kind = "settlement-surface-port"
+action = "park"
+notes = "surface port. Park (surface landing is out of the autojump dock scope)."
+
+# --- DOCK kinds (orbital stations / carriers / megaships) ------------------
+[[icon]]
+template = "reg-station-coriolis.png"
+kind = "station-coriolis"
+action = "dock"
+notes = "Coriolis starport."
+
+[[icon]]
+template = "reg-station-orbis.png"
+kind = "station-orbis"
+action = "dock"
+notes = "Orbis starport."
+
+[[icon]]
+template = "reg-station-ocellus.png"
+kind = "station-ocellus"
+action = "dock"
+notes = "Ocellus starport."
+
+[[icon]]
+template = "reg-station-outpost.png"
+kind = "station-outpost"
+action = "dock"
+notes = "Outpost."
+
+[[icon]]
+template = "reg-station-asteroid.png"
+kind = "station-asteroid"
+action = "dock"
+notes = "Asteroid base."
+
+[[icon]]
+template = "reg-station-megaship.png"
+kind = "station-megaship"
+action = "dock"
+notes = "Megaship / Fleet Carrier dockable."
