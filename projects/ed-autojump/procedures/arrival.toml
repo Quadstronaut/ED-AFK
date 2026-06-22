@@ -49,7 +49,12 @@ steps = [
   # exclusion zone. 0.80 = test value (operator 2026-06-07; was 0.50) — will
   # be pushed toward 1.0 once proven. budget_s is a FAIL backstop only.
   # BEST-EFFORT: skip/fail never blocks the orbit below.
-  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.70, full_epsilon = 0.2 },  # gated  | 2 pit stop
+  # refuel_below = 1.0 (Q4, operator 2026-06-22): ALWAYS top off at the destination
+  # if the arrival star is scoopable (KGBFOAM), regardless of fuel level. The
+  # is_scoopable gate still skips non-scoopable classes ('not_scoopable'); the
+  # full_epsilon short-circuit still skips an already-full tank ('already_full');
+  # the stale-arrival guard still holds. Only the healthy-tank skip is removed.
+  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 1.0, full_epsilon = 0.2 },  # gated  | 2 pit stop
   # Star lock is IDENTITY-VERIFIED (2026-06-07 council, 10:30Z incident: row 0
   # was the NAV BEACON in populated Acihaut and the "verified" lock passed on
   # the beacon's compass dot). The step scrolls past non-star rows and fails
