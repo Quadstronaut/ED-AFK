@@ -32,8 +32,18 @@ name (`GLIESE 293 B`) has **no relation** to the system name (`LAWD 26`).
   better than no guard — it catches `Name==system` stars — so NOT a regression, but it is INCOMPLETE and must
   be replaced by an icon/STAR-CLASS-based check.)
 
-## Correct direction (to be designed, NOT guessed)
-Star-vs-station (and "is the locked target a star to park at") must key on the **column-0 ✦ icon** and/or the
-**detail-pane STAR CLASS row**, plus the journal arrival-star / BodyType — NOT the name. Flag for the column-0
-classifier: the ✦ glyph marks BOTH in-system stars AND the nearby-systems section — distinguish by the
-distance unit (Ls in-system vs Ly nearby) / position, not the glyph alone.
+## Correct mechanism — ALREADY BUILT (do not design, do not council; it exists)
+**`ed_vision/navpanel_icons.py`** is the icon oracle for exactly this: `classify_icon(cell)` /
+`detect_row_icon(frame, row)` return `STAR` / `NON_STAR` / `NONE` by matching the row's leading glyph against
+the star template (`assets/navpanel_icons/star-unselected.png`). Its docstring (2026-06-13) states it was built
+**to replace the brittle `_destination_is_local_star` name heuristic** — the "station named `<system> X`"
+(Acihaut nav-beacon) bug. It is OFF until wired (operator-gated; panel must be OPEN in the grabbed frame).
+
+The cc50366 `_captured_name_is_local_star` guard **RE-INVENTED the very name heuristic this oracle replaces** —
+redundant and wrong-approach. The real fix is to wire `navpanel_icons` (or `navpanel_column0`) at route-complete
+while the panel is open, NOT to patch names. Corroborating signals already available: the detail-pane `STAR CLASS`
+row (CV) and the journal arrival-star / BodyType. Icon templates for ALL kinds already exist under
+`tests/fixtures/navpanel/icons/` (star, 6 station types, planet, settlement, system).
+
+Flag for the column-0 classifier: ✦ marks BOTH in-system stars AND the nearby-systems section — distinguish by
+the `Ls` vs `Ly` distance unit / position, not the glyph alone.
