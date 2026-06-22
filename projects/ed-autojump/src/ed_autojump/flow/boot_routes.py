@@ -596,6 +596,52 @@ def _captured_name_is_local_star(name: "str | None", system_name: "str | None") 
     return False
 
 
+def _destination_dock_kind(runner: Any) -> "str | None":
+    """Registry-driven CV read of the locked destination's DOCK-vs-PARK kind.
+
+    GENERALISES _destination_icon_is_star (kept below for smack / other callers):
+    instead of a star/non-star boolean it returns the registry ACTION for the
+    highlighted (locked-destination) row's type-icon:
+        "dock"  -- a POSITIVE registry dock-kind icon matched (station / carrier /
+                   megaship / outpost). The ONLY trigger for a dock drive.
+        "park"  -- a registry park-kind matched (star / planet / settlement / ...)
+                   OR the classifier abstained-as-park (no confident match).
+        None    -- ABSTAIN at the WIRING level: grabber unwired (the default),
+                   grabber returned None, no highlighted row, or any exception.
+
+    Localization (GEOMETRY §3): the grabber's contract is a FULL-frame BGR grab
+    with the nav panel OPEN and the locked DESTINATION row highlighted. We use
+    selected_row_kind (navpanel_icons), which finds the orange-highlighted row by
+    its highlight bar and classifies that cell against the registry. selected_row_
+    kind itself never raises and returns row=-1/action="park" on no highlight; we
+    map a no-highlight read to None (WIRING abstain) so the router's NAME-FALLBACK
+    governs, distinct from a CONFIRMED park.
+
+    Reads runner._navpanel_icon_grabber (Optional[Callable[[], frame]]); UNWIRED
+    (None) by default -> None, exactly like _destination_icon_is_star today, so
+    this ABSTAINS until the operator calibrates the panel-open grab. FAIL-CLOSED:
+    any exception -> None (never raises into the terminal handler)."""
+    grabber = getattr(runner, "_navpanel_icon_grabber", None)
+    if grabber is None:
+        return None
+    try:
+        from ed_vision.navpanel_icons import selected_row_kind
+        frame = grabber()
+        if frame is None:
+            return None
+        verdict = selected_row_kind(frame)
+        if verdict.get("row", -1) < 0:
+            return None                      # no highlighted row -> WIRING abstain
+        action = verdict.get("action")
+        if action == "dock":
+            return "dock"
+        if action == "park":
+            return "park"
+        return None
+    except Exception:                        # noqa: BLE001 — CV abstains
+        return None
+
+
 def _destination_icon_is_star(runner: Any) -> "bool | None":
     """CV read of the locked destination's body KIND from its nav-panel ICON.
 
@@ -654,20 +700,28 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
     dest = getattr(status, "destination", None) if status is not None else None
     arrival_addr = getattr(ev, "system_address", None)
 
+    # =====================================================================
+    # STEP 1+2 of the determination algorithm (spec §2): resolve the locked
+    # Destination by NAME and exclude a bare/secondary arrival STAR or a Body==0
+    # route hop. This NAME pass produces `name_says_station` (a Body!=0, non-star,
+    # in-this-system lock) -- the LOCATOR, NOT the kind authority. The ICON ROUTER
+    # below is the kind authority; the name pass only decides whether there is a
+    # specific-body candidate worth asking the icon about.
+    # =====================================================================
     # CAPTURE-AT-PLOT path: prefer the station captured at plot time (the
     # live Destination has been overwritten to the arrival system's star by
     # every TargetNextRouteSystem press along the route). Only use it when
     # it was captured in THIS arrival system (scope guard blocks a stale
     # capture from a previous route to a different station).
     captured = runner._dock_target
-    is_station = False
+    name_says_station = False
     station_name = "station"
     if (captured is not None
             and captured[0] == arrival_addr
             and captured[1] != 0
             and captured[2] and not captured[2].startswith("$")
             and not _captured_name_is_local_star(captured[2], system)):
-        is_station = True
+        name_says_station = True
         station_name = captured[2]
     else:
         # Legacy live-status path with a BOUNDED SETTLE re-poll. The game
@@ -701,7 +755,7 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
                         and getattr(dest, "body", 0) != 0
                         and getattr(dest, "system", None) == arrival_addr
                         and local_star is False):
-                    is_station = True
+                    name_says_station = True
                     station_name = (
                         (getattr(dest, "name", "") or "").strip()
                         or "station")
@@ -712,13 +766,13 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
         if runner.record is not None:
             runner.record("RouteCompleteSettle", {
                 "reads": reads,
-                "station_found": is_station,
-                "station": station_name if is_station else None})
+                "station_found": name_says_station,
+                "station": station_name if name_says_station else None})
         # A. StationSettleExhausted telemetry: cap-exhaust with no station found
         # is a PARK (not a dock-promotion). Observability only — never gates an
         # action. Guard on _should_abort() so a concurrent abort can't emit a
         # false-positive exhaustion record (the real exit was abort, not settle).
-        if not is_station and not runner._should_abort():
+        if not name_says_station and not runner._should_abort():
             if runner.record is not None:
                 runner.record("StationSettleExhausted", {
                     "reads": reads,
@@ -726,21 +780,55 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
                     "arrival_addr": arrival_addr,
                 })
 
-    # ICON VETO (2026-06-21, LIVE GLIESE 293 B in LAWD 26): both name paths above
-    # mis-flag an off-pattern arrival STAR (Name != system and not the
-    # "<system> X" secondary form) as a station -> a blind dock drive into a star.
-    # The nav-panel column-0 ICON is the authoritative kind signal. When CV
-    # POSITIVELY confirms the locked destination is a STAR, downgrade to PARK.
-    # This only ever moves station -> park (the SAFE direction: an undocked
-    # station just sits there; a dock drive into a star does not). A CV abstain
-    # (grabber unwired / panel closed / unreadable) leaves the name decision
-    # intact -> ZERO regression until the grab is calibrated.
-    if is_station and _destination_icon_is_star(runner) is True:
-        if runner.record is not None:
-            runner.record("RouteCompleteIconVetoStar",
-                          {"rejected_station": station_name})
-        is_station = False
-        station_name = "station"
+    # =====================================================================
+    # STEP 3 — the ICON ROUTER (spec §2). The name pass above already PARKED
+    # every Body==0 / arrival-star lock (name_says_station stays False for them):
+    # those record RouteComplete{type:'system'} and NEVER consult the icon (AC2).
+    #
+    # A specific-body candidate (name_says_station True == Body!=0, non-star,
+    # in-this-system) goes through the icon router. The CV grabber is the kind
+    # authority WHEN IT IS WIRED; until the operator calibrates the panel-open
+    # grab it stays UNWIRED (the default), and we must NOT regress today's
+    # name-based dock (operator: "no docking regression while CV is uncalibrated").
+    # So the abstain handling splits on WHY the icon abstained:
+    #   "dock"            -> DOCK (positive registry dock-kind match).
+    #   "park"            -> PARK (CV confirmed star/planet/other — the GLIESE
+    #                        293 B class the name pass mis-flagged; AC4/AC6).
+    #   None + UNWIRED    -> NAME FALLBACK = today's behavior: name_says_station
+    #                        -> DOCK. The off-pattern-star risk persists EXACTLY
+    #                        as today until the grab is wired; zero regression.
+    #   None + WIRED      -> FAIL CLOSED = PARK. CV is active but could not read
+    #                        (no highlighted row / unreadable / raised): an
+    #                        ambiguous read never blind-drives a dock (the
+    #                        catastrophe guard). Logged RouteCompleteDockKindAbstained.
+    # =====================================================================
+    is_station = False
+    if name_says_station:
+        grabber_wired = getattr(runner, "_navpanel_icon_grabber", None) is not None
+        kind = _destination_dock_kind(runner)
+        if kind == "dock":
+            is_station = True
+        elif kind == "park":
+            # CV positively confirmed a non-dock body (the GLIESE 293 B class:
+            # an off-pattern arrival STAR the name pass mis-flagged a station).
+            if runner.record is not None:
+                runner.record("RouteCompleteIconVetoStar",
+                              {"rejected_station": station_name})
+            station_name = "station"
+        elif not grabber_wired:
+            # CV UNWIRED (default) -> name fallback = today's dock. No regression;
+            # the icon authority lights up once the operator calibrates the grab.
+            is_station = True
+            if runner.record is not None:
+                runner.record("RouteCompleteIconUnwiredNameDock",
+                              {"station": station_name})
+        else:
+            # CV WIRED but abstained (no row / unreadable / raised) -> FAIL CLOSED
+            # park. An active CV that cannot positively read never blind-docks.
+            if runner.record is not None:
+                runner.record("RouteCompleteDockKindAbstained",
+                              {"name_station": station_name})
+            station_name = "station"
 
     if is_station:
         # Run the real dock flow (procedures/dock.toml): approach under SC
