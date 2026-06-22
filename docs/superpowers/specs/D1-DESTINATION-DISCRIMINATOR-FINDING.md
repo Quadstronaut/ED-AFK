@@ -1,5 +1,11 @@
 # D1 — destination discriminator: the LOCKED chair rule was wrong (2026-06-21, live)
 
+> ⚠️ **UPDATE 2026-06-21 — the NAME-disambiguation below is REFUTED** (`ARRIVAL-STAR-NAMING-FINDING.md`).
+> An arrival star can be named ANYTHING, not the system name (LAWD 26 system arrives at `GLIESE 293 B`, a
+> Wolf-Rayet). So `Name==system ⇒ star` / `Name!=system ⇒ station` does NOT hold — Name cannot separate star
+> from station. Use the **column-0 ✦ star ICON** + the **detail-pane STAR CLASS row**, not the name. The
+> `Body==0` (system/next-hop) vs `Body!=0` (specific body) split below still holds.
+
 **Corrects chair-decision D1 / item #6** in `resume-state-2026-06-18-flow-redesign`, which said
 "`Destination.Body != 0` ⇒ station, `Body == 0` ⇒ system/star." **That binary is refuted.**
 C2's `_dest_is_station` must NOT key on `Body != 0`.
