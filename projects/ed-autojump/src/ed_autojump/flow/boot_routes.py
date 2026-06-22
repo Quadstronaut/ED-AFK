@@ -596,6 +596,45 @@ def _captured_name_is_local_star(name: "str | None", system_name: "str | None") 
     return False
 
 
+def _destination_icon_is_star(runner: Any) -> "bool | None":
+    """CV read of the locked destination's body KIND from its nav-panel ICON.
+
+    The AUTHORITATIVE star-vs-station signal the NAME heuristics
+    (_destination_is_local_star / _captured_name_is_local_star) only APPROXIMATE.
+    An arrival star whose name is unrelated to the system (GLIESE 293 B in
+    LAWD 26, operator-witnessed LIVE 2026-06-21) defeats the name rules -- they
+    read Name != system and mis-flag it a station -- but it is unambiguous by its
+    four-point star glyph. ed_vision.navpanel_icons.selected_row_icon reads that
+    glyph off the highlighted (locked-destination) row.
+
+    Reads the injected _navpanel_icon_grabber (Optional[Callable[[], frame]]) --
+    wired EXACTLY like _escape_vector_grabber: UNWIRED (None) by default, so this
+    ABSTAINS until the operator calibrates the panel-open grab. The grabber's
+    contract: return a FULL-frame BGR grab with the nav panel OPEN and the locked
+    DESTINATION row highlighted.
+
+    Returns True (CV confirms STAR), False (CV confirms NON_STAR), or None
+    (unwired / no highlighted row / unreadable -> abstain). FAIL-CLOSED: the CV
+    path NEVER raises into the terminal handler -- any error is an abstain, and
+    the name decision stands."""
+    grabber = getattr(runner, "_navpanel_icon_grabber", None)
+    if grabber is None:
+        return None
+    try:
+        from ed_vision.navpanel_icons import selected_row_icon, STAR, NON_STAR
+        frame = grabber()
+        if frame is None:
+            return None
+        verdict = selected_row_icon(frame).get("verdict")
+        if verdict == STAR:
+            return True
+        if verdict == NON_STAR:
+            return False
+        return None
+    except Exception:                                    # noqa: BLE001 — CV abstains
+        return None
+
+
 def dispatch_route_complete(runner: Any, ev: Any) -> None:
     """Terminal ROUTE COMPLETE handler. SUCCESS, not an abort -- positive
     wording, no auto-restart, no retry. The live loop simply sees no
@@ -686,6 +725,22 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
                     "settle_s": runner._route_complete_settle_s,
                     "arrival_addr": arrival_addr,
                 })
+
+    # ICON VETO (2026-06-21, LIVE GLIESE 293 B in LAWD 26): both name paths above
+    # mis-flag an off-pattern arrival STAR (Name != system and not the
+    # "<system> X" secondary form) as a station -> a blind dock drive into a star.
+    # The nav-panel column-0 ICON is the authoritative kind signal. When CV
+    # POSITIVELY confirms the locked destination is a STAR, downgrade to PARK.
+    # This only ever moves station -> park (the SAFE direction: an undocked
+    # station just sits there; a dock drive into a star does not). A CV abstain
+    # (grabber unwired / panel closed / unreadable) leaves the name decision
+    # intact -> ZERO regression until the grab is calibrated.
+    if is_station and _destination_icon_is_star(runner) is True:
+        if runner.record is not None:
+            runner.record("RouteCompleteIconVetoStar",
+                          {"rejected_station": station_name})
+        is_station = False
+        station_name = "station"
 
     if is_station:
         # Run the real dock flow (procedures/dock.toml): approach under SC

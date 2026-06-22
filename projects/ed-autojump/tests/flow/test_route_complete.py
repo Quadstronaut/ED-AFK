@@ -410,6 +410,91 @@ def test_route_complete_overlay_uses_event_and_status_slots():
     assert all("[ABORTED]" not in t for t in ov.status_lines)
 
 
+# ---- icon-CV veto: confirmed STAR downgrades a name-flagged station to park --
+# The GLIESE 293 B class (live 2026-06-21): an off-pattern arrival STAR whose
+# name is unrelated to the system defeats the name heuristics, which mis-flag it
+# a station. The nav-panel column-0 ICON is the authoritative kind signal; a
+# positive STAR confirmation VETOES the dock and parks instead. The CV read is
+# monkeypatched here (the perception primitive is validated in the vision tests),
+# so these exercise the WIRING in dispatch_route_complete without cv2.
+
+def test_icon_veto_downgrades_station_to_park(monkeypatch):
+    """CV confirms the locked destination is a STAR -> the name-based station
+    decision is VETOED: park runs, dock does NOT, RouteCompleteIconVetoStar is
+    recorded."""
+    monkeypatch.setattr(_br, "_destination_icon_is_star", lambda r: True)
+    sender = FakeSender()
+    records = []
+    st = _status(dest_name="Jameson Memorial", dest_body=4, dest_system=12345)
+    r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
+    r._current_system = "Destination Sys"
+    _arm_final_waypoint(r, 12345, "Destination Sys")
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
+                   system_address=12345, timestamp=_ts(10)))
+    assert "SetSpeedZero" in sender.actions()             # parked
+    assert "SetSpeed50" not in sender.actions()           # dock vetoed
+    assert any(n == "RouteCompleteIconVetoStar" for n, _ in records)
+
+
+def test_icon_abstain_leaves_name_station_decision(monkeypatch):
+    """CV abstains (None: unwired / panel closed / unreadable) -> the name-based
+    decision stands unchanged -> dock runs, exactly as before the veto existed
+    (ZERO regression when the grab is uncalibrated)."""
+    monkeypatch.setattr(_br, "_destination_icon_is_star", lambda r: None)
+    sender = FakeSender()
+    records = []
+    st = _status(dest_name="Jameson Memorial", dest_body=4, dest_system=12345)
+    r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
+    r._current_system = "Destination Sys"
+    _arm_final_waypoint(r, 12345, "Destination Sys")
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
+                   system_address=12345, timestamp=_ts(10)))
+    assert "SetSpeed50" in sender.actions()               # dock ran (unchanged)
+    assert not any(n == "RouteCompleteIconVetoStar" for n, _ in records)
+
+
+def test_icon_non_star_does_not_veto_a_real_station(monkeypatch):
+    """CV confirms NON_STAR (a real station's icon) -> NO veto: the dock decision
+    stands. The veto only fires on a POSITIVE star, never on a station read."""
+    monkeypatch.setattr(_br, "_destination_icon_is_star", lambda r: False)
+    sender = FakeSender()
+    records = []
+    st = _status(dest_name="Jameson Memorial", dest_body=4, dest_system=12345)
+    r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
+    r._current_system = "Destination Sys"
+    _arm_final_waypoint(r, 12345, "Destination Sys")
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
+                   system_address=12345, timestamp=_ts(10)))
+    assert "SetSpeed50" in sender.actions()               # dock ran
+    assert not any(n == "RouteCompleteIconVetoStar" for n, _ in records)
+
+
+def test_destination_icon_is_star_unwired_abstains():
+    """No _navpanel_icon_grabber wired -> _destination_icon_is_star abstains
+    (None): returns BEFORE importing cv2, never raises -- the default until the
+    operator calibrates the panel-open grab."""
+    sender = FakeSender()
+    r = _runner(sender)
+    assert getattr(r, "_navpanel_icon_grabber", None) is None
+    assert _br._destination_icon_is_star(r) is None
+
+
+def test_destination_icon_grabber_exception_abstains():
+    """A grabber that RAISES -> abstain (None), never propagates into the
+    terminal handler. Fail-closed: a CV fault can't crash route-complete."""
+    sender = FakeSender()
+    r = _runner(sender)
+
+    def _boom():
+        raise RuntimeError("capture backend died")
+
+    r._navpanel_icon_grabber = _boom
+    assert _br._destination_icon_is_star(r) is None
+
+
 # ---- _maybe_startup terminal-idle on restart --------------------------------
 
 def _startup_runner(sender, *, status, navroute, record=None, current_system=None):

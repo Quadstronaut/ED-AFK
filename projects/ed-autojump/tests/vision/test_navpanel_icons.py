@@ -80,3 +80,39 @@ def test_scan_navpanel_rows_labels_and_boxes():
     assert rows[0]["verdict"] == ni.STAR          # row A = star
     assert rows[0]["score"] >= ni.STAR_CC_MIN
     assert rows[2]["verdict"] == ni.NON_STAR      # row 2 = system bullseye
+
+
+def test_selected_row_icon_finds_highlighted_star_row():
+    """The route-complete star-vs-station read against REAL glyph pixels.
+
+    The module's fixed full-frame ROW0_CY=511 was calibrated on a DIFFERENT
+    system than this fixture (whose list top sits ~26px higher), so a raw
+    full-frame read misaligns — the known, unsolved nav-panel y-localization gap
+    (see the two xfail-class full-frame tests above; tracked, NOT this change).
+    To exercise selected_row_icon against real glyphs without depending on that
+    calibration, lay the well-calibrated REGION fixture (whose row 0 IS the
+    SELECTED star, per test_selected_star_row_classifies_star) onto a 1080 canvas
+    at the coordinates the module expects: region row0 cy 50 -> full 511
+    (ROW0_CY); region icon x 2 -> full 506 (ICON_X0)."""
+    region = cv2.imread(str(REGION))               # 330x410, real NAV-list crop
+    canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    y_off, x_off = 461, 504                         # 50+461=511, 2+504=506
+    h, w = region.shape[:2]
+    canvas[y_off:y_off + h, x_off:x_off + w] = region
+    sel = ni.selected_row_icon(canvas)
+    assert sel["row"] == 0                          # the highlighted (orange) row
+    assert sel["verdict"] == ni.STAR
+    assert sel["score"] >= ni.STAR_CC_MIN
+    assert sel["orange_frac"] > ni.SELECTED_ORANGE_FRAC
+    bx, by, bw, bh = sel["rect"]
+    assert bw > 0 and bh > 0
+
+
+def test_selected_row_icon_no_highlight_abstains():
+    """A frame with NO orange highlight bar (panel closed / nothing selected) ->
+    row=-1 / NONE: the caller abstains and the name heuristic stands."""
+    dark = np.full((1080, 1920, 3), 8, dtype=np.uint8)   # near-black, no bar
+    sel = ni.selected_row_icon(dark)
+    assert sel["row"] == -1
+    assert sel["verdict"] == ni.NONE
+    assert sel["rect"] is None

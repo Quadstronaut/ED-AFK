@@ -198,6 +198,15 @@ class FlowRunner:
         # Exposed as a runner attribute so boot_routes._route_sc_exit can read
         # it without importing a domain module into the core engine.
         self._escape_vector_grabber = None
+        # Injected nav-panel ICON frame grabber (Optional[Callable[[], Any]]).
+        # Wired exactly like _escape_vector_grabber: a FULL-frame BGR grab with
+        # the nav panel OPEN and the locked destination highlighted, read by
+        # boot_routes.dispatch_route_complete to confirm the destination's body
+        # KIND by its column-0 icon (star vs station) -- the authoritative signal
+        # the name heuristics only approximate. UNWIRED (None) by default, so the
+        # route-complete decision falls back to the name heuristics until the
+        # operator calibrates the panel-open grab.
+        self._navpanel_icon_grabber = None
         # Witchspace latch (hyperspace loading screen). SET on a Hyperspace
         # StartJump (JumpType=="Hyperspace"), CLEARED on FSDJump (~18s window,
         # journal-confirmed). While set the interpreter PAUSES every step â€”
