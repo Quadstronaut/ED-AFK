@@ -60,52 +60,64 @@ from ed_core.keys.sender import Sender
 DEFAULT_SETTLE_S = 0.4
 
 
-def grab_navpanel_frame(
+def grab_navpanel_destination(
     sender: Sender,
     full_frame_grab: Callable[[], object],
+    resolve_row: Callable[[object], "int | None"],
     *,
     sleeper: Callable[[float], None] = time.sleep,
     settle_s: float = DEFAULT_SETTLE_S,
+    pin_hold_s: float = 4.0,
     panel_focus_action: str = "FocusLeftPanel",
 ):
-    """Open the left nav panel, capture ONE full-frame grab with the panel open
-    and the locked destination row highlighted, then close the panel. Returns
-    the frame (whatever `full_frame_grab()` returns), or None on any failure.
+    """Open the left nav panel, walk the cursor ONTO the destination row (so it
+    becomes the SELECTED/highlighted row), capture that frame, and close. Returns
+    the destination-selected frame, or None if the panel can't open, the row
+    can't be located, or a grab fails.
 
-    This is the open/close wrapper for the route-complete icon classifier's
-    bare full-frame grabber (capture.build_navpanel_icon_grabber). The split
-    mirrors the SC-assist macro: the frame SOURCE is a pure grab; the UI
-    sequence that makes "panel OPEN, destination highlighted" true lives here,
-    where the sender is in scope.
+    WHY THE WALK (council 2026-06-22, ruling C): the cursor defaults to the row-0
+    arrival STAR on a fresh panel open, NEVER the destination station, so reading
+    the cursor row would mis-read (over-park) every real dock. resolve_row(frame1)
+    returns the destination's on-screen row index (the caller name-matches an OCR
+    of frame1 against Status.Destination.Name); _target_pin_and_walk drives the
+    cursor there using the SAME pin + UI_Down mechanic request_docking /
+    target_via_navpanel already use to target a station, so the classifier then
+    reads the DESTINATION's own row regardless of where the cursor started.
 
-        panel_focus_action  -> open the left nav panel; on a route-complete
-                               arrival the locked destination is the highlighted
-                               row (the classifier reads the selected orange bar)
-        full_frame_grab()   -> capture the frame
-        panel_focus_action  -> close the panel (restore pre-grab UI state)
+        panel_focus_action  -> open the panel (cursor on the arrival star)
+        full_frame_grab()   -> frame1 (for the caller to OCR + locate the row)
+        resolve_row(frame1) -> destination on-screen row index (None -> abort)
+        [pin to top + UI_Down x index] -> destination now SELECTED
+        full_frame_grab()   -> frame2 (destination highlighted) -- RETURNED
+        panel_focus_action  -> close
 
-    A `settle_s` sleep lets the open/close animation finish. FAIL-SOFT: a missing
-    bind (KeyError) or any grab error returns None so the caller falls back to
-    its name heuristics — a failed determination read NEVER crashes the terminal
-    route-complete handler. Best effort to close the panel even if the grab
-    raised, so a failed read can't leave the panel stuck open."""
+    FAIL-SOFT: a missing bind / grab error / unresolved row -> None and the panel
+    is still closed (caller falls back to name heuristics); a failed read never
+    crashes the terminal route-complete handler nor leaves the panel stuck open.
+    sender/sleeper injected for tests."""
     try:
         sender.press(panel_focus_action)
         sleeper(settle_s)
     except Exception:  # noqa: BLE001 — couldn't even open; nothing to close.
         return None
-    frame = None
+    out = None
     try:
-        frame = full_frame_grab()
-    except Exception:  # noqa: BLE001 — grab failed; still close the panel below.
-        frame = None
+        frame1 = full_frame_grab()
+        if frame1 is not None:
+            row = resolve_row(frame1)
+            if row is not None and row >= 0:
+                _target_pin_and_walk(sender, sleeper, settle_s, row,
+                                     pin_to_top=True, pin_hold_s=pin_hold_s)
+                out = full_frame_grab()
+    except Exception:  # noqa: BLE001 — any failure -> None; panel closed below.
+        out = None
     finally:
         try:
             sender.press(panel_focus_action)
             sleeper(settle_s)
         except Exception:  # noqa: BLE001 — close best-effort.
             pass
-    return frame
+    return out
 
 
 def engage_supercruise_assist(

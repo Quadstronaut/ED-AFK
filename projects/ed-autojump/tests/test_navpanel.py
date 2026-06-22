@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ed_autojump.executor.navpanel import (
     engage_supercruise_assist,
-    grab_navpanel_frame,
+    grab_navpanel_destination,
     target_via_navpanel,
 )
 from ed_core.keys import parse_binds
@@ -125,48 +125,68 @@ def test_target_via_navpanel_all_actions_bound():
     assert len(sender.events) == 4
 
 
-# ── grab_navpanel_frame: open panel -> ONE full-frame grab (panel open,
-# destination highlighted) -> close panel. The route-complete icon classifier's
-# frame source wrapper. Fail-soft: grab/bind errors return None, panel still closes.
+# ── grab_navpanel_destination: open panel -> grab1 -> resolve dest row ->
+# pin+walk the cursor ONTO it -> grab2 (returned, dest highlighted) -> close.
+# Fail-soft: unresolved row / grab/bind errors -> None, panel still closes.
 
-def test_grab_navpanel_frame_opens_grabs_closes():
-    """FocusLeftPanel (open) -> grab -> FocusLeftPanel (close); the grab fires
-    AFTER the open and BEFORE the close, and the frame is returned."""
+def test_grab_navpanel_destination_walks_then_grabs_second():
+    """open -> grab1 -> resolve_row=2 -> pin (UI_Down + held UI_Up) + UI_Down x2 ->
+    grab2 (RETURNED) -> close. The SECOND grab (dest selected) is returned."""
     sender = _sender()
     sleeper = _RecordingSleeper()
-    sentinel = object()
+    frames = ["f1", "f2"]
     seen = {}
 
     def grab():
-        seen["presses_at_grab"] = len(sender.actions())   # 1 -> open done, close pending
-        return sentinel
+        return frames.pop(0)
 
-    frame = grab_navpanel_frame(sender, grab, sleeper=sleeper, settle_s=0.4)
-    assert frame is sentinel
-    assert sender.actions() == ["FocusLeftPanel", "FocusLeftPanel"]
-    assert seen["presses_at_grab"] == 1
-    assert sleeper.calls == [0.4, 0.4]
+    def resolve(f):
+        seen["resolved_on"] = f          # resolve runs on grab1
+        return 2
+
+    out = grab_navpanel_destination(sender, grab, resolve, sleeper=sleeper,
+                                    settle_s=0.4)
+    assert out == "f2"                     # second grab returned
+    assert seen["resolved_on"] == "f1"     # row resolved from the FIRST grab
+    acts = sender.actions()
+    assert acts[0] == "FocusLeftPanel" and acts[-1] == "FocusLeftPanel"
+    assert acts.count("UI_Down") == 3      # 1 pin tap + 2 rows walked
+    assert "UI_Up" in acts                 # pin hold
 
 
-def test_grab_navpanel_frame_closes_even_if_grab_raises():
-    """A grab that raises -> None, but the panel is STILL closed (no stuck-open
-    panel) and the terminal handler never sees the exception."""
+def test_grab_navpanel_destination_row0_pin_only():
+    """row 0 -> the pin's own single UI_Down tap, no extra walk downs."""
     sender = _sender()
+    frames = ["f1", "f2"]
+    out = grab_navpanel_destination(sender, lambda: frames.pop(0),
+                                    lambda f: 0, sleeper=lambda _s: None)
+    assert out == "f2"
+    assert sender.actions().count("UI_Down") == 1   # pin tap only (rows_down=0)
+
+
+def test_grab_navpanel_destination_unresolved_row_aborts_without_walk():
+    """resolve_row -> None (destination not on screen) -> NO walk, NO second grab,
+    panel closed, returns None."""
+    sender = _sender()
+    grabs = []
 
     def grab():
-        raise RuntimeError("capture backend died")
+        grabs.append(1)
+        return "f1"
 
-    frame = grab_navpanel_frame(sender, grab, sleeper=lambda _s: None)
-    assert frame is None
-    assert sender.actions() == ["FocusLeftPanel", "FocusLeftPanel"]   # opened AND closed
+    out = grab_navpanel_destination(sender, grab, lambda f: None,
+                                    sleeper=lambda _s: None)
+    assert out is None
+    assert "UI_Down" not in sender.actions()                       # no walk
+    assert sender.actions() == ["FocusLeftPanel", "FocusLeftPanel"]  # open + close only
+    assert len(grabs) == 1                                          # only the OCR grab
 
 
-def test_grab_navpanel_frame_open_failure_returns_none():
-    """If even opening the panel fails (e.g., unbound key) -> None, no crash,
-    nothing to close."""
+def test_grab_navpanel_destination_open_failure_returns_none():
+    """Opening the panel fails (unbound key) -> None, no crash, nothing to close."""
     class _BoomSender:
         def press(self, *a, **k):
             raise KeyError("FocusLeftPanel")
 
-    assert grab_navpanel_frame(_BoomSender(), lambda: object(),
-                               sleeper=lambda _s: None) is None
+    assert grab_navpanel_destination(_BoomSender(), lambda: object(),
+                                     lambda f: 0, sleeper=lambda _s: None) is None

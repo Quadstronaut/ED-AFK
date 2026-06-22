@@ -434,21 +434,20 @@ def cmd_run(args) -> int:
         # (boot_routes.dispatch_route_complete) reads the selected destination
         # row's icon to decide DOCK (station/carrier) vs PARK (star/planet) and to
         # VETO an off-pattern arrival star a name heuristic mis-flagged a station.
-        # GATED on WinRT OCR: the router NAME-confirms the read row IS the locked
-        # destination (council ruling C) via ocr_winrt.ocr_detailed bboxes. Without
-        # WinRT the read can't be confirmed and would fail-closed PARK at every
-        # destination, so we leave the grabber UNWIRED -> name fallback (today's
-        # dock, no regression) instead. WinRT is built into Win11 (validated live).
+        # GATED on WinRT OCR: the router OCR-name-matches the destination row,
+        # WALKS the cursor onto it, and reads its icon (council ruling C) via
+        # ocr_winrt.ocr_detailed bboxes. Without WinRT the destination row can't be
+        # located, so we leave the grabber UNWIRED -> name fallback (today's dock,
+        # no regression). The grabber is the BARE full-frame grab; the open/walk/
+        # close orchestration lives in boot_routes._destination_dock_kind (it needs
+        # the sender + reader + Destination.Name). WinRT is built into Win11.
         from ed_vision.capture import build_navpanel_icon_grabber
-        from ed_core.executor.navpanel import grab_navpanel_frame
         from ed_vision import ocr_winrt as _ocr
         _navpanel_icon_full_frame = build_navpanel_icon_grabber(cfg)
         if _navpanel_icon_full_frame is not None and _ocr.available():
-            navpanel_icon_grabber = (
-                lambda _grab=_navpanel_icon_full_frame:
-                grab_navpanel_frame(sender, _grab))
+            navpanel_icon_grabber = _navpanel_icon_full_frame
             print("vision: route-complete icon classifier ON "
-                  "(name-confirmed panel-open grab; star->park veto active)")
+                  "(name-match + cursor-walk to destination; star->park veto active)")
         elif _navpanel_icon_full_frame is not None:
             print("vision: route-complete icon classifier OFF "
                   "(WinRT OCR unavailable -> name fallback, no veto)")
