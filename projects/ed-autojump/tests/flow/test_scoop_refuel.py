@@ -162,6 +162,44 @@ def test_skip_tank_healthy():
     assert rows[0][1]["reason"] == "tank_healthy"
 
 
+# ---- Q4: always top off at the destination (refuel_below=1.0) --------------
+
+def test_arrival_toml_scoop_refuel_below_is_one():
+    """The arrival.toml scoop_refuel step is set to refuel_below = 1.0 — the
+    one-line change that makes the bot ALWAYS top off at a scoopable destination
+    star regardless of fuel (Q4, operator 2026-06-22)."""
+    procs = load_procedures(PROC_DIR)
+    arrival = procs["arrival"]
+    scoop = next(s for s in arrival.steps if s.action == "scoop_refuel")
+    assert scoop.params.get("refuel_below") == 1.0
+
+
+def test_refuel_below_one_does_not_skip_healthy_tank_scoopable():
+    """At refuel_below=1.0 a HEALTHY tank on a SCOOPABLE star no longer
+    short-circuits 'tank_healthy' — the pit stop STARTS (ScoopStart logged). The
+    full_epsilon already-full short-circuit and is_scoopable gate are unaffected."""
+    rows, log = _recorder()
+    sender = FakeSender()
+    # 12/16 = 0.75: healthy under the old 0.70, but below refuel_below=1.0 ->
+    # proceed. Not within full_epsilon of capacity. G is scoopable (KGBFOAM).
+    ctx = _ctx(lambda t: _st(12.0), sender=sender, log=log, star="G")
+    STEP_REGISTRY["scoop_refuel"](ctx, refuel_below=1.0, budget_s=0.0)
+    reasons = [p.get("reason") for k, p in rows if k == "ScoopRefuelSkipped"]
+    assert "tank_healthy" not in reasons          # no longer skips a healthy tank
+    assert any(k == "ScoopStart" for k, _ in rows)   # the pit stop began
+
+
+def test_refuel_below_one_still_skips_non_scoopable_star():
+    """refuel_below=1.0 does NOT override the is_scoopable gate — a non-scoopable
+    star (Y dwarf, not in KGBFOAM) still skips ('not_scoopable'), regardless of fuel."""
+    rows, log = _recorder()
+    sender = FakeSender()
+    ctx = _ctx(lambda t: _st(2.0), sender=sender, log=log, star="Y")
+    assert STEP_REGISTRY["scoop_refuel"](ctx, refuel_below=1.0) is True
+    assert sender.actions() == []
+    assert rows[0][1]["reason"] == "not_scoopable"
+
+
 # ---- the full pit stop -----------------------------------------------------
 
 def _happy_script(t):
