@@ -505,6 +505,17 @@ def test_destination_icon_grabber_exception_abstains():
     assert _br._destination_icon_is_star(r) is None
 
 
+def test_navpanel_icon_grabber_kwarg_wires_onto_runner():
+    """The constructor kwarg navpanel_icon_grabber (what cli.py passes on a keyed
+    live run) must land on runner._navpanel_icon_grabber so the route-complete
+    router reads it. Default (no kwarg) stays None -> name fallback, no regression."""
+    sender = FakeSender()
+    grab = lambda: object()
+    r = FlowRunner(procedures={}, sender=sender, navpanel_icon_grabber=grab)
+    assert r._navpanel_icon_grabber is grab
+    assert FlowRunner(procedures={}, sender=sender)._navpanel_icon_grabber is None
+
+
 # ---- _maybe_startup terminal-idle on restart --------------------------------
 
 def _startup_runner(sender, *, status, navroute, record=None, current_system=None):
