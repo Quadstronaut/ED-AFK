@@ -330,3 +330,81 @@ def test_live_ocr_reproduces_terminator():
     sys_rows = [r["row"] for r in rows if r["verdict"] == c0.SYSTEM]
     # exactly the LTT 4550 row terminates, off live OCR anchors
     assert len(sys_rows) == 1
+
+
+# ===========================================================================
+# find_first_unexplored — productized derive+scan+pick (C6's #6 perception call)
+# ===========================================================================
+def _scan_stub(verdicts, selected_row=0):
+    """A scan_column0_rows-shaped list from verdict strings; row `selected_row`
+    carries selected=True (the orbited-star header)."""
+    return [{"row": i, "verdict": v, "selected": (i == selected_row)}
+            for i, v in enumerate(verdicts)]
+
+
+# --- pure walk over a scan (no OCR / no frame) ------------------------------
+def test_pick_first_body_is_first_unexplored():
+    scan = _scan_stub([c0.UNKNOWN, c0.UNEXPLORED, c0.UNEXPLORED])
+    assert c0._first_unexplored_from_scan(scan) == (1, False)
+
+
+def test_pick_skips_selected_header_even_if_boxish():
+    # the selected header can read box-ish; it must be skipped, never targeted
+    scan = [{"row": 0, "verdict": c0.UNEXPLORED, "selected": True},
+            {"row": 1, "verdict": c0.UNEXPLORED, "selected": False}]
+    assert c0._first_unexplored_from_scan(scan) == (1, False)
+
+
+def test_pick_terminates_on_system_before_any_unexplored():
+    scan = _scan_stub([c0.UNKNOWN, c0.UNKNOWN, c0.SYSTEM])
+    assert c0._first_unexplored_from_scan(scan) == (None, True)
+
+
+def test_pick_unexplored_before_system_wins():
+    scan = _scan_stub([c0.UNKNOWN, c0.UNEXPLORED, c0.SYSTEM])
+    assert c0._first_unexplored_from_scan(scan) == (1, False)
+
+
+def test_pick_skips_unknown_rows():
+    scan = _scan_stub([c0.UNKNOWN, c0.UNKNOWN, c0.UNKNOWN, c0.UNEXPLORED])
+    assert c0._first_unexplored_from_scan(scan) == (3, False)
+
+
+def test_pick_system_row_is_never_a_target():
+    scan = _scan_stub([c0.UNKNOWN, c0.SYSTEM, c0.UNEXPLORED])
+    row, terminated = c0._first_unexplored_from_scan(scan)
+    assert row is None and terminated is True
+
+
+def test_pick_empty_scan_no_target_no_terminate():
+    assert c0._first_unexplored_from_scan([]) == (None, False)
+
+
+def test_find_first_unexplored_unreadable_frame_no_target():
+    # a frame OCR can't read (anchors -> []) yields no target and no false terminate
+    res = c0.find_first_unexplored(np.zeros((1080, 1920, 3), dtype=np.uint8),
+                                   ocr_lines_fn=lambda crop: [])
+    assert res["row"] is None and res["terminated"] is False
+    assert res["anchors"] == []
+
+
+# --- real-frame integration (live OCR derivation), WinRT-gated --------------
+@pytest.mark.skipif(not _ocr_available(), reason="WinRT OCR ([navocr]) not installed")
+def test_find_first_unexplored_lhs_picks_first_body():
+    frame = cv2.imread(str(LHS))
+    res = c0.find_first_unexplored(frame)
+    assert res["terminated"] is False               # no nearby-system star here
+    assert res["row"] == LHS_FIRST_BODY_ROW         # first body row (1)
+    chosen = next(r for r in res["scan"] if r["row"] == res["row"])
+    assert chosen["verdict"] == c0.UNEXPLORED
+
+
+@pytest.mark.skipif(not _ocr_available(), reason="WinRT OCR ([navocr]) not installed")
+def test_find_first_unexplored_shin_skips_unknowns_never_terminator():
+    frame = cv2.imread(str(SHIN))
+    res = c0.find_first_unexplored(frame)
+    assert res["row"] == 2                           # rows 0(hdr)/1 unknown, 2 unexplored
+    assert res["row"] != SHIN_LTT4550_ROW            # never SC-assist the LTT 4550 star
+    assert res["terminated"] is False                # an unexplored body precedes the star
+    sys_rows = [r["row"] for r in res["scan"] if r["verdict"] == c0.SYSTEM]
+    assert sys_rows == [SHIN_LTT4550_ROW]

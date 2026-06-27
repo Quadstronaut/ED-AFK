@@ -517,6 +517,115 @@ def is_loop_terminator(verdict: str) -> bool:
 
 
 # ============================================================================
+# Caller convenience: derive anchors + pick the first UNEXPLORED row.
+#
+# The WIRING CONTRACT above leaves the OCR-anchor derivation to the caller. This
+# section PRODUCTIZES the proven recipe (the test_live_ocr_reproduces_terminator
+# cross-check: ocr_winrt.ocr_detailed over the nav-list crop, each line's first
+# word box mapped from padded/upscaled crop space back to full-frame coords) into
+# one perception call the nav_supercruise_unexplored flight step (C6) consumes:
+# frame in -> first-UNEXPLORED row index (or terminator) out. Still pure
+# perception (no flight code, no keypresses); the OCR engine is the only
+# dependency and it is lazy-imported + injectable, exactly like
+# navpanel_detail.read_detail_button_label.
+# ============================================================================
+
+# Nav-list OCR crop window (x, y, w, h) @1080p reference — the OCR input region.
+# IDENTICAL to the C6 test's RX/RY/RW/RH (the window the recorded anchors were
+# measured in). Scaled by frame height for other resolutions.
+NAVLIST_CROP = (505, 435, 420, 440)
+
+
+def derive_navlist_anchors(frame: Any, *, crop=NAVLIST_CROP,
+                           ocr_lines_fn: Optional[Any] = None) -> list:
+    """OCR the nav-list crop -> per-row ``(name_first_word_x, row_cy)`` anchors,
+    top-to-bottom — the dynamic localization input ``scan_column0_rows`` needs.
+
+    Productized form of the proven live recipe: ``ocr_winrt.ocr_detailed`` over the
+    crop, each line's FIRST word box mapped from padded/upscaled crop space back to
+    full-frame screen coords via ``ocr_winrt._PAD`` / ``_UPSCALE`` plus the crop
+    offset. ``ocr_lines_fn`` is injected for tests (defaults to ocr_detailed).
+
+    Fail-soft: no OCR engine / a bad frame / a raising OCR -> ``[]`` (the caller
+    then finds no rows -> no target, and must NOT blind-walk). Never raises."""
+    import numpy as np
+
+    pad, upscale = 30, 2.5
+    try:
+        from ed_vision import ocr_winrt
+        pad, upscale = ocr_winrt._PAD, ocr_winrt._UPSCALE
+        if ocr_lines_fn is None:
+            if not ocr_winrt.available():
+                return []
+            ocr_lines_fn = ocr_winrt.ocr_detailed
+    except Exception:               # ed_vision import path issue -> rely on injected fn
+        if ocr_lines_fn is None:
+            return []
+    try:
+        arr = np.asarray(frame)
+        if arr.ndim < 2:
+            return []
+        h = arr.shape[0]
+        sc = _scale(1.0, h)         # height ratio vs the 1080p reference
+        cx0 = int(crop[0] * sc); cy0 = int(crop[1] * sc)
+        cw = int(crop[2] * sc); ch = int(crop[3] * sc)
+        crop_img = arr[cy0:cy0 + ch, cx0:cx0 + cw]
+        lines = ocr_lines_fn(crop_img)
+    except Exception:               # noqa: BLE001 — perception fail-soft
+        return []
+    anchors = []
+    for ln in (lines or []):
+        words = getattr(ln, "words", None)
+        if not words:
+            continue
+        w0 = words[0]
+        sx = cx0 + (getattr(w0, "x", 0.0) - pad) / upscale
+        sy = cy0 + (getattr(w0, "y", 0.0) - pad) / upscale
+        sh = getattr(w0, "h", 0.0) / upscale
+        anchors.append((sx, int(sy + sh / 2)))
+    return anchors
+
+
+def _first_unexplored_from_scan(scan, *, skip_selected: bool = True):
+    """Pure walk over a ``scan_column0_rows`` result -> ``(target_row|None,
+    terminated)``. Top-to-bottom: the FIRST SYSTEM glyph (start of the nearby-
+    systems section) terminates the sweep BEFORE any UNEXPLORED is the target; the
+    FIRST UNEXPLORED row (before any SYSTEM) is the target. The selected header row
+    and UNKNOWN rows are skipped. A SYSTEM glyph is NEVER returned as a target."""
+    for r in scan:
+        if skip_selected and r.get("selected"):
+            continue
+        verdict = r.get("verdict")
+        if verdict == SYSTEM:
+            return None, True
+        if verdict == UNEXPLORED:
+            return r.get("row"), False
+    return None, False
+
+
+def find_first_unexplored(frame: Any, *, crop=NAVLIST_CROP,
+                          ocr_lines_fn: Optional[Any] = None,
+                          skip_selected: bool = True) -> dict:
+    """Locate the FIRST UNEXPLORED nav-list row from the top — the
+    ``nav_supercruise_unexplored`` target — and detect the loop terminator.
+
+    Returns ``{"row","terminated","scan","anchors"}``:
+      - ``row``: the first UNEXPLORED row index to SC-assist, or ``None``.
+      - ``terminated``: ``True`` iff a SYSTEM (4-point-star) glyph was reached
+        before any UNEXPLORED — no (more) unexplored bodies, so the caller jumps to
+        the next route system instead of orbiting.
+      - ``scan`` / ``anchors``: the per-row evidence + derived anchors (overlay /
+        debug surface).
+
+    No readable anchors -> ``{"row": None, "terminated": False, ...}`` (cannot read
+    the list; the caller must NOT blind-walk a guess). PURE; never raises."""
+    anchors = derive_navlist_anchors(frame, crop=crop, ocr_lines_fn=ocr_lines_fn)
+    scan = scan_column0_rows(frame, anchors)
+    row, terminated = _first_unexplored_from_scan(scan, skip_selected=skip_selected)
+    return {"row": row, "terminated": terminated, "scan": scan, "anchors": anchors}
+
+
+# ============================================================================
 # WIRING CONTRACT (stated, not landed -- C6 owns the flight wiring)
 # ============================================================================
 # The C6 nav_supercruise_unexplored loop, on the row the selector currently
