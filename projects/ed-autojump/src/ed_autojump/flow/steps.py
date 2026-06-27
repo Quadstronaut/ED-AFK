@@ -1558,6 +1558,60 @@ def step_confirm_orbiting(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
     return False
 
 
+def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
+                              panel_focus_action: str = "FocusLeftPanel") -> bool:
+    """SC-assist the ARRIVAL STAR (nav-panel row 0) — blind-fire with a CV
+    label-CONFIRM. The new nav_supercruise_star action (MASTER-SPEC); replaces the
+    blind sc_assist_orbit for the arrival star.
+
+    The arrival star is ALWAYS the closest body = nav-panel ROW 0, selected by
+    default on panel open (memory arrival-star-row0-blind-sc-assist). There is NO
+    search: open the panel, open the star's detail page, walk ONE step right onto
+    the Supercruise Assist button, CONFIRM its label reads 'SUPERCRUISE ASSIST
+    [AND ORBIT]' (the OFF state — navpanel_detail #8, validated on the real detail
+    frames), THEN press to engage. Same FocusLeftPanel -> UI_Select -> UI_Right ->
+    UI_Select sequence the proven engage_supercruise_assist blind macro uses; the
+    only addition is the pre-press label read.
+
+    Fail-soft / no regression: no detail grabber wired (getattr None) -> skip the
+    confirm and press blind (today's behaviour). Grabber wired but the label is
+    NOT the SC-assist OFF button -> DO NOT press; close the panel, return False
+    (fail-closed: never fire a wrong/already-on control). KeyError (unbound) ->
+    False. A mid-macro emergency drop (out of supercruise) -> False, the smack
+    scene owns it (mirrors sc_assist_orbit)."""
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    grabber = getattr(ctx, "navpanel_detail_grabber", None)
+    s, sl = ctx.sender, ctx.sleeper
+    try:
+        s.press(panel_focus_action); sl(settle_s)   # open panel; row 0 (star) selected
+        s.press("UI_Select"); sl(settle_s)           # open the star's detail page
+        s.press("UI_Right"); sl(settle_s)            # onto the Supercruise Assist button
+        if grabber is not None:
+            from ed_vision.navpanel_detail import DetailButton, confirm_button
+            try:
+                on_button = confirm_button(grabber(), DetailButton.SC_ASSIST)
+            except Exception as exc:  # noqa: BLE001 — grabber/CV error -> fail closed
+                ctx.log("NavSupercruiseStarUnconfirmed",
+                        {"reason": "cv_error", "err": type(exc).__name__})
+                on_button = False
+            if not on_button:
+                ctx.log("NavSupercruiseStarRefused", {"reason": "label_not_sc_assist"})
+                s.press(panel_focus_action); sl(settle_s)   # close; press nothing
+                return False
+        s.press("UI_Select"); sl(settle_s)           # engage Supercruise Assist
+        s.press(panel_focus_action); sl(settle_s)    # close the panel
+    except KeyError:
+        ctx.log("BindMissing", {"step": "nav_supercruise_star"})
+        return False
+    st = ctx.status_supplier()
+    if st is not None and not getattr(st, "in_supercruise", False):
+        ctx.log("NavSupercruiseStarDropped", {})
+        return False
+    ctx.log("NavSupercruiseStarSent", {"cv_confirmed": grabber is not None})
+    return True
+
+
 def step_reset_power_distribution(ctx: StepContext) -> bool:
     """Reset the power distributor to balanced -- one ResetPowerDistribution tap
     (Down arrow). Best-effort, NOT required: a missed press just leaves the pips
@@ -1609,6 +1663,7 @@ register_step("pips_engines", step_pips_engines)
 register_step("confirm_orbiting", step_confirm_orbiting)
 register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
+register_step("nav_supercruise_star", step_nav_supercruise_star, input_exclusive=True)
 register_step("scoop_refuel", step_scoop_refuel)
 # body_tour is registered by ed_explore.steps_body_tour on import (surface #3).
 register_step("dock_target_station", step_dock_target_station, input_exclusive=True)
