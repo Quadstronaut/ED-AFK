@@ -129,6 +129,10 @@ class FlowRunner:
         nav_panel_grabber: Optional[Callable[[], Any]] = None,
         station_menu_grabber: Optional[Callable[[], Any]] = None,
         navpanel_icon_grabber: Optional[Callable[[], Any]] = None,
+        # CV-action family (#3/#4/#5/#6) full-frame .grab; ONE grab wired to both
+        # (each consumer crops its own region). None -> blind/unreadable fallback.
+        navpanel_detail_grabber: Optional[Callable[[], Any]] = None,
+        navpanel_frame_grabber: Optional[Callable[[], Any]] = None,
         visited_logger: Optional[Any] = None,
         scoop_rate_fn: Optional[Callable[[str], Optional[float]]] = None,
         dest_is_named_station_fn: Optional[Callable[[Any], bool]] = None,
@@ -166,6 +170,9 @@ class FlowRunner:
         # Docked-menu CV (full-frame grab): auto_launch safety gate + the
         # services-macro menu-up entry gate read the menu through this.
         self.station_menu_grabber = station_menu_grabber
+        # CV-action family full-frame grabbers (#3/#4/#5/#6) — see StepContext.
+        self.navpanel_detail_grabber = navpanel_detail_grabber
+        self.navpanel_frame_grabber = navpanel_frame_grabber
         # Append-only log of systems visited on live FSDJump arrivals. Pure
         # observability: never touches a condition/action and is fail-soft on
         # write, so it can't disturb the flight loop. None == disabled.
@@ -507,6 +514,10 @@ class FlowRunner:
             # against the OCR'd nav panel to target the station's row by name.
             dock_target_name_supplier=self._dock_target_name,
             station_menu_grabber=self.station_menu_grabber,
+            # CV-action family (#3/#4/#5/#6): the pre-press #8 label confirm
+            # (detail) + the nav-list read (frame). One full-frame grab, both.
+            navpanel_detail_grabber=self.navpanel_detail_grabber,
+            navpanel_frame_grabber=self.navpanel_frame_grabber,
             # Current ship model (journal LoadGame/Loadout latch) â€” feeds the
             # dock blind-maneuver's ship-size pitch duration.
             ship_supplier=lambda: self._current_ship,

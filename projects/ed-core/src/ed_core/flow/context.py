@@ -190,6 +190,21 @@ class StepContext:
     # confirm -> Contacts walk (every existing unit test stays on that path).
     dock_target_name_supplier: Callable[[], Optional[str]] = lambda: None
 
+    # CV-ACTION FAMILY frame sources (#3/#4/#5/#6). BOTH are a FULL-frame
+    # (1920x1080, nav panel OPEN) .grab — each consumer crops its OWN region, so
+    # cli wires ONE bare full-frame grab to both:
+    #   navpanel_detail_grabber -> the detail-page #8 label confirm. nav_target_star
+    #     / nav_supercruise_star/_target/_unexplored read the highlighted button's
+    #     label (SC_ASSIST / LOCK / UNLOCK) off it BEFORE pressing (the press closes
+    #     the detail window, so the confirm must be pre-press). read_detail_button_label
+    #     crops LABEL_REGION_FRAC itself.
+    #   navpanel_frame_grabber  -> nav_supercruise_unexplored's find_first_unexplored,
+    #     which OCRs + crops the nav-LIST region itself (NOT the compass-crop
+    #     frame_grabber). None -> "unreadable", never a blind walk.
+    # None on both -> the actions fall back (blind press / unreadable), no regression.
+    navpanel_detail_grabber: Optional[Callable[[], Any]] = None
+    navpanel_frame_grabber: Optional[Callable[[], Any]] = None
+
     # DOCKED-MENU detector frame source (full-frame BGR .grab). When wired,
     # confirm_menu_item / station_services_macro read the live docked menu via
     # vision.station_menu.detect_menu_item to know which item is highlighted
