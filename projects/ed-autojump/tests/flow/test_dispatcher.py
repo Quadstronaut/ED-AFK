@@ -419,6 +419,33 @@ def test_make_context_threads_widget_ring_fields():
     assert ctx.widget_frame_grabber is grab
 
 
+def test_make_context_threads_cv_action_grabbers():
+    """The CV-action family (#3/#4/#5/#6) grabbers must reach the step context —
+    one bare full-frame grab wired to BOTH the detail-page #8 confirm and the
+    nav-list read. Without this threading, the new actions are inert (blind /
+    unreadable) at runtime even when cli built the grabber."""
+    sender = FakeSender()
+    grab = lambda: object()
+    r = FlowRunner(
+        procedures={}, sender=sender, clock=lambda: 0.0, sleeper=lambda s: None,
+        status_supplier=lambda: None,
+        navpanel_detail_grabber=grab, navpanel_frame_grabber=grab,
+    )
+    ctx = r._make_context()
+    assert ctx.navpanel_detail_grabber is grab
+    assert ctx.navpanel_frame_grabber is grab
+
+
+def test_make_context_cv_action_grabbers_default_none():
+    """Unwired (the no-vision / no-WinRT run) -> both None, so the actions
+    fail-closed to blind/unreadable rather than crash."""
+    r = FlowRunner(procedures={}, sender=FakeSender(), clock=lambda: 0.0,
+                   sleeper=lambda s: None, status_supplier=lambda: None)
+    ctx = r._make_context()
+    assert ctx.navpanel_detail_grabber is None
+    assert ctx.navpanel_frame_grabber is None
+
+
 class _FakeOverlay:
     def __init__(self):
         self.events = []

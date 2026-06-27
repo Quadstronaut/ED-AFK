@@ -418,6 +418,10 @@ def cmd_run(args) -> int:
     # route-complete router falls back to the name heuristics (today's dock, no
     # regression). Set below on a keyed run when capture is available.
     navpanel_icon_grabber = None
+    # CV-action family (#3/#4/#5/#6) full-frame grab — feeds the detail-page #8
+    # label confirm AND nav_supercruise_unexplored's nav-list read. Outer scope so
+    # the FlowRunner call (below the engage-keys block) always sees a defined name.
+    navpanel_cv_grabber = None
     if args.engage_keys:
         from ed_vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
@@ -451,6 +455,15 @@ def cmd_run(args) -> int:
         elif _navpanel_icon_full_frame is not None:
             print("vision: route-complete icon classifier OFF "
                   "(WinRT OCR unavailable -> name fallback, no veto)")
+        # CV-action family (#3/#4/#5/#6): the SAME bare full-frame grab feeds the
+        # detail-page #8 label confirm (nav_target_star / nav_supercruise_star/
+        # _target/_unexplored) AND nav_supercruise_unexplored's find_first_unexplored
+        # (each crops its own region). GATED on WinRT OCR (both layers OCR); without
+        # it the actions fall back to blind press / "unreadable", no regression.
+        if _navpanel_icon_full_frame is not None and _ocr.available():
+            navpanel_cv_grabber = _navpanel_icon_full_frame
+            print("vision: CV-action family ON "
+                  "(detail-page #8 label confirm + unexplored finder)")
         if nav_panel_reader is not None:
             print(f"exploration: nav-panel identity targeting ON "
                   f"(region={tuple(cfg.exploration.nav_panel_region)}) "
@@ -618,6 +631,8 @@ def cmd_run(args) -> int:
         nav_panel_grabber=nav_panel_grabber,
         station_menu_grabber=station_menu_grabber,
         navpanel_icon_grabber=navpanel_icon_grabber,
+        navpanel_detail_grabber=navpanel_cv_grabber,
+        navpanel_frame_grabber=navpanel_cv_grabber,
         visited_logger=visited_logger,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
