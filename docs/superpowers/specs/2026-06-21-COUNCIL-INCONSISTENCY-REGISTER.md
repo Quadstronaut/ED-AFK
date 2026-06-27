@@ -1,5 +1,10 @@
 # ED-AFK Inconsistency Register - RATIFIED (council-v2, 2026-06-21)
 
+> ⚠️ **UPDATED 2026-06-27** (council audit `wf_d6683762-921`): two rows are now RESOLVED at master `0570662` —
+> - `INC-EXPLO-PHANTOM-PARTIAL-07` — the `_exploration_mode` phantom is now FULLY fixed (`cc50366`); `boot_routes.py:84` reads `_body_tour_enabled`. No longer "partial."
+> - `INC-C6-DROP-HEDGE-13` — the ORBIT finding-doc now exists (`C6-UNEXPLORED-ORBIT-FINDING.md`, `0609f73`); confidence → confirmed.
+> The SC-assist label corrections and the D1 `Body!=0` corrections in this register remain valid. Current state: memory `resume-state-2026-06-27-audit-decisions`.
+
 > Council run `wf_a27fa462-774` (tier=arch, 11 agents, ~28 min). Decision: **COMMIT**.
 > Winning candidate: **gen-opus-2** - the only candidate with unanimous `pass` across all 5 lenses.
 > This is the canonical inconsistency register for the flow-redesign + 2026-06-21 capture work.
