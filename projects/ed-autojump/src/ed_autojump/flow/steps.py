@@ -1612,6 +1612,68 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
     return True
 
 
+def step_nav_target_star(ctx: StepContext, *, settle_s: float = 0.4,
+                         panel_focus_action: str = "FocusLeftPanel") -> bool:
+    """LOCK the ARRIVAL STAR (nav-panel row 0) as the destination — blind toggle
+    hardened with a CV label-CONFIRM that kills the double-toggle UNLOCK bug. The
+    new nav_target_star action (MASTER-SPEC); the CV-confirmed replacement for the
+    blind target_via_navpanel single-toggle.
+
+    The arrival star is ALWAYS row 0, selected by default on panel open (memory
+    arrival-star-row0-blind-sc-assist). Open the panel, open the star's detail
+    page; the cursor lands on the LOCK DESTINATION control — the FIRST button, so
+    there is NO UI_Right (that is the one-press difference from nav_supercruise_star,
+    which walks right onto the Supercruise Assist button). Then READ the label:
+
+      - LOCK DESTINATION   -> not yet locked  -> UI_Select once -> locked.
+      - UNLOCK DESTINATION -> ALREADY locked  -> NO-OP. A press here would UNLOCK
+        the star — exactly the 2026-06-06 blind-toggle bug target_via_navpanel hit
+        (the second UI_Select on an already-locked star unlocks it and the
+        hologram vanishes). Close, return True (it IS locked = success).
+      - anything else / unreadable -> fail closed: press nothing, close, False
+        (never blind-fire a lock we couldn't confirm).
+
+    Fail-soft / no regression: no detail grabber wired (getattr None) -> press
+    blind once (today's target_via_navpanel behaviour, double-toggle hazard and
+    all). KeyError (unbound) -> False. No supercruise-drop guard: locking a
+    destination never changes supercruise state (unlike nav_supercruise_star)."""
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    grabber = getattr(ctx, "navpanel_detail_grabber", None)
+    s, sl = ctx.sender, ctx.sleeper
+    try:
+        s.press(panel_focus_action); sl(settle_s)   # open panel; row 0 (star) selected
+        s.press("UI_Select"); sl(settle_s)           # open detail; cursor on LOCK DESTINATION
+        if grabber is not None:
+            from ed_vision.navpanel_detail import (
+                DetailButton, read_detail_button_label,
+            )
+            try:
+                button = read_detail_button_label(grabber()).button
+            except Exception as exc:  # noqa: BLE001 — grabber/CV error -> fail closed
+                ctx.log("NavTargetStarUnconfirmed",
+                        {"reason": "cv_error", "err": type(exc).__name__})
+                button = DetailButton.UNKNOWN
+            if button is DetailButton.UNLOCK:
+                # Already locked — a press would UNLOCK it. No-op, close, success.
+                ctx.log("NavTargetStarAlreadyLocked", {})
+                s.press(panel_focus_action); sl(settle_s)
+                return True
+            if button is not DetailButton.LOCK:
+                # Unreadable or wrong control — never blind-press an unconfirmed lock.
+                ctx.log("NavTargetStarRefused",
+                        {"reason": "label_not_lock", "button": button.value})
+                s.press(panel_focus_action); sl(settle_s)
+                return False
+        s.press("UI_Select"); sl(settle_s)           # activate Lock Destination -> locked
+        s.press(panel_focus_action); sl(settle_s)    # close the panel
+    except KeyError:
+        ctx.log("BindMissing", {"step": "nav_target_star"})
+        return False
+    ctx.log("NavTargetStarSent", {"cv_confirmed": grabber is not None})
+    return True
+
+
 def step_reset_power_distribution(ctx: StepContext) -> bool:
     """Reset the power distributor to balanced -- one ResetPowerDistribution tap
     (Down arrow). Best-effort, NOT required: a missed press just leaves the pips
@@ -1664,6 +1726,7 @@ register_step("confirm_orbiting", step_confirm_orbiting)
 register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
 register_step("nav_supercruise_star", step_nav_supercruise_star, input_exclusive=True)
+register_step("nav_target_star", step_nav_target_star, input_exclusive=True)
 register_step("scoop_refuel", step_scoop_refuel)
 # body_tour is registered by ed_explore.steps_body_tour on import (surface #3).
 register_step("dock_target_station", step_dock_target_station, input_exclusive=True)
