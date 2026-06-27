@@ -1764,6 +1764,110 @@ def step_nav_supercruise_unexplored(ctx: StepContext, *, settle_s: float = 0.4,
     return True
 
 
+def _resolve_named_row(frame, name, region=(505, 435, 410, 330)):
+    """On-screen nav-list row index whose OCR'd name best-matches `name`, or None.
+
+    The SAME WinRT name-match the route-complete re-target uses
+    (boot_routes._resolve_destination_row): ocr_detailed over the nav-list region ->
+    match_row_by_name (fuzzy 0.78, OCR-noise tolerant). The index is the on-screen
+    row order = the UI_Down walk distance from row 0. None on no WinRT / no lines /
+    no match. PURE perception, never raises. region = navpanel_reader.DEFAULT_NAV_REGION
+    @1080p (per-ship #16)."""
+    try:
+        import numpy as np
+        from ed_vision.navpanel_reader import match_row_by_name
+        from ed_vision.ocr_winrt import available, ocr_detailed
+        if not available():
+            return None
+        rx, ry, rw, rh = region
+        crop = np.asarray(frame)[ry:ry + rh, rx:rx + rw]
+        lines = ocr_detailed(crop)
+        if not lines:
+            return None
+        return match_row_by_name(name, [ln.text for ln in lines])
+    except Exception:  # noqa: BLE001 — can't resolve -> abstain (fail closed upstream)
+        return None
+
+
+def step_nav_supercruise_target(ctx: StepContext, *, settle_s: float = 0.4,
+                                panel_focus_action: str = "FocusLeftPanel",
+                                pin_hold_s: float = 4.0) -> bool:
+    """SC-assist the DESTINATION STATION by NAME-matching its nav-list row (#5).
+
+    Operator decision 2026-06-27: pick the station row by NAME (we know
+    Status.Destination.Name), not by icon — the most reliable locator for a route-
+    destination station. SC-assist on a station DROPS (vs orbits a body); that is a
+    GAME outcome, NOT a code branch — the SAME Supercruise Assist button, just a
+    different row. So this is nav_supercruise_unexplored with the row resolved by
+    name-match (_resolve_named_row) instead of the unexplored scan.
+
+    Reads the destination name from ctx.dock_target_name_supplier (the captured /
+    live Destination.Name) and the nav list from ctx.navpanel_frame_grabber (a FULL
+    frame; _resolve_named_row crops the region itself). No name / no grabber / no
+    WinRT match -> False (cannot locate the station; NEVER blind-walk a guessed row).
+    The optional navpanel_detail_grabber adds the pre-press #8 SC_ASSIST confirm.
+
+    Returns True iff SC-assist engaged toward the station; False on any locate / CV /
+    bind failure. Supercruise-drop guard like the rest of the family."""
+    grabber = getattr(ctx, "navpanel_frame_grabber", None)
+    if grabber is None:
+        ctx.log("NavSupercruiseTargetUnreadable", {"reason": "no_navpanel_grabber"})
+        return False
+    name_supplier = getattr(ctx, "dock_target_name_supplier", None)
+    dest_name = name_supplier() if callable(name_supplier) else None
+    if not dest_name:
+        ctx.log("NavSupercruiseTargetUnreadable", {"reason": "no_dest_name"})
+        return False
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    detail_grabber = getattr(ctx, "navpanel_detail_grabber", None)
+    s, sl = ctx.sender, ctx.sleeper
+    from ed_core.executor.navpanel import _target_pin_and_walk
+    try:
+        s.press(panel_focus_action); sl(settle_s)    # open the nav panel
+        try:
+            row = _resolve_named_row(grabber(), dest_name)
+        except Exception as exc:  # noqa: BLE001 — grabber/CV error -> close, fail closed
+            ctx.log("NavSupercruiseTargetUnreadable",
+                    {"reason": "cv_error", "err": type(exc).__name__})
+            s.press(panel_focus_action); sl(settle_s)
+            return False
+        if row is None:
+            ctx.log("NavSupercruiseTargetUnreadable",
+                    {"reason": "no_match", "name": dest_name})
+            s.press(panel_focus_action); sl(settle_s)   # close
+            return False
+        # Walk the cursor onto the station row, open detail, step right onto SC-assist.
+        _target_pin_and_walk(s, sl, settle_s, row, True, pin_hold_s)
+        s.press("UI_Select"); sl(settle_s)           # open detail page
+        s.press("UI_Right"); sl(settle_s)            # onto Supercruise Assist button
+        if detail_grabber is not None:
+            from ed_vision.navpanel_detail import DetailButton, confirm_button
+            try:
+                on_button = confirm_button(detail_grabber(), DetailButton.SC_ASSIST)
+            except Exception as exc:  # noqa: BLE001 — CV error -> fail closed
+                ctx.log("NavSupercruiseTargetRefused",
+                        {"reason": "cv_error", "err": type(exc).__name__})
+                on_button = False
+            if not on_button:
+                ctx.log("NavSupercruiseTargetRefused",
+                        {"reason": "label_not_sc_assist", "row": row})
+                s.press(panel_focus_action); sl(settle_s)   # close; press nothing
+                return False
+        s.press("UI_Select"); sl(settle_s)           # engage Supercruise Assist
+        s.press(panel_focus_action); sl(settle_s)    # close the panel
+    except KeyError:
+        ctx.log("BindMissing", {"step": "nav_supercruise_target"})
+        return False
+    st = ctx.status_supplier()
+    if st is not None and not getattr(st, "in_supercruise", False):
+        ctx.log("NavSupercruiseTargetDropped", {})
+        return False
+    ctx.log("NavSupercruiseTargetSent",
+            {"row": row, "name": dest_name, "cv_confirmed": detail_grabber is not None})
+    return True
+
+
 def step_reset_power_distribution(ctx: StepContext) -> bool:
     """Reset the power distributor to balanced -- one ResetPowerDistribution tap
     (Down arrow). Best-effort, NOT required: a missed press just leaves the pips
@@ -1818,6 +1922,8 @@ register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
 register_step("nav_supercruise_star", step_nav_supercruise_star, input_exclusive=True)
 register_step("nav_target_star", step_nav_target_star, input_exclusive=True)
 register_step("nav_supercruise_unexplored", step_nav_supercruise_unexplored,
+              input_exclusive=True)
+register_step("nav_supercruise_target", step_nav_supercruise_target,
               input_exclusive=True)
 register_step("scoop_refuel", step_scoop_refuel)
 # body_tour is registered by ed_explore.steps_body_tour on import (surface #3).
