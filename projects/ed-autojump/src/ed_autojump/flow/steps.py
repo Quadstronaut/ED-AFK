@@ -1674,6 +1674,96 @@ def step_nav_target_star(ctx: StepContext, *, settle_s: float = 0.4,
     return True
 
 
+def step_nav_supercruise_unexplored(ctx: StepContext, *, settle_s: float = 0.4,
+                                    panel_focus_action: str = "FocusLeftPanel",
+                                    pin_hold_s: float = 4.0) -> bool:
+    """Exploration #6: open the nav panel, find the FIRST UNEXPLORED body, walk the
+    cursor to it, and SC-assist it (with the #8 label confirm). The operator's
+    exploration step 2 ("find the first UNEXPLORED down the list, supercruise assist
+    it directly"). The next-system jump on a terminator and the loop-back after a
+    body is discovered are the exploration SCENE's job (skip_to + loop), not this
+    step's.
+
+    Reads the list with ctx.navpanel_frame_grabber — a FULL frame (1920x1080, nav
+    panel open). find_first_unexplored crops the nav-list region itself, so it needs
+    the WHOLE frame, NOT ctx.frame_grabber (that is the compass-region crop, no nav
+    list in it). None until the live wiring provides it -> False ("unreadable"); NO
+    blind walk of an unread list, ever. The optional navpanel_detail_grabber adds the
+    pre-press SC-assist label confirm (#8); without it the press is blind (today's
+    engage_supercruise_assist_row behaviour).
+
+    Returns (contract matches arrival.toml's required=false + skip_to pattern):
+      True  -> SC-assist engaged toward an unexplored body; fall through to the
+               throttle/orient/confirm steps.
+      False -> terminated (a SYSTEM glyph = no more unexplored bodies) OR the list
+               could not be read OR the CV refused the button OR a bind is missing.
+               The scene routes False (skip_to) to target_next_route. The flag
+               ctx.explore_terminated is True ONLY on a clean terminator (so the
+               scene can tell "done exploring, jump on" from "couldn't read, retry"),
+               and the distinct log events disambiguate.
+    A mid-macro emergency drop (out of supercruise) -> False (the smack scene owns
+    it), mirroring nav_supercruise_star."""
+    ctx.explore_terminated = False
+    grabber = getattr(ctx, "navpanel_frame_grabber", None)
+    if grabber is None:
+        ctx.log("NavSupercruiseUnexploredUnreadable", {"reason": "no_navpanel_grabber"})
+        return False
+    if not _ensure_cockpit_focus(ctx):
+        return False
+    detail_grabber = getattr(ctx, "navpanel_detail_grabber", None)
+    s, sl = ctx.sender, ctx.sleeper
+    from ed_core.executor.navpanel import _target_pin_and_walk
+    from ed_vision.navpanel_column0 import find_first_unexplored
+    try:
+        s.press(panel_focus_action); sl(settle_s)    # open the nav panel
+        try:
+            res = find_first_unexplored(grabber())
+        except Exception as exc:  # noqa: BLE001 — grabber/CV error -> close, fail closed
+            ctx.log("NavSupercruiseUnexploredUnreadable",
+                    {"reason": "cv_error", "err": type(exc).__name__})
+            s.press(panel_focus_action); sl(settle_s)
+            return False
+        row = res.get("row")
+        if row is None:
+            ctx.explore_terminated = bool(res.get("terminated"))
+            ctx.log(
+                "NavSupercruiseUnexploredTerminated" if ctx.explore_terminated
+                else "NavSupercruiseUnexploredUnreadable",
+                {"terminated": ctx.explore_terminated})
+            s.press(panel_focus_action); sl(settle_s)   # close
+            return False
+        # Walk the cursor onto the target row (pin to top, then UI_Down x row),
+        # open its detail page, step right onto the Supercruise Assist button.
+        _target_pin_and_walk(s, sl, settle_s, row, True, pin_hold_s)
+        s.press("UI_Select"); sl(settle_s)           # open detail page
+        s.press("UI_Right"); sl(settle_s)            # onto Supercruise Assist button
+        if detail_grabber is not None:
+            from ed_vision.navpanel_detail import DetailButton, confirm_button
+            try:
+                on_button = confirm_button(detail_grabber(), DetailButton.SC_ASSIST)
+            except Exception as exc:  # noqa: BLE001 — CV error -> fail closed
+                ctx.log("NavSupercruiseUnexploredRefused",
+                        {"reason": "cv_error", "err": type(exc).__name__})
+                on_button = False
+            if not on_button:
+                ctx.log("NavSupercruiseUnexploredRefused",
+                        {"reason": "label_not_sc_assist", "row": row})
+                s.press(panel_focus_action); sl(settle_s)   # close; press nothing
+                return False
+        s.press("UI_Select"); sl(settle_s)           # engage Supercruise Assist
+        s.press(panel_focus_action); sl(settle_s)    # close the panel
+    except KeyError:
+        ctx.log("BindMissing", {"step": "nav_supercruise_unexplored"})
+        return False
+    st = ctx.status_supplier()
+    if st is not None and not getattr(st, "in_supercruise", False):
+        ctx.log("NavSupercruiseUnexploredDropped", {})
+        return False
+    ctx.log("NavSupercruiseUnexploredSent",
+            {"row": row, "cv_confirmed": detail_grabber is not None})
+    return True
+
+
 def step_reset_power_distribution(ctx: StepContext) -> bool:
     """Reset the power distributor to balanced -- one ResetPowerDistribution tap
     (Down arrow). Best-effort, NOT required: a missed press just leaves the pips
@@ -1727,6 +1817,8 @@ register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
 register_step("nav_supercruise_star", step_nav_supercruise_star, input_exclusive=True)
 register_step("nav_target_star", step_nav_target_star, input_exclusive=True)
+register_step("nav_supercruise_unexplored", step_nav_supercruise_unexplored,
+              input_exclusive=True)
 register_step("scoop_refuel", step_scoop_refuel)
 # body_tour is registered by ed_explore.steps_body_tour on import (surface #3).
 register_step("dock_target_station", step_dock_target_station, input_exclusive=True)
