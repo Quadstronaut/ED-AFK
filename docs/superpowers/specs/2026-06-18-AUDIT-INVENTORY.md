@@ -1,5 +1,13 @@
 ﻿# ED-AFK Repo Inventory - Council-Verified (2026-06-18)
 
+> ⚠️ **PARTLY SUPERSEDED 2026-06-27** (council audit `wf_d6683762-921`). These 2026-06-18 claims are FALSE at master `0570662` — do not trust them:
+> - "ALL 7 C-councils designed-only / zero scene .toml landed" — FALSE: `traversal.toml` (C5, `5512a17`) + the C2 orchestrator (`42f33d0`) LANDED.
+> - "C5 Traversal RATIFIED but UNBUILT" — FALSE: built.
+> - "PHASE2-EXPLORATION-FLAG `_exploration_mode` phantom not yet fixed" — FALSE: fixed in `cc50366` (now reads `_body_tour_enabled`).
+> - "UNWIRED-002 navpanel_icons diagnostic-only, no live step imports it" — FALSE: wired live in `dispatch_route_complete` (route-complete dock/park CV, `0570662`).
+> - "C4 smack DEVIATION-BLOCKED" — struck: MASTER-SPEC marks the deviation a Claude error; the smack 8-step routine is LOCKED LAW.
+> Current authoritative state: memory `resume-state-2026-06-27-audit-decisions`. The rest below is retained as a historical 2026-06-18 snapshot.
+
 > Autonomous council-v2 inventory (run wf_8218f4e3-228): 4 blind read-only generators (branches/worktree/stubs/spec-state) + adversarial verification. Each item carries a re-runnable PROOF reference. Confidence: verified | unverified | disputed.
 > **CAVEAT:** the `completeness` review lens died on a stream-idle timeout, so omission-hunting is PARTIAL. The proof-resolution and judgment-claims lenses completed.
 
