@@ -1,0 +1,179 @@
+"""CV reader for ED's center-screen SUPERCRUISE / SC-ASSIST HUD prompts (#17).
+
+WHAT THIS IS
+------------
+During supercruise + Supercruise Assist, ED renders one of three center-screen
+prompts (a blue/red triangle glyph above a text line). They are clean, fixed-
+position CV signals — system-independent cockpit HUD, horizontally centered at
+~x960. This module OCRs the center band and classifies which prompt is showing:
+
+  - SUPERCRUISE ASSIST ACTIVE  -> ScHudState.ACTIVE   (engaged + flying TOWARD the
+                                  destination = in transit, e.g. toward a station)
+  - ORBITING DESTINATION       -> ScHudState.ORBITING (arrived + holding/orbiting)
+  - ALIGN WITH TARGET DESTINATION -> ScHudState.ALIGN  (off-target; SC-assist wants
+                                  alignment. The red triangle ALSO shows when not
+                                  pointed at a jump.)
+  - none of the above          -> ScHudState.NONE      (fail-closed default)
+
+The blue triangle is present on BOTH ACTIVE and ORBITING, so the triangle alone
+can't tell in-transit from arrived — the TEXT is the discriminator. Hence this is
+OCR-primary (like navpanel_detail #8), not a template/colour match.
+
+WHO CONSUMES IT
+---------------
+  - step_confirm_orbiting  -> detect_orbiting (route-complete "we're there" signal,
+    independent of journal timing).
+  - the post-fire "did SC-assist engage?" confirm for nav_supercruise_star /
+    _target / _unexplored -> detect_sc_assist_engaged (ACTIVE or ORBITING; the
+    press itself closes the detail window, so the engaged-state confirm is this
+    HUD text, NOT a detail-page label).
+  - exploration step 5 ("confirm supercruise with CV on the blue SC-assist
+    indicator") -> detect_sc_assist_active.
+  - the jump-alignment gate -> detect_align_warning (fail closed if shown).
+
+REGION + EVIDENCE CLASS
+-----------------------
+HUD_REGION_FRAC spans all three prompts as fractions of (W, H), derived from the
+operator-measured full-frame crops in data/hud_sc_indicators.json (LIVE, Operator
+provided full frames + crops 2026-06-14). The committed on-disk fixtures
+(tests/fixtures/hud/) are pre-CROPPED to the prompt, so tests pass
+region_frac=(0,0,1,1) (OCR the whole crop); live callers pass a full frame and
+get the default center-band crop. cv2/numpy/winrt are lazy-imported inside
+functions, matching ocr_winrt.py / navpanel_icons.py (module imports without the
+vision extras). PURE + fail-soft: any bad frame / missing OCR / unreadable prompt
+-> ScHudState.NONE, never raises.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Callable, Optional
+
+
+class ScHudState(str, Enum):
+    """Which center-screen SC-assist HUD prompt is showing."""
+    ACTIVE = "active"        # SUPERCRUISE ASSIST ACTIVE — engaged, in transit
+    ORBITING = "orbiting"    # ORBITING DESTINATION — arrived / holding
+    ALIGN = "align"          # ALIGN WITH TARGET DESTINATION — off-target
+    NONE = "none"            # no SC-assist HUD prompt detected (fail-closed)
+
+
+# Center band covering all three prompts, as fractions of (W, H). From the
+# full-frame crops in data/hud_sc_indicators.json: ALIGN ~x820-1099 y341-411,
+# ORBITING ~x869-1051 y468-527, ACTIVE between/near them. The band is widened to
+# x800-1120 (frac .417-.583) and y330-540 (frac .306-.500) so all three fit with
+# margin. Resolution-independent (fractions). 1920x1080 reference.
+HUD_REGION_FRAC = (0.417, 0.306, 0.583, 0.500)   # (x0, y0, x1, y1)
+
+
+@dataclass(frozen=True)
+class ScHudRead:
+    state: ScHudState
+    text: str            # raw OCR text of the region (for logging/debug)
+    confident: bool      # True iff a known prompt classified (state != NONE)
+
+
+def _crop_frac(frame: Any, frac):
+    """Crop a numpy frame to a fractional (x0,y0,x1,y1) box. None on a bad frame."""
+    try:
+        import numpy as np  # type: ignore
+        arr = np.asarray(frame)
+        h, w = arr.shape[:2]
+        x0 = max(0, int(frac[0] * w)); y0 = max(0, int(frac[1] * h))
+        x1 = min(w, int(frac[2] * w)); y1 = min(h, int(frac[3] * h))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return arr[y0:y1, x0:x1]
+    except Exception:  # noqa: BLE001 — any frame problem -> no crop -> NONE upstream.
+        return None
+
+
+def classify_hud_text(text: str) -> ScHudState:
+    """Map an OCR'd center-band text to which SC-assist prompt it is.
+
+    TOLERANT MATCHING (keyed on the live OCR garble observed on the committed
+    crops): 'ORBITING DESTINATION' OCRs as 'ORBITINGPES(INATION' — DESTINATION is
+    unreliable, so ORBITING is keyed on the clean 'ORBITING' token, NOT
+    'DESTINATION' (which ALIGN also contains). 'SUPERCRUISE ASSIST ACTIVE' OCRs as
+    'SUPERCRUIS ASSIST ACTIVE' — keyed on the distinctive 'ACTIVE'. The three key
+    tokens (ORBITING / ALIGN / ACTIVE) are mutually exclusive across the prompts,
+    so a match on any one is unambiguous."""
+    norm = " ".join((text or "").upper().split())
+    if "ORBITING" in norm or "RBITING" in norm:    # ORBITING DESTINATION
+        return ScHudState.ORBITING
+    if "ALIGN" in norm:                            # ALIGN WITH TARGET DESTINATION
+        return ScHudState.ALIGN
+    if "ACTIVE" in norm:                           # SUPERCRUISE ASSIST ACTIVE
+        return ScHudState.ACTIVE
+    return ScHudState.NONE
+
+
+def read_sc_hud(
+    frame: Any,
+    *,
+    region_frac=HUD_REGION_FRAC,
+    ocr: Optional[Callable[[Any], Any]] = None,
+) -> ScHudRead:
+    """OCR the center-band HUD region and classify the SC-assist prompt.
+
+    Fail-soft: a bad frame, a missing OCR engine, or an unreadable region all
+    return ScHudState.NONE (confident=False) so callers fail CLOSED. `ocr` is
+    injected for tests; defaults to WinRT ocr_detailed, falling back to NONE if
+    WinRT isn't available."""
+    if ocr is None:
+        try:
+            from ed_vision import ocr_winrt
+            if not ocr_winrt.available():
+                return ScHudRead(ScHudState.NONE, "", False)
+            ocr = ocr_winrt.ocr_detailed
+        except Exception:  # noqa: BLE001
+            return ScHudRead(ScHudState.NONE, "", False)
+
+    crop = _crop_frac(frame, region_frac)
+    if crop is None:
+        return ScHudRead(ScHudState.NONE, "", False)
+    try:
+        lines = ocr(crop)
+    except Exception:  # noqa: BLE001 — OCR engine failure -> fail-closed.
+        return ScHudRead(ScHudState.NONE, "", False)
+
+    # ocr_detailed returns OcrLine objects; a test stub may return plain strings.
+    text = " ".join(getattr(ln, "text", ln) for ln in (lines or []))
+    state = classify_hud_text(text)
+    return ScHudRead(state, text, state is not ScHudState.NONE)
+
+
+# --------------------------------------------------------------------------
+# Thin bool wrappers — the loop/gate-facing surface
+# --------------------------------------------------------------------------
+
+def detect_orbiting(frame: Any, *, region_frac=HUD_REGION_FRAC,
+                    ocr: Optional[Callable[[Any], Any]] = None) -> bool:
+    """True iff ORBITING DESTINATION is showing (arrived/holding). The
+    route-complete 'we're there' signal (step_confirm_orbiting)."""
+    return read_sc_hud(frame, region_frac=region_frac, ocr=ocr).state is ScHudState.ORBITING
+
+
+def detect_sc_assist_active(frame: Any, *, region_frac=HUD_REGION_FRAC,
+                            ocr: Optional[Callable[[Any], Any]] = None) -> bool:
+    """True iff SUPERCRUISE ASSIST ACTIVE is showing (engaged, in transit).
+    Exploration step 5's CV confirm of the blue SC-assist indicator."""
+    return read_sc_hud(frame, region_frac=region_frac, ocr=ocr).state is ScHudState.ACTIVE
+
+
+def detect_sc_assist_engaged(frame: Any, *, region_frac=HUD_REGION_FRAC,
+                             ocr: Optional[Callable[[Any], Any]] = None) -> bool:
+    """True iff SC-assist is engaged in EITHER sense — ACTIVE (in transit) or
+    ORBITING (arrived). The post-fire 'did the press take?' confirm for
+    nav_supercruise_star / _target / _unexplored (the press closes the detail
+    window, so the engaged state must be read off this HUD text)."""
+    return read_sc_hud(frame, region_frac=region_frac, ocr=ocr).state in (
+        ScHudState.ACTIVE, ScHudState.ORBITING)
+
+
+def detect_align_warning(frame: Any, *, region_frac=HUD_REGION_FRAC,
+                         ocr: Optional[Callable[[Any], Any]] = None) -> bool:
+    """True iff ALIGN WITH TARGET DESTINATION is showing (off-target / not pointed
+    at the jump). The jump-alignment gate fails CLOSED when this is True."""
+    return read_sc_hud(frame, region_frac=region_frac, ocr=ocr).state is ScHudState.ALIGN
