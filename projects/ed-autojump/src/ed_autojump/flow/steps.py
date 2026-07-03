@@ -1558,6 +1558,101 @@ def step_confirm_orbiting(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
     return False
 
 
+def step_confirm_sc_assist_active(ctx: StepContext) -> bool:
+    """OBSERVATIONAL: read the center-screen SC-assist HUD prompt and LOG which
+    state it shows (ACTIVE / ORBITING / ALIGN / NONE). NEVER gates — returns True
+    on EVERY path so exploration's between-bodies loop can never stall on a HUD
+    miss or a missing grabber. Distinct from step_confirm_orbiting, which returns
+    False-on-miss for the route-complete park contract; this one is pure
+    telemetry inside the explore loop (exploration step 5, MASTER-SPEC: "confirm
+    supercruise with CV on the blue SC-assist indicator").
+
+    Reads the injected hud_grabber (getattr, UNWIRED None by default). No grabber
+    -> log ScHudState{state:none, no_hud_grabber} and return True (today's live
+    behaviour — _make_context does not inject a HUD grab yet). Grabber wired ->
+    OCR the center band via hud_sc_indicators.read_sc_hud, log the classified
+    ScHudState, return True. Any grabber/detector error -> log + True (fail-soft).
+    """
+    hud_grabber = getattr(ctx, "hud_grabber", None)
+    if hud_grabber is None:
+        ctx.log("ScHudState", {"state": "none", "reason": "no_hud_grabber"})
+        return True
+    try:
+        from ed_vision.hud_sc_indicators import read_sc_hud
+        read = read_sc_hud(hud_grabber())
+    except Exception as exc:  # noqa: BLE001 — observational: never gates the loop
+        ctx.log("ScHudState", {"state": "none", "reason": "detector_error",
+                               "err": type(exc).__name__})
+        return True
+    ctx.log("ScHudState", {"state": read.state.value, "text": read.text,
+                           "confident": read.confident})
+    return True
+
+
+def step_wait_body_scanned(ctx: StepContext, *, poll_s: float = 0.5,
+                           max_polls: int = 240) -> bool:
+    """EVENT-GATED wait for the current body's AutoScan (exploration between-body
+    gate). Blocks until ctx.autoscan_supplier()'s seq COUNTER advances past the
+    snapshot taken at entry — the per-body "we reached it and it scanned" edge.
+
+    BLOCKED-ON-KYLE (BK-1): the exact per-body journal edge is live-adjustable.
+    Memory says "AutoScan BodyName = per-body arrival signal"; this gates on the
+    autoscan_supplier seq-advance. Confirm AutoScan (not Scan / FSSBodySignals)
+    is the right live edge before trusting the count in anger.
+
+    NO WALL-CLOCK GATE ([[no-arbitrary-timed-waits]]): the poll cadence is
+    ctx.event_waiter (a short blocking journal poll) or ctx.sleeper; the ONLY
+    terminations are (a) a seq-advance, (b) should_abort, (c) a poll-COUNT
+    backstop (max_polls) that keeps a never-arriving scan from hanging the loop.
+    Best-effort: returns True on EVERY exit (advance / abort / backstop) so a
+    missed scan never blocks the onward loop — it just moves to the next body.
+
+    EVENT-GATE STATE CHECK ([[event-gates-need-state-check]]) — PERSISTENT
+    HIGH-WATER BASELINE (council wf_7783dbe3 arbiter-mandated merge): the
+    baseline is NOT a fresh entry snapshot. It is the seq this gate last
+    CONSUMED, persisted on ctx across loop iterations. A scan that landed
+    during THIS body's engage/throttle/orient steps (i.e. after the previous
+    wait exited) already advanced the supplier past the persisted baseline, so
+    it is caught on the FIRST check and the step returns immediately — the
+    entry-snapshot version burned the whole poll budget on exactly that common
+    case, a de-facto wall-clock gate on the happy path. First-ever call has no
+    consumed history -> falls back to the entry snapshot (one body may pay the
+    bounded backstop at worst). The poll-COUNT bound is RETAINED (BK-1: the
+    AutoScan edge is unconfirmed live; an unbounded wait could hang the loop)."""
+    try:
+        cur = ctx.autoscan_supplier()[0]
+    except Exception:  # noqa: BLE001 — no supplier / bad shape -> nothing to wait on
+        ctx.log("WaitBodyScanned", {"result": "no_supplier"})
+        return True
+    seq0 = getattr(ctx, "explore_scan_seq_consumed", None)
+    if seq0 is None:
+        seq0 = cur  # first call: no consumed history — entry-snapshot fallback
+    polls = 0
+    seq = cur
+    while polls <= max_polls:
+        if ctx.should_abort():
+            ctx.explore_scan_seq_consumed = seq
+            ctx.log("WaitBodyScanned", {"result": "abort", "polls": polls})
+            return True
+        if seq > seq0:
+            ctx.explore_scan_seq_consumed = seq
+            ctx.log("WaitBodyScanned",
+                    {"result": "scanned", "polls": polls, "seq": seq})
+            return True
+        polls += 1
+        if ctx.event_waiter is not None:
+            ctx.event_waiter("Scan", poll_s)   # poll CADENCE only, return IGNORED
+        else:
+            ctx.sleeper(poll_s)
+        try:
+            seq = ctx.autoscan_supplier()[0]
+        except Exception:  # noqa: BLE001 — transient read miss -> keep polling
+            pass
+    ctx.explore_scan_seq_consumed = seq
+    ctx.log("WaitBodyScanned", {"result": "backstop", "polls": polls})
+    return True
+
+
 def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
                               panel_focus_action: str = "FocusLeftPanel") -> bool:
     """SC-assist the ARRIVAL STAR (nav-panel row 0) — blind-fire with a CV
@@ -1917,6 +2012,12 @@ def step_pips_engines(ctx: StepContext, *, presses: int = 4) -> bool:
 register_step("reset_power_distribution", step_reset_power_distribution)
 register_step("pips_engines", step_pips_engines)
 register_step("confirm_orbiting", step_confirm_orbiting)
+# Exploration LOOP body steps (council #4). Both are OBSERVATIONAL / event-gated
+# and NOT input_exclusive: confirm_sc_assist_active reads the HUD and presses
+# nothing; wait_body_scanned only polls a supplier. Registered here so importing
+# ed_autojump.flow.steps makes exploration.toml validate clean.
+register_step("confirm_sc_assist_active", step_confirm_sc_assist_active)
+register_step("wait_body_scanned", step_wait_body_scanned)
 register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
 register_step("nav_supercruise_star", step_nav_supercruise_star, input_exclusive=True)

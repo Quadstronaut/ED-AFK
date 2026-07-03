@@ -305,60 +305,12 @@ def test_supercruise_lost_fails_closed_even_in_degrade_mode():
 
 
 # ---------------------------------------------------------------------------
-# 22. procedure integration: step inserted after orient_compass, no-ops when off
+# 22. procedure integration
 # ---------------------------------------------------------------------------
-
-class _OkCompassReader:
-    """Compass reader that always reports the dot centred (orient succeeds)."""
-
-    def read(self, frame):
-        return CompassRead(found=True, offset_x=0.0, offset_y=0.0,
-                           in_front=True, confidence=1.0)
-
-
-def _arrival_status():
-    return SimpleNamespace(docked=False, in_supercruise=True, fsd_charging=False,
-                           fsd_cooldown=False, fsd_mass_locked=False,
-                           overheating=False)
-
-
-def _fsd_target_seq():
-    """Supplier whose seq advances on every read — the read after the press
-    always looks like a fresh, safe (K-class) FSDTarget."""
-    n = [0]
-    def supplier():
-        n[0] += 1
-        return (n[0], SimpleNamespace(event="FSDTarget", star_class="K"))
-    return supplier
-
-
-def test_arrival_has_widget_ring_after_compass():
-    procs = load_procedures(PROC_DIR)
-    actions = [s.action for s in procs["arrival"].steps]
-    # (a) structural: orient_widget_ring immediately follows the JUMP-ALIGN
-    # orient_compass (the LAST one — arrival 3b added an earlier nose-on-star
-    # orient before the orbit, 2026-06-07, which has no fine pass)
-    i = len(actions) - 1 - actions[::-1].index("orient_compass")
-    assert actions[i + 1] == "orient_widget_ring"
-
-    # (b) exercise the no-op path (not vacuously): compass SUCCEEDS, flag OFF ->
-    # the inserted step is REACHED, no-ops True, and the flow proceeds to fire
-    # the jump. Proves the insert didn't block the flow.
-    sender = FakeSender()
-    ctx = StepContext(
-        sender=sender, sleeper=lambda s: None,
-        compass_reader=_OkCompassReader(),
-        frame_grabber=lambda: object(), compass_samples=1,
-        status_supplier=_arrival_status,
-        align_kwargs={"max_iters": 2, "timeout_s": 999, "settle_s": 0.0},
-        widget_ring_enabled=False,  # no-op fine step
-        # arrival now ends with hold_alignment (event/state-gated, no clock);
-        # fire StartJump on the first poll so the procedure completes.
-        event_waiter=lambda ev, t: ev == "StartJump",
-        # target_next_route's danger gate needs a NEW safe FSDTarget after
-        # the press (seq must advance past the pre-press snapshot).
-        fsd_target_supplier=_fsd_target_seq(),
-    )
-    result = run_procedure(procs["arrival"], ctx)
-    assert result.aborted is False
-    assert "Hyperspace" in sender.actions()  # reached + fired the jump
+# NOTE (flow-redesign #1, 2026-06-27): test_arrival_has_widget_ring_after_compass
+# was DELETED. arrival.toml no longer orients or jumps (its action list is
+# [set_throttle, scoop_refuel, nav_supercruise_star]), so it has no
+# orient_compass / orient_widget_ring at all. The "orient_widget_ring immediately
+# follows orient_compass" order is now asserted for TRAVERSAL in
+# test_traversal_flow.test_step_order_is_operator_verbatim, and the widget's
+# no-op-when-off contract is covered by test_noop_true_when_flag_off above.
