@@ -38,8 +38,13 @@ def _step_from_table(table: dict) -> Step:
     required = bool(table.pop("required", False))
     retry_anchor = bool(table.pop("retry_anchor", False))
     skip_to = table.pop("skip_to", None)
+    # Loop primitive (council #4): on-success back-edge + its per-edge budget.
+    # loop_max defaults to the Step default (64) when the key is absent.
+    loop_to = table.pop("loop_to", None)
+    loop_max = int(table.pop("loop_max", 64))
     return Step(action=action, params=table, required=required,
-                retry_anchor=retry_anchor, skip_to=skip_to)
+                retry_anchor=retry_anchor, skip_to=skip_to,
+                loop_to=loop_to, loop_max=loop_max)
 
 
 def load_procedure(path: str | Path) -> Procedure:
@@ -94,6 +99,12 @@ def validate_procedure(proc: Procedure, known_actions: Iterable[str]) -> list[st
         if step.skip_to is not None and proc.index_of_action(step.skip_to) is None:
             errors.append(
                 f"{proc.name}: step {i} skip_to {step.skip_to!r} matches no step"
+            )
+        # A loop_to naming no step would silently degrade to a one-step advance
+        # at runtime (never looping) — catch the typo loudly, same as skip_to.
+        if step.loop_to is not None and proc.index_of_action(step.loop_to) is None:
+            errors.append(
+                f"{proc.name}: step {i} loop_to {step.loop_to!r} matches no step"
             )
     rf = proc.on_required_fail.retry_from
     if rf is not None and proc.index_of_action(rf) is None:
