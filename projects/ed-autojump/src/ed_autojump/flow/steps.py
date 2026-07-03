@@ -1010,50 +1010,95 @@ def step_dock_approach(ctx: StepContext, *, approach_pct: int = 25,
     return in_range
 
 
-def step_dock_request(ctx: StepContext, *, settle_s: float = 0.4,
-                      poll_s: float = 0.8, max_wait_s: float = 120.0) -> bool:
-    """Request docking now that the ship is inside the 7.5km no-fire zone.
+# The operator's EXACT literal request-docking tail (MASTER-SPEC Docking step
+# 4.8, "implement as written"): E, E, D, space == CycleNextPanel, CycleNextPanel
+# (Navigation -> Transactions -> Contacts tab), UI_Right (onto REQUEST DOCKING),
+# UI_Select (press it). NOT the proven ed_core.executor.navpanel.request_docking
+# macro (which brackets an equivalent tail with FocusLeftPanel open + a pin +
+# an extra UI_Select to select the row first) -- see the BLOCKED-ON-KYLE note
+# in step_dock_request below.
+_REQUEST_TAIL = ("CycleNextPanel", "CycleNextPanel", "UI_Right", "UI_Select")
 
-    step_dock_approach has already closed the gap; this step sends the docking
-    request macro and gates on the outcome:
-      - DockingGranted -> True (the ADC takes over to the pad).
-      - DockingDenied Reason=Distance -> False (step_dock_approach did not
-        close far enough â€” rare; re-approach via on_required_fail retry_from).
-      - DockingDenied any other reason -> False (bot cannot resolve
-        NoSpace/TooLarge/Hostile/Offences; retries exhaust on_required_fail
-        and then abort to human).
+
+def step_dock_request(ctx: StepContext, *, settle_s: float = 0.5,
+                      poll_s: float = 0.8, max_wait_s: float = 120.0) -> bool:
+    """Request docking -- MASTER-SPEC Docking steps 4.8/4.9, REBUILT (the NFZ
+    gate is gone; step_dock_close_to_range already closed the ship to inside
+    7.5km via the target-panel distance read before this step ever fires).
+
+    THE LITERAL TAIL (4.8, "implement as written", no bracket invented):
+        E -> wait 0.5s -> E -> wait 0.5s -> D -> space -> set_throttle 0
+    E,E = CycleNextPanel x2 (Navigation -> Transactions -> Contacts tab);
+    D = UI_Right (onto REQUEST DOCKING); space = UI_Select (press it); then
+    the throttle is zeroed (autodock will not engage above 0 throttle).
+
+    BLOCKED-ON-KYLE (flagged, NOT guessed -- the single most load-bearing
+    ambiguity in this rebuild): this 4-key tail assumes the LEFT PANEL is
+    ALREADY OPEN and focused on the station row. But 4.1 (nav_supercruise_target)
+    OPENS the panel to walk/confirm the SC-assist button and then CLOSES it
+    again before returning -- so at the moment this step fires the panel is,
+    on the evidence in this codebase, almost certainly CLOSED, and
+    CycleNextPanel cycling tabs on a closed left panel is unverified game
+    behaviour. The proven ed_core.executor.navpanel.request_docking macro
+    instead BRACKETS an equivalent tail with FocusLeftPanel + a pin prefix
+    (open -> pin to top -> E,E -> UI_Select -> UI_Right -> UI_Select -> close).
+    Two live-test-gated resolutions, NEITHER guessed here:
+      (a) bracket this tail with FocusLeftPanel + pin (mirror request_docking)
+      (b) the operator intends the sequence to run from an already-open/
+          focused panel (a scene precondition this council did not invent)
+    This step fires ONLY the literal 4-key sequence exactly as written, so its
+    behaviour stays provably traceable to the spec text; the bracket question
+    is logged (DockRequestTailUnbracketed) for the operator/ledger to resolve,
+    never guessed. Every key in the tail is already a REQUIRED_ACTION
+    (CycleNextPanel/UI_Right/UI_Select) -- binds_validate covers it.
+
+    OUTCOME GATE (4.9): DockingGranted -> True (throttle re-zeroed -- REQUIRED,
+    idempotent with the tail's own zero, since autodock will not engage above
+    0 throttle); DockingDenied Reason=Distance -> False (the approach did not
+    close far enough -- retried via on_required_fail retry_from, back to
+    dock_close_to_range); DockingDenied any OTHER reason -> False (bot cannot
+    resolve NoSpace/TooLarge/Hostile/Offences; retries exhaust on_required_fail
+    and then abort to human). status.docked is the state fallback (event-gates-
+    need-state-check: the ADC may already have docked by the first poll).
 
     `max_wait_s` is a FAIL backstop only. Without event wiring (unit tests)
-    the request macro is the step."""
-    if ctx.event_waiter is None:
-        # No journal wiring (unit tests): run the macro, report success.
-        return _run_request_macro(ctx, settle_s)
-
-    # Clear any stale denial reason FIRST so the grant loop only ever acts on
-    # a denial earned by THIS request. The dispatcher clears the stash on
-    # grant/dock but not when a new request begins, and
-    # step_dock_target_station's Contacts fallback deliberately runs the
-    # request macro out of range â€” earning a Distance denial that would
-    # otherwise false-fail this in-range request before its (latency-delayed)
-    # grant arrives (B1/D1). Mirrors the dispatcher's clear-on-grant pattern.
+    the tail + throttle-zero is the step."""
+    # Clear any stale denial reason FIRST so the grant loop only ever acts on a
+    # denial earned by THIS request (mirrors the dispatcher's clear-on-grant
+    # pattern; see step_dock_target_station's Contacts-fallback note in the
+    # legacy code this replaces -- an out-of-range probe elsewhere could stash
+    # a stale Distance denial that must not poison this request).
     clear = getattr(ctx, "clear_docking_denied", None)
     if clear is not None:
         clear()
 
-    if not _run_request_macro(ctx, settle_s):
+    for action in _REQUEST_TAIL:
+        if not _press(ctx, action):
+            return False
+        if action != "UI_Select":            # no wait written after D or space
+            ctx.sleeper(settle_s)
+    ctx.log("DockRequestTailUnbracketed",
+            {"note": "panel-open/pin prefix is BLOCKED-ON-KYLE (options a/b "
+                     "in the docstring) -- ran the literal 4-key tail as "
+                     "written, unbracketed"})
+    if not step_set_throttle(ctx, pct=0):
         return False
 
-    # Gate on the outcome. DockingGranted -> success; DockingDenied
-    # Distance -> retryable fail; other denial -> a failed step that the
-    # procedure's on_required_fail loop retries (3x) before aborting.
-    # status.docked is the state fallback (the ADC may have already docked
-    # by the time we poll â€” event-gates-need-state-check).
+    if ctx.event_waiter is None:
+        return True                        # no journal wiring -> tail is the step
+
+    # Gate on the outcome. DockingGranted -> success (re-zero throttle, 4.9
+    # REQUIRED); DockingDenied Distance -> retryable fail; other denial -> a
+    # failed step the procedure's on_required_fail loop retries before
+    # aborting. status.docked is the state fallback (the ADC may have already
+    # docked by the time we poll -- event-gates-need-state-check).
     start = ctx.clock()
     while ctx.clock() - start <= max_wait_s:
         if ctx.should_abort():
             ctx.log("DockRequestDone", {"reason": "abort"})
             return False
         if ctx.event_waiter("DockingGranted", poll_s):
+            step_set_throttle(ctx, pct=0)   # 4.9 REQUIRED re-zero (idempotent)
             ctx.log("DockRequestDone", {"reason": "granted"})
             return True
         st = ctx.status_supplier()
@@ -1084,16 +1129,118 @@ def _last_docking_denied_reason(ctx: StepContext) -> "str | None":
     return sup() if sup is not None else None
 
 
-def _run_request_macro(ctx: StepContext, settle_s: float) -> bool:
-    from ..executor.navpanel import request_docking
-    if not _ensure_cockpit_focus(ctx):
-        return False
+def step_dock_await_exit(ctx: StepContext, *, poll_s: float = 0.8,
+                         max_wait_s: float = 600.0) -> bool:
+    """MASTER-SPEC Docking step 4.2: wait for the SupercruiseExit drop at the
+    station after 4.1 (nav_supercruise_target) engaged SC-assist toward it.
+
+    nav_supercruise_target only ENGAGES the assist and confirms it did not
+    drop mid-macro; it does not wait for the actual arrival. This step is the
+    separate wait the spec calls for, gated on the SupercruiseExit journal
+    event with status.in_supercruise going False as the state fallback
+    (event-gates-need-state-check).
+
+    STATE FALLBACK ON ENTRY too: already dropped (not in supercruise) when
+    this step starts -- e.g. a bot restart mid-approach, or a drop that lands
+    between 4.1 returning and this step running -- is an instant pass, no
+    waiting on an event that already fired.
+
+    `max_wait_s` is a FAIL backstop only (SC-assist transit to a station is
+    queue-variable, potentially minutes); the decision input is the event/
+    flag, never the clock. Without event/status wiring (unit tests) the step
+    passes (nothing to wait on)."""
+    st = ctx.status_supplier()
+    if st is not None and not getattr(st, "in_supercruise", False):
+        ctx.log("DockAwaitExitDone", {"reason": "already_dropped"})
+        return True
+    if ctx.event_waiter is None or st is None:
+        return True                        # no journal/status wiring -> no-op
+    start = ctx.clock()
+    while ctx.clock() - start <= max_wait_s:
+        if ctx.should_abort():
+            ctx.log("DockAwaitExitDone", {"reason": "abort"})
+            return False
+        if ctx.event_waiter("SupercruiseExit", poll_s):
+            ctx.log("DockAwaitExitDone", {"reason": "exit_event"})
+            return True
+        st = ctx.status_supplier()
+        if st is not None and not getattr(st, "in_supercruise", True):
+            ctx.log("DockAwaitExitDone", {"reason": "dropped_to_normal"})
+            return True
+    ctx.log("DockAwaitExitDone", {"reason": "watchdog"})
+    return False
+
+
+def step_boost(ctx: StepContext) -> bool:
+    """MASTER-SPEC Docking step 4.4: a single best-effort UseBoostJuice tap.
+
+    ED emits no boost-ready Status flag, so a boost still on cooldown is an
+    unobservable, harmless no-op -- there is nothing to gate on. Fail-closed
+    ONLY on a missing bind (the one real failure mode this step can detect);
+    otherwise the tap is the step. NOT input_exclusive (a single flight-control
+    tap, like reset_power_distribution/pips_engines -- the heat watchdog stays
+    live).
+
+    BLOCKED-ON-KYLE: does the boost want a heat/cooldown guard (e.g. skip if
+    ctx.status_supplier() reports overheating), or is a blind best-effort tap
+    sufficient here? Not guessed -- implemented as the plain tap the spec
+    describes ("best-effort single UseBoostJuice tap"); no heat check added."""
+    return _press(ctx, "UseBoostJuice")
+
+
+def step_dock_close_to_range(
+    ctx: StepContext, *, threshold_km: float = 7.5,
+    poll_s: float = 1.0, max_polls: int = 120,
+) -> bool:
+    """MASTER-SPEC Docking step 4.7 -- READ-DISTANCE loop, REBUILT (replaces
+    the old journal-NoFireZone dock_approach entirely; the operator corrected
+    that the NFZ is a weapons-off zone, LARGER than 7.5km, and was NEVER a
+    valid docking-range signal).
+
+    Polls `ctx.dock_distance_km_supplier()` -- a plain float|None reading, NOT
+    a frame: the CV read (ed_vision.target_panel_distance.read_target_panel_km
+    off the RIGHT-SIDE cockpit target panel -- the only place the km distance
+    persists on the Contacts tab, where 4.5/4.8 already live) happens upstream
+    in the FlowRunner wiring, mirroring how docking_denied_supplier/
+    no_fire_zone_supplier hand steps a READING rather than a frame to parse.
+    `in_docking_range` (same module) is the single < threshold_km comparator.
+
+    STATE FALLBACK (event-gates-need-state-check): already inside range on
+    entry -> instant pass, no polling, no throttle touch -- 4.5 (set_throttle
+    50) already started the close; this step only ever WATCHES until the
+    state fires.
+
+    FAIL CLOSED: an unread (None) distance is NEVER "in range" -- the loop
+    just keeps polling. `max_polls` * `poll_s` is a bounded CEILING ONLY
+    (never the success signal, per house rule); on exhaustion the step aborts
+    (False) so on_required_fail's retry ladder (and, on exhaustion, abort-to-
+    human) takes over. RAM-GUARD: throttle is zeroed on EVERY exit (success or
+    fail) via `finally` so the ship never keeps flying blind at the station.
+
+    Without a supplier wired (unit tests / no dispatcher wiring) the default
+    `lambda: None` means every read is unread -> fails closed after the
+    bound, same as a live unread frame -- no silent pass without real vision."""
+    from ed_vision.target_panel_distance import in_docking_range
+
+    supplier = ctx.dock_distance_km_supplier
+    km = supplier()
+    if in_docking_range(km, threshold_km):
+        ctx.log("DockCloseToRangeDone", {"reason": "already_in_range", "km": km})
+        return True
     try:
-        request_docking(ctx.sender, sleeper=ctx.sleeper, settle_s=settle_s)
-    except KeyError:
-        ctx.log("BindMissing", {"step": "dock_request"})
+        for _ in range(max(1, max_polls)):
+            if ctx.should_abort():
+                ctx.log("DockCloseToRangeDone", {"reason": "abort"})
+                return False
+            ctx.sleeper(poll_s)
+            km = supplier()
+            if in_docking_range(km, threshold_km):
+                ctx.log("DockCloseToRangeDone", {"reason": "in_range", "km": km})
+                return True
+        ctx.log("DockCloseToRangeDone", {"reason": "watchdog", "last_km": km})
         return False
-    return True
+    finally:
+        step_set_throttle(ctx, pct=0)
 
 
 def step_dock_await_docked(ctx: StepContext, *, poll_s: float = 0.8,
@@ -1938,3 +2085,12 @@ register_step("wait_masslock_clear", step_wait_masslock_clear)
 register_step("confirm_menu_item", step_confirm_menu_item)
 register_step("station_services_macro", step_station_services_macro, input_exclusive=True)
 register_step("dock_blind_maneuver", step_dock_blind_maneuver, input_exclusive=True)
+# Council B (docking rebuild, MASTER-SPEC Docking 4.2/4.4/4.7): dock_await_exit
+# sends no keys (a pure wait) -> not input_exclusive; step_boost is a single
+# flight-control tap (mirrors reset_power_distribution/pips_engines) -> not
+# input_exclusive either, so the heat watchdog stays live; dock_close_to_range
+# sends no keys during its poll loop (only the ram-guard SetSpeedZero on exit,
+# via the shared _THROTTLE_ACTION path) -> also not input_exclusive.
+register_step("dock_await_exit", step_dock_await_exit)
+register_step("boost", step_boost)
+register_step("dock_close_to_range", step_dock_close_to_range)
