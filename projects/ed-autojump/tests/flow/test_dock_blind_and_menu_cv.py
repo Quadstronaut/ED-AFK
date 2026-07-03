@@ -322,18 +322,22 @@ def test_location_undocked_does_not_touch_docked_or_smack():
 
 # ===================== dock.toml shape =====================
 
-def test_dock_toml_blind_maneuver_then_orient_before_sc_assist():
+def test_dock_toml_rebuilt_shape_no_blind_maneuver_or_orient():
+    """Council B rebuild (MASTER-SPEC Docking §4, 2026-07-02) REPLACES the
+    dock_target_station -> dock_blind_maneuver -> orient_compass -> dock_sc_assist
+    ladder entirely with nav_supercruise_target (name-matched, CV-confirmed
+    SC-assist in one macro) -- there is no separate blind-maneuver/orient leg
+    any more, and station-services after Docked is out of scope for the
+    rebuild (a reconciliation BLOCKED-ON-KYLE), so neither service step runs."""
     from ed_core.flow.loader import load_procedures
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
     actions = [s.action for s in dock.steps]
-    assert actions.index("dock_target_station") \
-        < actions.index("dock_blind_maneuver") \
-        < actions.index("orient_compass") \
-        < actions.index("dock_sc_assist")
-    # Operator pit-stop macro replaced the council verify-each step.
-    assert "station_services_macro" in actions
-    assert "station_services" not in actions
-    required = {s.action for s in dock.steps if s.required}
-    assert {"dock_blind_maneuver", "orient_compass"} <= required
-    assert "station_services_macro" not in required       # best-effort
+    assert actions == [
+        "nav_supercruise_target", "dock_await_exit", "boost", "set_throttle",
+        "dock_close_to_range", "dock_request", "dock_await_docked",
+    ]
+    for gone in ("dock_target_station", "dock_blind_maneuver", "orient_compass",
+                 "dock_sc_assist", "dock_approach", "station_services_macro",
+                 "station_services"):
+        assert gone not in actions, f"{gone} must not be in the rebuilt dock.toml"

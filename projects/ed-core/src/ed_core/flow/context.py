@@ -220,6 +220,18 @@ class StepContext:
     # not wired / no journal yet -> the step uses the MEDIUM default, loudly.
     ship_supplier: Callable[[], Optional[str]] = lambda: None
 
+    # Council B (docking rebuild): the RIGHT-SIDE cockpit target-panel distance
+    # in km, or None if unread. step_dock_close_to_range polls this each cycle —
+    # a plain numeric poll, mirroring docking_denied_supplier/no_fire_zone_supplier
+    # (steps consume a READING; the CV frame-grab + OCR happens upstream, in the
+    # FlowRunner wiring, via ed_vision.target_panel_distance.read_target_panel_km).
+    # Default (unwired, every unit test) -> None -> every read is "unread" ->
+    # step_dock_close_to_range fails closed after its bounded poll ceiling, same
+    # as a live unread frame. NEVER the journal NoFireZone signal (operator
+    # correction: NFZ is a weapons-off zone, larger than 7.5km, never the
+    # docking-range gate) — see docs/superpowers/specs/C7-DOCKING-DISTANCE-FINDING.md.
+    dock_distance_km_supplier: Callable[[], Optional[float]] = lambda: None
+
     # cosmetic EDMCOverlay status writer (None -> no overlay). Duck-typed:
     # .step(proc, action, idx, total). Fail-soft; never blocks a step.
     overlay: Optional[Any] = None

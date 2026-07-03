@@ -1,50 +1,53 @@
-# ROUTE COMPLETE terminal (council-ratified 2026-06-07). Runs ONCE when the
-# bot arrives at the LAST waypoint of the plotted route — instead of arrival,
-# which would find no next hop, watchdog 60s, retry 3x, and mis-report a clean
-# success as "[ABORTED] manual intervention needed" (~5m40s of false alarm).
+# ROUTE COMPLETE terminal (council-ratified 2026-06-07; REBUILT by Council B,
+# 2026-07-02, against MASTER-SPEC Docking §3). Runs ONCE when the bot arrives
+# at the LAST waypoint of the plotted route AND the destination is the WHOLE
+# SYSTEM (D1: Body==0, or Name==current-system, or an unread Destination —
+# every one of those fails closed to THIS park, never a dock) — instead of
+# arrival, which would find no next hop, watchdog 60s, retry 3x, and
+# mis-report a clean success as "[ABORTED] manual intervention needed"
+# (~5m40s of false alarm).
 #
-# This is the FRONT HALF of arrival.toml — its steps 1-5 only: cut throttle,
-# best-effort scoop, lock the star, SC-assist orbit, settle. NO target_next_route
+# REBUILD (replaces the blind sc_assist_orbit macro + the commented-out
+# nav_panel_target divergence): set_throttle 0, best-effort scoop_refuel,
+# nav_supercruise_star (the CV-confirmed #8-button-label SC-assist action —
+# steps.py:1561) — ONE step does the verified lock AND the engage that used
+# to be split across nav_panel_target + sc_assist_orbit. NO target_next_route
 # (there IS no next hop), NO orient/engage_jump (we are not jumping again), NO
-# hold_alignment. It reaches the proven SC-assist-orbit end state and STOPS;
-# the live loop then idles (dispatch_route_complete returns, no further FSDJump).
+# hold_alignment. It reaches the parked end state and STOPS; the live loop
+# then idles (dispatch_route_complete returns, no further FSDJump).
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
 #   wait    passive block on journal event or clock — no input sent
-#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   vision  closed-loop CV read/confirm — may be EXCLUSIVE (see step tags)
 parallel_tracks = ["honk"]   # honk fires on this arrival like any other
 
 [on_required_fail]
-# Same anchor as arrival: a required fail re-establishes the LOCK and the POSE
-# (re-orbiting alone can't fix a wrong lock or an off-star nose). Bounded so a
-# terminal park never grinds forever.
-retry_from = "set_throttle"
+# Same anchor discipline as before: a required fail re-establishes the LOCK
+# and the ENGAGE together (nav_supercruise_star does both in one CV-confirmed
+# macro, so there is only one anchor now). Bounded so a terminal park never
+# grinds forever.
+retry_from = "nav_supercruise_star"
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
   { action = "set_throttle", pct = 0 },             # tap    | 1 in case hyperspace auto-dethrottle is off
   # Scoop pit stop — BEST-EFFORT, identical params to arrival step 2. Skip/fail
-  # never blocks the orbit below. (Topping the tank at the parked star is just
-  # as welcome at route end as mid-route.)
+  # never blocks the SC-assist below. (Topping the tank at the parked star is
+  # just as welcome at route end as mid-route.)
   { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.99, full_epsilon = 0.2 },  # gated  | 2 pit stop
-  # Identity-verified star lock (required) — a wrong lock must never reach the
-  # orbit; a required fail retries from here (lock + pose are one unit).
-  # NOT bounded/skipped like arrival's: a route-end park is a FRESH arrival, so
-  # the star is close in (top rows) and the default wide max_rows finds it. Here
-  # a not-found is a genuine problem to RETRY (we ARE close, the get-around
-  # matters), not a "far, skip it" signal — so this stays required with no
-  # skip_to and no tight bound (the lock-speed gate is arrival-only).
-  # { action = "nav_panel_target", required = true },  # macro  | 3 EXCLUSIVE — verified star lock
-  # Guarded SC-assist orbit (best-effort, fails closed on a bad scene). This is
-  # the parked end state.
-  { action = "sc_assist_orbit" },                    # macro  | 4 EXCLUSIVE — guarded SC-assist orbit
+  # CV-confirmed SC-assist toward the arrival star (row 0, blind-fire with a
+  # #8 button-label CONFIRM before pressing — replaces the old blind
+  # sc_assist_orbit macro AND the separate nav_panel_target lock; this ONE
+  # action locks + engages). Required: a wrong/unconfirmed target must never
+  # reach the parked end state; a required fail retries from here.
+  { action = "nav_supercruise_star", required = true },   # vision | 3 EXCLUSIVE — CV-confirmed SC-assist lock+engage
   # Non-required ORBITING DESTINATION HUD confirm (D4). Returns False when the
   # ed-vision hud_sc_indicators detector is not yet wired (D3 dependency not
   # landed). required=false: a False is non-blocking — route_complete_park stays
   # best-effort until fixtures are captured and the detector lands. When the
   # grabber IS wired, a True logs RouteCompleteOrbitConfirmed (observability).
-  { action = "confirm_orbiting" },                   # vision | 5 non-required — D4 orbit confirm (D3-dependent)
+  { action = "confirm_orbiting" },                   # vision | 4 non-required — D4 orbit confirm (D3-dependent)
 ]

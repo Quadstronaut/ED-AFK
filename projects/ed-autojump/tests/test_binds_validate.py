@@ -85,6 +85,7 @@ def _all_bound() -> dict[str, str]:
         "UI_Down": "Key_S",    # same key as PitchUpButton — different context, OK
         "CycleNextPanel": "Key_E",   # request_docking tab cycle (Navigation->Contacts)
         "DeployHeatSink": "Key_Minus",
+        "UseBoostJuice": "Key_B",    # step_boost (Council B docking rebuild)
     }
 
 
