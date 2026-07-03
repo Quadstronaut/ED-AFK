@@ -293,6 +293,66 @@ def test_clean_arrival_branches():
 
 
 # ===========================================================================
+# Group C2 — Exploration -> Traversal UNCONDITIONAL onward chain (C2-D5, the
+# GAP this council closes). run_arrival_then_branch chains traversal AFTER the
+# exploration proc completes (exploration itself never jumps).
+# ===========================================================================
+
+class _SmackOnExplorationRunner(_Runner):
+    """A runner whose EXPLORATION tour lands a smack: _run('exploration') sets
+    the smack/preempt flags. Proves the chained traversal hop is suppressed when
+    a smack lands mid-tour (yields to _route_sc_exit, never the exclusion zone)."""
+
+    def _run(self, name: str) -> None:
+        super()._run(name)
+        if name == "exploration":
+            self._smacked = True
+            self._preempt = "star_smack"
+
+
+def test_clean_arrival_exploration_on_chains_through_traversal():
+    # Onward hop + body_tour_enabled=True -> arrival, exploration, THEN traversal.
+    r = _Runner(
+        status=_status(dest_name="Next", dest_body=0, dest_system=99),
+        navroute=_route((SYS, SYS_ADDR), ("Next", 99)),
+        body_tour_enabled=True)
+    assert run_arrival_then_branch(r) == "arrival"
+    assert r.dispatched == ["arrival", "exploration", "traversal"]
+
+
+def test_clean_arrival_exploration_off_dispatches_arrival_traversal():
+    # Onward hop + body_tour_enabled=False -> arrival, traversal (NO exploration).
+    r = _Runner(
+        status=_status(dest_name="Next", dest_body=0, dest_system=99),
+        navroute=_route((SYS, SYS_ADDR), ("Next", 99)),
+        body_tour_enabled=False)
+    assert run_arrival_then_branch(r) == "arrival"
+    assert r.dispatched == ["arrival", "traversal"]
+
+
+def test_empty_route_dispatches_arrival_then_dock():
+    # Empty route -> terminal -> docking. Docking precedence unchanged; the
+    # exploration chain does NOT fire (dock is a terminal branch, not exploration).
+    r = _Runner(navroute=_empty_route())
+    assert run_arrival_then_branch(r) == "arrival"
+    assert r.dispatched == ["arrival", "dock"]
+
+
+def test_smack_mid_exploration_suppresses_the_traversal_chain():
+    # A smack landing DURING the exploration tour suppresses the onward traversal
+    # hop: only [arrival, exploration] dispatched, runner left flagged for
+    # _route_sc_exit. The bot can never branch into the exclusion zone from a tour.
+    r = _SmackOnExplorationRunner(
+        status=_status(dest_name="Next", dest_body=0, dest_system=99),
+        navroute=_route((SYS, SYS_ADDR), ("Next", 99)),
+        body_tour_enabled=True)
+    assert run_arrival_then_branch(r) == "arrival"
+    assert r.dispatched == ["arrival", "exploration"]
+    assert "traversal" not in r.dispatched
+    assert r._smacked is True
+
+
+# ===========================================================================
 # Group D — arrival branch table + precedence (INV-6)
 # ===========================================================================
 
