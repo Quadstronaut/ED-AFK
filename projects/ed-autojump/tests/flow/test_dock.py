@@ -486,21 +486,6 @@ def test_dock_await_exit_no_wiring_is_noop():
     assert STEP_REGISTRY["dock_await_exit"](ctx) is True
 
 
-# ============================ step_boost (Council B) ==========================
-
-def test_boost_presses_use_boost_juice():
-    sender = FakeSender()
-    ctx = StepContext(sender=sender, sleeper=lambda s: None)
-    assert STEP_REGISTRY["boost"](ctx) is True
-    assert sender.actions() == ["UseBoostJuice"]
-
-
-def test_boost_fails_closed_on_missing_bind():
-    sender = FakeSender(unbound={"UseBoostJuice"})
-    ctx = StepContext(sender=sender, sleeper=lambda s: None)
-    assert STEP_REGISTRY["boost"](ctx) is False
-
-
 # ============================ step_dock_close_to_range (Council B) ============
 
 def test_dock_close_to_range_loops_and_passes_at_threshold():
@@ -1087,8 +1072,9 @@ def test_dock_procedure_gates_are_required():
     required = {s.action for s in dock.steps if s.required}
     assert {"nav_supercruise_target", "dock_await_exit", "dock_close_to_range",
             "dock_request", "dock_await_docked"} <= required
-    # boost and set_throttle are best-effort taps, not required.
-    assert "boost" not in required
+    # Boost DROPPED entirely (operator 2026-07-04); set_throttle stays a
+    # best-effort tap.
+    assert "boost" not in actions
     # The old NFZ-gated approach macro is GONE — no ReceiveText/NoFireZone gate
     # anywhere in the rebuilt flow.
     assert "dock_approach" not in actions
