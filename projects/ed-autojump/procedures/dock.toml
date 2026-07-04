@@ -81,20 +81,19 @@ steps = [
   # 4.8/4.9 Request docking — the operator's EXACT LITERAL tail (implement as
   # written): E -> wait 0.5s -> E -> wait 0.5s -> D -> space -> throttle 0,
   # i.e. CycleNextPanel x2 (Navigation->Contacts) -> UI_Right (onto REQUEST
-  # DOCKING) -> UI_Select (press) -> SetSpeedZero. BLOCKED-ON-KYLE (flagged in
-  # step_dock_request's own docstring + the design ledger, not guessed here):
-  # this literal tail assumes the left panel is ALREADY OPEN/focused on the
-  # station row, which 4.1 closes on exit — the proven request_docking macro
-  # instead brackets an equivalent tail with FocusLeftPanel + a pin prefix.
-  # Gates DockingGranted (re-zero throttle, REQUIRED, idempotent) ->
-  # DockingDenied Distance (retryable fail, re-approach via retry_from) ->
-  # other denial (fail, retries exhaust to abort-to-human).
+  # DOCKING) -> UI_Select (press) -> SetSpeedZero. Panel ambiguity RESOLVED by
+  # operator 2026-07-03 (LIVE): the tail requests fine from the closed-panel
+  # state 4.1 leaves behind, and the ship STAYS on the nav panel afterwards —
+  # so on DockingGranted the step re-zeros throttle (REQUIRED, idempotent) and
+  # presses FocusLeftPanel ('1') to close the panel; autodock flies from there.
+  # DockingDenied Distance -> retryable fail (re-approach via retry_from);
+  # other denial -> fail, retries exhaust to abort-to-human. Denial/watchdog
+  # exits also close the panel so a retry re-enters the verified start state.
   { action = "dock_request", required = true },                # macro  | 6 EXCLUSIVE — literal request tail + grant/denial gate
   # Wait for the Advanced Docking Computer to land on the pad. Gate on the
   # Docked event / status.docked (state fallback: already docked on entry).
   { action = "dock_await_docked", required = true },           # wait   | 7 ADC -> pad -> Docked
-  # 9. done — autodock takes over. Station-services after Docked (refuel/
-  # repair/rearm) is OUT OF SCOPE for this rebuild (task item 3 ends at "gate
-  # on Docked"); whether to retain the old station_services_macro under the
-  # new flow is a reconciliation BLOCKED-ON-KYLE — no service step is run here.
+  # 9. Station services after Docked — RETAINED (operator 2026-07-03: "retain").
+  # Best-effort (not required): a service-menu miss never fails the dock.
+  { action = "station_services_macro" },                       # macro  | 8 EXCLUSIVE — refuel/repair/rearm/reset
 ]

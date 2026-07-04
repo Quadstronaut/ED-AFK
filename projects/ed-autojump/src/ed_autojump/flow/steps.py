@@ -1032,33 +1032,31 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.5,
     D = UI_Right (onto REQUEST DOCKING); space = UI_Select (press it); then
     the throttle is zeroed (autodock will not engage above 0 throttle).
 
-    BLOCKED-ON-KYLE (flagged, NOT guessed -- the single most load-bearing
-    ambiguity in this rebuild): this 4-key tail assumes the LEFT PANEL is
-    ALREADY OPEN and focused on the station row. But 4.1 (nav_supercruise_target)
-    OPENS the panel to walk/confirm the SC-assist button and then CLOSES it
-    again before returning -- so at the moment this step fires the panel is,
-    on the evidence in this codebase, almost certainly CLOSED, and
-    CycleNextPanel cycling tabs on a closed left panel is unverified game
-    behaviour. The proven ed_core.executor.navpanel.request_docking macro
-    instead BRACKETS an equivalent tail with FocusLeftPanel + a pin prefix
-    (open -> pin to top -> E,E -> UI_Select -> UI_Right -> UI_Select -> close).
-    Two live-test-gated resolutions, NEITHER guessed here:
-      (a) bracket this tail with FocusLeftPanel + pin (mirror request_docking)
-      (b) the operator intends the sequence to run from an already-open/
-          focused panel (a scene precondition this council did not invent)
-    This step fires ONLY the literal 4-key sequence exactly as written, so its
-    behaviour stays provably traceable to the spec text; the bracket question
-    is logged (DockRequestTailUnbracketed) for the operator/ledger to resolve,
-    never guessed. Every key in the tail is already a REQUIRED_ACTION
-    (CycleNextPanel/UI_Right/UI_Select) -- binds_validate covers it.
+    PANEL AMBIGUITY RESOLVED BY OPERATOR (2026-07-03, LIVE class — supersedes
+    the council's BLOCKED-ON-KYLE flag): from the flow's normal state here
+    (panel closed after 4.1), "e>e>d>space will definitely request it but you
+    will stay on the nav panel. once the docking request is confirmed accepted,
+    throttle 0 and '1' to stop looking at navpanel and the ship will dock
+    itself." So: NO FocusLeftPanel/pin prefix is bracketed on; the tail runs
+    literally as written, and the panel is instead CLOSED (FocusLeftPanel =
+    Key_1, the toggle) AFTER the grant, right behind the required throttle
+    re-zero. Every key involved is already a REQUIRED_ACTION -- binds_validate
+    covers it.
 
     OUTCOME GATE (4.9): DockingGranted -> True (throttle re-zeroed -- REQUIRED,
     idempotent with the tail's own zero, since autodock will not engage above
-    0 throttle); DockingDenied Reason=Distance -> False (the approach did not
+    0 throttle -- then FocusLeftPanel to close the panel, per the operator line
+    above); DockingDenied Reason=Distance -> False (the approach did not
     close far enough -- retried via on_required_fail retry_from, back to
     dock_close_to_range); DockingDenied any OTHER reason -> False (bot cannot
     resolve NoSpace/TooLarge/Hostile/Offences; retries exhaust on_required_fail
-    and then abort to human). status.docked is the state fallback (event-gates-
+    and then abort to human). On BOTH denial exits (and the watchdog) the panel
+    is also closed: the tail leaves the ship staring at the nav panel (operator,
+    above), and a retry re-enters THIS step assuming the operator-verified
+    closed-panel start state -- an unclosed panel would make the retry's E,E
+    cycle from whatever tab the last attempt left focused, which is exactly the
+    unverified state the operator's resolution removed. abort/already-docked
+    exits send NO input. status.docked is the state fallback (event-gates-
     need-state-check: the ADC may already have docked by the first poll).
 
     `max_wait_s` is a FAIL backstop only. Without event wiring (unit tests)
@@ -1077,10 +1075,6 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.5,
             return False
         if action != "UI_Select":            # no wait written after D or space
             ctx.sleeper(settle_s)
-    ctx.log("DockRequestTailUnbracketed",
-            {"note": "panel-open/pin prefix is BLOCKED-ON-KYLE (options a/b "
-                     "in the docstring) -- ran the literal 4-key tail as "
-                     "written, unbracketed"})
     if not step_set_throttle(ctx, pct=0):
         return False
 
@@ -1099,6 +1093,8 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.5,
             return False
         if ctx.event_waiter("DockingGranted", poll_s):
             step_set_throttle(ctx, pct=0)   # 4.9 REQUIRED re-zero (idempotent)
+            _press(ctx, "FocusLeftPanel")   # operator: "'1' to stop looking at
+            #                                 navpanel and the ship will dock itself"
             ctx.log("DockRequestDone", {"reason": "granted"})
             return True
         st = ctx.status_supplier()
@@ -1111,11 +1107,15 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.5,
         # abort. The dispatcher records the reason; here we read it off ctx.
         reason = _last_docking_denied_reason(ctx)
         if reason is not None:
+            _press(ctx, "FocusLeftPanel")   # close the panel the tail left open
+            #                                 so a retry re-enters the operator-
+            #                                 verified closed-panel start state
             if reason == "Distance":
                 ctx.log("DockRequestDone", {"reason": "denied_distance"})
             else:
                 ctx.log("DockRequestAbort", {"reason": f"denied_{reason}"})
             return False
+    _press(ctx, "FocusLeftPanel")           # watchdog: same closed-panel reset
     ctx.log("DockRequestDone", {"reason": "watchdog"})
     return False
 
