@@ -1171,23 +1171,6 @@ def step_dock_await_exit(ctx: StepContext, *, poll_s: float = 0.8,
     return False
 
 
-def step_boost(ctx: StepContext) -> bool:
-    """MASTER-SPEC Docking step 4.4: a single best-effort UseBoostJuice tap.
-
-    ED emits no boost-ready Status flag, so a boost still on cooldown is an
-    unobservable, harmless no-op -- there is nothing to gate on. Fail-closed
-    ONLY on a missing bind (the one real failure mode this step can detect);
-    otherwise the tap is the step. NOT input_exclusive (a single flight-control
-    tap, like reset_power_distribution/pips_engines -- the heat watchdog stays
-    live).
-
-    BLOCKED-ON-KYLE: does the boost want a heat/cooldown guard (e.g. skip if
-    ctx.status_supplier() reports overheating), or is a blind best-effort tap
-    sufficient here? Not guessed -- implemented as the plain tap the spec
-    describes ("best-effort single UseBoostJuice tap"); no heat check added."""
-    return _press(ctx, "UseBoostJuice")
-
-
 def step_dock_close_to_range(
     ctx: StepContext, *, threshold_km: float = 7.5,
     poll_s: float = 1.0, max_polls: int = 120,
@@ -2085,12 +2068,10 @@ register_step("wait_masslock_clear", step_wait_masslock_clear)
 register_step("confirm_menu_item", step_confirm_menu_item)
 register_step("station_services_macro", step_station_services_macro, input_exclusive=True)
 register_step("dock_blind_maneuver", step_dock_blind_maneuver, input_exclusive=True)
-# Council B (docking rebuild, MASTER-SPEC Docking 4.2/4.4/4.7): dock_await_exit
-# sends no keys (a pure wait) -> not input_exclusive; step_boost is a single
-# flight-control tap (mirrors reset_power_distribution/pips_engines) -> not
-# input_exclusive either, so the heat watchdog stays live; dock_close_to_range
+# Council B (docking rebuild, MASTER-SPEC Docking 4.2/4.7): dock_await_exit
+# sends no keys (a pure wait) -> not input_exclusive; dock_close_to_range
 # sends no keys during its poll loop (only the ram-guard SetSpeedZero on exit,
-# via the shared _THROTTLE_ACTION path) -> also not input_exclusive.
+# via the shared _THROTTLE_ACTION path) -> also not input_exclusive. Boost was
+# DROPPED (operator 2026-07-04) -- no step, no bind, no dock.toml slot.
 register_step("dock_await_exit", step_dock_await_exit)
-register_step("boost", step_boost)
 register_step("dock_close_to_range", step_dock_close_to_range)

@@ -32,7 +32,7 @@ parallel_tracks = ["honk"]   # honk fires on the arrival jump like any other
 #     is already nearby.
 #   - dock_close_to_range watchdog (the target-panel distance never resolved
 #     inside the bound): re-approach from current position.
-# nav_supercruise_target / dock_await_exit / boost / set_throttle are NOT in
+# nav_supercruise_target / dock_await_exit / set_throttle are NOT in
 # the retry loop — they only run on the FIRST attempt (the interpreter starts
 # at step 1 only then; retries start at retry_from). A station that keeps
 # denying exhausts max_retries and aborts to human.
@@ -54,10 +54,10 @@ steps = [
   # 4.3 Station name is RESOLVED (not blocked): Status.Destination.Name via
   # ctx.dock_target_name_supplier, already CONSUMED by 4.1's name-match (D1
   # confirms the flip-to-station at route-complete). No separate step.
-  # 4.4 Best-effort boost — a single UseBoostJuice tap. Fails closed ONLY on a
-  # missing bind; a boost on cooldown is a harmless, unobservable no-op (ED
-  # emits no boost-ready flag). NOT required — best-effort per spec.
-  { action = "boost" },                                       # tap    | 3 best-effort UseBoostJuice
+  # 4.4 Boost DROPPED (operator 2026-07-04: "just drop the boosting for now" —
+  # boosts aren't important; no log signal exists to guard one anyway, see
+  # ed-docking-mechanics / the 2026-07-04 journal sweep). Throttle 50 alone
+  # closes the gap.
   # 4.5 Throttle 50% toward the station (SC-assist dropped the ship pointed
   # at it). This is the closing thrust for 4.7's read-distance loop below —
   # NOT required (a bare throttle tap).

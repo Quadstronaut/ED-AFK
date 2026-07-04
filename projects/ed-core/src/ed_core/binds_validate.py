@@ -69,11 +69,6 @@ REQUIRED_ACTIONS: frozenset[str] = frozenset({
     "UI_Up", "UI_Down", "CycleNextPanel",
     # flow/dispatcher.py: heat_guard
     "DeployHeatSink",
-    # ed_autojump/flow/steps.py: step_boost (Council B docking rebuild,
-    # MASTER-SPEC Docking step 4.4). Verified bound live (Key_B) -- contract-
-    # only edit; ed_core ownership of this one-line addition is a coordination
-    # item with whichever council owns binds_validate.py's broader contract.
-    "UseBoostJuice",
 })
 
 
