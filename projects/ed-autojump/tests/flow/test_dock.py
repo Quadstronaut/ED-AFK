@@ -414,15 +414,34 @@ def test_dock_request_tail_fires_exact_literal_sequence():
                                  "UI_Right", "UI_Select", "SetSpeedZero"]
 
 
-def test_dock_request_tail_logs_bracket_as_blocked_on_kyle():
-    """The panel-open/pin-prefix ambiguity is LOGGED, never guessed."""
+def test_dock_request_grant_closes_panel_after_throttle_zero():
+    """OPERATOR RESOLUTION (2026-07-03): after DockingGranted the step re-zeros
+    throttle then presses FocusLeftPanel ('1') to stop looking at the nav panel
+    so autodock can fly. Order matters: zero BEFORE close."""
     sender = FakeSender()
-    logs = []
-    ctx = StepContext(sender=sender, sleeper=lambda s: None,
-                      status_supplier=lambda: _status(),
-                      record=lambda n, p: logs.append((n, p)))
-    STEP_REGISTRY["dock_request"](ctx)
-    assert any(n == "DockRequestTailUnbracketed" for n, _ in logs)
+    st = _status(in_supercruise=False, dest_name="Jameson Memorial", dest_body=4)
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      status_supplier=lambda: st,
+                      event_waiter=_waiter_for("DockingGranted"))
+    assert STEP_REGISTRY["dock_request"](ctx) is True
+    acts = sender.actions()
+    assert "FocusLeftPanel" in acts
+    assert acts.index("FocusLeftPanel") > acts.index("SetSpeedZero")
+    assert acts[-1] == "FocusLeftPanel"      # close is the final input
+
+
+def test_dock_request_denied_closes_panel_for_retry():
+    """A denial exit closes the panel the tail left open, so the retry
+    re-enters the operator-verified closed-panel start state."""
+    sender = FakeSender()
+    st = _status(in_supercruise=False, dest_name="Jameson Memorial", dest_body=4)
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+        status_supplier=lambda: st,
+        event_waiter=_waiter_for("ReceiveText"),
+        docking_denied_supplier=lambda: "Distance")
+    assert STEP_REGISTRY["dock_request"](ctx) is False
+    assert sender.actions()[-1] == "FocusLeftPanel"
 
 
 # ============================ step_dock_await_exit (Council B) ===============
@@ -1071,10 +1090,11 @@ def test_dock_procedure_gates_are_required():
     # boost and set_throttle are best-effort taps, not required.
     assert "boost" not in required
     # The old NFZ-gated approach macro is GONE — no ReceiveText/NoFireZone gate
-    # anywhere in the rebuilt flow, and station_services is out of scope here.
+    # anywhere in the rebuilt flow.
     assert "dock_approach" not in actions
-    assert "station_services" not in actions
-    assert "station_services_macro" not in actions
+    # Station services after Docked RETAINED (operator 2026-07-03), best-effort.
+    assert "station_services_macro" in actions
+    assert "station_services_macro" not in required
 
 
 def test_dock_procedure_retry_from_is_dock_close_to_range():
