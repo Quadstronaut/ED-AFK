@@ -327,17 +327,17 @@ def test_dock_toml_rebuilt_shape_no_blind_maneuver_or_orient():
     dock_target_station -> dock_blind_maneuver -> orient_compass -> dock_sc_assist
     ladder entirely with nav_supercruise_target (name-matched, CV-confirmed
     SC-assist in one macro) -- there is no separate blind-maneuver/orient leg
-    any more, and station-services after Docked is out of scope for the
-    rebuild (a reconciliation BLOCKED-ON-KYLE), so neither service step runs."""
+    any more. Operator decisions 2026-07-03/04: station_services_macro after
+    Docked RETAINED; boost DROPPED entirely."""
     from ed_core.flow.loader import load_procedures
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
     actions = [s.action for s in dock.steps]
     assert actions == [
-        "nav_supercruise_target", "dock_await_exit", "boost", "set_throttle",
+        "nav_supercruise_target", "dock_await_exit", "set_throttle",
         "dock_close_to_range", "dock_request", "dock_await_docked",
+        "station_services_macro",
     ]
     for gone in ("dock_target_station", "dock_blind_maneuver", "orient_compass",
-                 "dock_sc_assist", "dock_approach", "station_services_macro",
-                 "station_services"):
+                 "dock_sc_assist", "dock_approach", "boost"):
         assert gone not in actions, f"{gone} must not be in the rebuilt dock.toml"
