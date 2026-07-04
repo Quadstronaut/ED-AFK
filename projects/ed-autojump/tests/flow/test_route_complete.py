@@ -377,6 +377,45 @@ def test_dest_locked_in_different_system_runs_system_park():
     assert "SetSpeedZero" in sender.actions()
 
 
+def test_dest_name_equals_system_body_nonzero_runs_system_park():
+    """D1 (Council B docking rebuild): the arrival STAR can carry a nonzero
+    Body index too (Body!=0 is NOT sufficient on its own) -- Name==current-
+    system with Body!=0 is still the local star -> system park, never dock.
+    Closes an explicit D1 acceptance case: 'a Name==system (arrival star) ...
+    routes to route_complete_park'."""
+    sender = FakeSender()
+    records = []
+    st = _status(dest_name="Destination Sys", dest_body=1, dest_system=12345)
+    r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
+    r._current_system = "Destination Sys"
+    _arm_final_waypoint(r, 12345, "Destination Sys")
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
+                   system_address=12345, timestamp=_ts(10)))
+    assert any(n == "RouteComplete" and p["type"] == "system" for n, p in records)
+    assert not any(n == "RouteCompleteStation" for n, _ in records)
+    assert "SetSpeedZero" in sender.actions()
+    assert "SetSpeed50" not in sender.actions()
+
+
+def test_unread_destination_runs_system_park():
+    """D1: an unread/ambiguous Destination (status present but no destination
+    locked at all) fails closed to park, never dock. Closes the explicit D1
+    acceptance case: 'an unread Destination ... routes to route_complete_park'."""
+    sender = FakeSender()
+    records = []
+    st = _status(dest_name=None, dest_body=0, dest_system=0)   # no lock at all
+    r = _runner(sender, status=st, record=lambda n, p: records.append((n, p)))
+    r._current_system = "Destination Sys"
+    _arm_final_waypoint(r, 12345, "Destination Sys")
+    r._on_tail_event(_ev("NavRouteClear", timestamp=_ts(0)))
+    _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
+                   system_address=12345, timestamp=_ts(10)))
+    assert any(n == "RouteComplete" and p["type"] == "system" for n, p in records)
+    assert "SetSpeedZero" in sender.actions()
+    assert "SetSpeed50" not in sender.actions()
+
+
 def test_address_mismatch_same_system_name_runs_arrival():
     """SystemAddress is the int identity; star_system name matching is NOT
     enough. A jump whose NAME equals the cached final waypoint's but whose

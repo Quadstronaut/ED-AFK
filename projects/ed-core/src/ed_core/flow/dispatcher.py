@@ -133,6 +133,9 @@ class FlowRunner:
         # (each consumer crops its own region). None -> blind/unreadable fallback.
         navpanel_detail_grabber: Optional[Callable[[], Any]] = None,
         navpanel_frame_grabber: Optional[Callable[[], Any]] = None,
+        # Council B docking: right-side target-panel km read (float|None per
+        # call). None -> steps see the fail-closed lambda: None default.
+        dock_distance_km_supplier: Optional[Callable[[], Optional[float]]] = None,
         visited_logger: Optional[Any] = None,
         scoop_rate_fn: Optional[Callable[[str], Optional[float]]] = None,
         dest_is_named_station_fn: Optional[Callable[[Any], bool]] = None,
@@ -173,6 +176,7 @@ class FlowRunner:
         # CV-action family full-frame grabbers (#3/#4/#5/#6) — see StepContext.
         self.navpanel_detail_grabber = navpanel_detail_grabber
         self.navpanel_frame_grabber = navpanel_frame_grabber
+        self.dock_distance_km_supplier = dock_distance_km_supplier
         # Append-only log of systems visited on live FSDJump arrivals. Pure
         # observability: never touches a condition/action and is fail-soft on
         # write, so it can't disturb the flight loop. None == disabled.
@@ -518,6 +522,9 @@ class FlowRunner:
             # (detail) + the nav-list read (frame). One full-frame grab, both.
             navpanel_detail_grabber=self.navpanel_detail_grabber,
             navpanel_frame_grabber=self.navpanel_frame_grabber,
+            # <7.5km docking gate read; unwired -> fail-closed default.
+            dock_distance_km_supplier=(self.dock_distance_km_supplier
+                                       or (lambda: None)),
             # Current ship model (journal LoadGame/Loadout latch) â€” feeds the
             # dock blind-maneuver's ship-size pitch duration.
             ship_supplier=lambda: self._current_ship,

@@ -422,6 +422,9 @@ def cmd_run(args) -> int:
     # label confirm AND nav_supercruise_unexplored's nav-list read. Outer scope so
     # the FlowRunner call (below the engage-keys block) always sees a defined name.
     navpanel_cv_grabber = None
+    # Council B docking <7.5km gate: right-side target-panel km supplier. None ->
+    # dock_close_to_range fails closed (an unread distance is never "in range").
+    dock_distance_km_supplier = None
     if args.engage_keys:
         from ed_vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
@@ -464,6 +467,18 @@ def cmd_run(args) -> int:
             navpanel_cv_grabber = _navpanel_icon_full_frame
             print("vision: CV-action family ON "
                   "(detail-page #8 label confirm + unexplored finder)")
+        # Council B docking: the SAME bare full-frame grab feeds the right-side
+        # target-panel km read (the reader crops the Mandalay region itself,
+        # fail-closed per-ship). GATED on WinRT like every other OCR consumer;
+        # unwired -> dock_close_to_range fails closed, no silent "in range".
+        if _navpanel_icon_full_frame is not None and _ocr.available():
+            from ed_vision.target_panel_distance import read_target_panel_km
+            _tp_grab = _navpanel_icon_full_frame
+
+            def dock_distance_km_supplier(_grab=_tp_grab):
+                return read_target_panel_km(_grab())
+            print("vision: docking distance gate ON "
+                  "(right-side target panel, <7.5km)")
         if nav_panel_reader is not None:
             print(f"exploration: nav-panel identity targeting ON "
                   f"(region={tuple(cfg.exploration.nav_panel_region)}) "
@@ -633,6 +648,7 @@ def cmd_run(args) -> int:
         navpanel_icon_grabber=navpanel_icon_grabber,
         navpanel_detail_grabber=navpanel_cv_grabber,
         navpanel_frame_grabber=navpanel_cv_grabber,
+        dock_distance_km_supplier=dock_distance_km_supplier,
         visited_logger=visited_logger,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),

@@ -193,31 +193,31 @@ def test_arrival_has_no_jump_age_guard_step():
     assert "orbit_if_fresh_arrival" not in STEP_REGISTRY
 
 
-# ---- route_complete_park: still locks + orbits the primary star --------------
+# ---- route_complete_park: REBUILT by Council B (2026-07-02) -----------------
+# route_complete_park no longer uses nav_panel_target's bounded-scan lock at
+# all (that lock-speed / max_rows mechanism stays arrival-only) — it now locks
+# AND engages in one CV-confirmed macro, nav_supercruise_star (MASTER-SPEC
+# Docking §3). This resolves the pre-existing RED divergence this section used
+# to carry (it asserted a nav_panel_target + sc_assist_orbit shape the TOML no
+# longer has). Full coverage of the rebuilt contract lives in
+# test_route_complete_park.py; these two are kept here only to assert the OLD
+# bounded-scan action is genuinely gone from the park, not quietly renamed.
 
-def test_route_complete_park_locks_and_orbits_close_star():
-    """A fresh route-end arrival is CLOSE (star at row 0). route_complete_park
-    keeps the wide/required nav_panel_target -> the real bounded scan finds the
-    star -> sc_assist_orbit runs. No regression from the arrival-only bound."""
+def test_route_complete_park_no_longer_uses_bounded_scan_lock():
+    """The lock-speed bounded scan (nav_panel_target / sc_assist_orbit) is
+    arrival-only now; route_complete_park uses nav_supercruise_star instead —
+    see test_route_complete_park.py for the full rebuilt-shape contract."""
     proc = load_procedures(PROC_DIR)["route_complete_park"]
-    fired, logs = [], []
-    ctx = _arrival_ctx(lambda: _status("Acihaut"), logs)
-    real = STEP_REGISTRY["nav_panel_target"]
-    result = run_procedure(
-        proc, ctx, registry=_fake_registry_running(real, fired, None))
-    assert result.completed is True and result.aborted is False
-    assert "nav_panel_target" in fired
-    assert "sc_assist_orbit" in fired
-    # park has no jump half / no skip
-    assert "target_next_route" not in fired
-    assert "StepSkipped" not in dict(logs)
+    actions = {s.action for s in proc.steps}
+    assert "nav_panel_target" not in actions
+    assert "sc_assist_orbit" not in actions
+    assert "nav_supercruise_star" in actions
 
 
-def test_route_complete_park_nav_target_is_required_no_skip():
-    """The park's lock stays required with NO skip_to / NO tight bound — at a
-    close route-end a not-found is a real problem to RETRY, not a far-skip."""
+def test_route_complete_park_engage_is_required_no_skip():
+    """The park's engage stays required with NO skip_to — a close route-end
+    not-found is a real problem to RETRY, not a far-skip."""
     proc = load_procedures(PROC_DIR)["route_complete_park"]
-    nav = next(s for s in proc.steps if s.action == "nav_panel_target")
+    nav = next(s for s in proc.steps if s.action == "nav_supercruise_star")
     assert nav.required is True
     assert nav.skip_to is None
-    assert "max_rows" not in nav.params        # default (wide) bound

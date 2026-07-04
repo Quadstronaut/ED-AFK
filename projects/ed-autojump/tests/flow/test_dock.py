@@ -398,6 +398,145 @@ def test_dock_request_no_event_wiring_runs_macro():
     assert "CycleNextPanel" in sender.actions()
 
 
+# ============================ step_dock_request: literal tail (Council B) ====
+
+def test_dock_request_tail_fires_exact_literal_sequence():
+    """AC: the request-docking tail fires EXACTLY CycleNextPanel,
+    CycleNextPanel, UI_Right, UI_Select (E,E,D,space) followed by SetSpeedZero
+    (set_throttle 0) -- the operator's literal MASTER-SPEC 4.8 sequence, no
+    FocusLeftPanel/pin bracket invented. No event wiring -> the tail is the
+    step (no grant-wait tail appended)."""
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, sleeper=lambda s: None,
+                      status_supplier=lambda: _status())
+    assert STEP_REGISTRY["dock_request"](ctx) is True
+    assert sender.actions() == ["CycleNextPanel", "CycleNextPanel",
+                                 "UI_Right", "UI_Select", "SetSpeedZero"]
+
+
+def test_dock_request_grant_closes_panel_after_throttle_zero():
+    """OPERATOR RESOLUTION (2026-07-03): after DockingGranted the step re-zeros
+    throttle then presses FocusLeftPanel ('1') to stop looking at the nav panel
+    so autodock can fly. Order matters: zero BEFORE close."""
+    sender = FakeSender()
+    st = _status(in_supercruise=False, dest_name="Jameson Memorial", dest_body=4)
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      status_supplier=lambda: st,
+                      event_waiter=_waiter_for("DockingGranted"))
+    assert STEP_REGISTRY["dock_request"](ctx) is True
+    acts = sender.actions()
+    assert "FocusLeftPanel" in acts
+    assert acts.index("FocusLeftPanel") > acts.index("SetSpeedZero")
+    assert acts[-1] == "FocusLeftPanel"      # close is the final input
+
+
+def test_dock_request_denied_closes_panel_for_retry():
+    """A denial exit closes the panel the tail left open, so the retry
+    re-enters the operator-verified closed-panel start state."""
+    sender = FakeSender()
+    st = _status(in_supercruise=False, dest_name="Jameson Memorial", dest_body=4)
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+        status_supplier=lambda: st,
+        event_waiter=_waiter_for("ReceiveText"),
+        docking_denied_supplier=lambda: "Distance")
+    assert STEP_REGISTRY["dock_request"](ctx) is False
+    assert sender.actions()[-1] == "FocusLeftPanel"
+
+
+# ============================ step_dock_await_exit (Council B) ===============
+
+def test_dock_await_exit_gates_on_supercruise_exit_event():
+    sender = FakeSender()
+    st = _status(in_supercruise=True)
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      status_supplier=lambda: st,
+                      event_waiter=_waiter_for("SupercruiseExit"))
+    assert STEP_REGISTRY["dock_await_exit"](ctx) is True
+
+
+def test_dock_await_exit_already_dropped_on_entry_no_wait():
+    """State fallback: not in supercruise on entry -> instant pass, no event
+    polling at all (event_waiter would raise if called)."""
+    sender = FakeSender()
+
+    def _boom(name, t):
+        raise AssertionError("must not poll an event when already dropped")
+
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      status_supplier=lambda: _status(in_supercruise=False),
+                      event_waiter=_boom)
+    assert STEP_REGISTRY["dock_await_exit"](ctx) is True
+
+
+def test_dock_await_exit_flag_fallback_during_wait():
+    sender = FakeSender()
+    states = [_status(in_supercruise=True)] * 1 + [_status(in_supercruise=False)] * 5
+
+    def supplier():
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      status_supplier=supplier, event_waiter=lambda n, t: False)
+    assert STEP_REGISTRY["dock_await_exit"](ctx) is True
+
+
+def test_dock_await_exit_no_wiring_is_noop():
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None)
+    assert STEP_REGISTRY["dock_await_exit"](ctx) is True
+
+
+# ============================ step_dock_close_to_range (Council B) ============
+
+def test_dock_close_to_range_loops_and_passes_at_threshold():
+    """A scripted distance sequence [9.66, 8.0, 7.4] loops and passes at 7.4."""
+    sender = FakeSender()
+    seq = iter([9.66, 8.0, 7.4])
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      dock_distance_km_supplier=lambda: next(seq))
+    assert STEP_REGISTRY["dock_close_to_range"](ctx) is True
+    # ram-guard: throttle zeroed on the successful exit too.
+    assert sender.actions()[-1] == "SetSpeedZero"
+
+
+def test_dock_close_to_range_already_in_range_on_entry_no_wait():
+    """Already-in-range on entry -> instant pass, no polling/sleeping."""
+    sender = FakeSender()
+    sleeps = []
+    ctx = StepContext(sender=sender, sleeper=lambda s: sleeps.append(s),
+                      clock=lambda: 0.0,
+                      dock_distance_km_supplier=lambda: 7.0)
+    assert STEP_REGISTRY["dock_close_to_range"](ctx) is True
+    assert sleeps == []   # no loop iteration ran
+
+
+def test_dock_close_to_range_all_unread_fails_closed_bounded():
+    """All-unread (None) distance -> fails closed after the bounded poll
+    ceiling, throttle set to 0 on the abort exit."""
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      dock_distance_km_supplier=lambda: None)
+    assert STEP_REGISTRY["dock_close_to_range"](ctx, max_polls=3) is False
+    assert sender.actions() == ["SetSpeedZero"]
+
+
+def test_dock_close_to_range_default_unwired_supplier_fails_closed():
+    """No supplier wired (default lambda: None) -> same fail-closed behavior
+    as a live unread frame — never a silent pass."""
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0)
+    assert STEP_REGISTRY["dock_close_to_range"](ctx, max_polls=2) is False
+
+
+def test_dock_close_to_range_abort_mid_loop_zeros_throttle():
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+                      dock_distance_km_supplier=lambda: 9.0,
+                      should_abort=lambda: True)
+    assert STEP_REGISTRY["dock_close_to_range"](ctx) is False
+    assert sender.actions() == ["SetSpeedZero"]
+
+
 # ============================ step_dock_await_docked ============================
 
 def test_dock_await_gates_on_docked_event():
@@ -920,26 +1059,58 @@ def test_dock_procedure_loads_and_validates():
 
 
 def test_dock_procedure_gates_are_required():
+    """REBUILT (Council B, MASTER-SPEC Docking §4): the station-approach macro
+    family (dock_target_station/dock_sc_assist/dock_approach) is REPLACED by
+    nav_supercruise_target + dock_await_exit + dock_close_to_range; the old
+    functions/registrations remain (other callers may still use them) but the
+    rebuilt dock.toml no longer references them."""
     from pathlib import Path
     from ed_core.flow.loader import load_procedures
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
+    actions = {s.action for s in dock.steps}
     required = {s.action for s in dock.steps if s.required}
-    assert {"dock_target_station", "dock_sc_assist", "dock_approach",
+    assert {"nav_supercruise_target", "dock_await_exit", "dock_close_to_range",
             "dock_request", "dock_await_docked"} <= required
-    # station_services is best-effort (a no-op service is not a failure).
-    assert "station_services" not in required
+    # Boost DROPPED entirely (operator 2026-07-04); set_throttle stays a
+    # best-effort tap.
+    assert "boost" not in actions
+    # The old NFZ-gated approach macro is GONE — no ReceiveText/NoFireZone gate
+    # anywhere in the rebuilt flow.
+    assert "dock_approach" not in actions
+    # Station services after Docked RETAINED (operator 2026-07-03), best-effort.
+    assert "station_services_macro" in actions
+    assert "station_services_macro" not in required
 
 
-def test_dock_procedure_retry_from_is_dock_approach():
-    """on_required_fail.retry_from must be 'dock_approach', not
-    'dock_target_station': a Distance denial should re-close from the current
-    position, NOT re-fly SC-assist from the system star."""
+def test_dock_procedure_retry_from_is_dock_close_to_range():
+    """on_required_fail.retry_from must be 'dock_close_to_range' (the new
+    read-distance loop, replacing 'dock_approach'): a Distance denial should
+    re-close from the current position, NOT re-fly SC-assist from the system
+    star."""
     from pathlib import Path
     from ed_core.flow.loader import load_procedures
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
-    assert dock.on_required_fail.retry_from == "dock_approach"
+    assert dock.on_required_fail.retry_from == "dock_close_to_range"
+
+
+def test_dock_procedure_has_no_nfz_gate():
+    """The rebuild's entire point: no journal ReceiveText / NoFireZone gate
+    anywhere in dock.toml (the operator's repeated correction — NFZ is a
+    weapons-off zone, larger than 7.5km, never the docking-range signal)."""
+    from pathlib import Path
+    proc_path = Path(__file__).resolve().parents[2] / "procedures" / "dock.toml"
+    text = proc_path.read_text(encoding="utf-8")
+    # Only the historical-context comment lines may mention it; no step uses
+    # a no_fire_zone_supplier-driven action, and the string never appears
+    # outside a '#' comment.
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        assert "NoFireZone" not in line
+        assert "ReceiveText" not in line
 
 
 # ============================ capture-at-plot ============================
