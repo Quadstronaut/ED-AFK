@@ -25,6 +25,20 @@ class Step:
     # whole get-around block (sc_assist_orbit + its wait) and lands on
     # target_next_route. Ignored for required steps and when None.
     skip_to: Optional[str] = None
+    # ON-SUCCESS BACK-EDGE for the bounded loop primitive (council #4, the
+    # exploration LOOP). The on-True DUAL of skip_to's on-False forward hop: when
+    # this step SUCCEEDS (ok=True), the lane jumps BACK to the named action
+    # instead of advancing one step, so a scene can repeat a body of steps until
+    # a loop-head returns False (its skip_to exit) or the budget is spent.
+    # exploration.toml's set_throttle back-edge uses loop_to="nav_supercruise_
+    # unexplored" to re-drive the next-unexplored-body pick. BOUNDED by loop_max
+    # (below): once the back-edge has fired loop_max times the interpreter logs
+    # LoopBudgetExceeded and falls through (exits the loop) so a non-terminating
+    # loop can NEVER hang the flight. Ignored when None.
+    loop_to: Optional[str] = None
+    # Max times a single loop_to back-edge may fire before the budget is spent
+    # (fail-closed loop cap). Only meaningful when loop_to is set.
+    loop_max: int = 64
 
 
 @dataclass(frozen=True)

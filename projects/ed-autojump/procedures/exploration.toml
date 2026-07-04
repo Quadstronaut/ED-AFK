@@ -1,0 +1,63 @@
+# EXPLORATION — the in-system body tour (MASTER-SPEC "Exploration"). Reached
+# from run_arrival_then_branch when exploration == active (body_tour_enabled) on
+# an onward hop. DISTINCT procedure / distinct overlay label — NOT a traversal
+# alias.
+#
+# Operator-authored intent (MASTER-SPEC):
+#   1. nav_supercruise_unexplored  (LOOP until the `✦` system icon is at the row
+#      selector — the list-bottom terminator)
+#   2. -> Traversal
+#
+# The LOOP is the SCENE's job, not the step's (council #4): nav_supercruise_
+# unexplored does ONE body per call and the interpreter's loop_to back-edge
+# repeats the between-body body (throttle/orient/confirm/wait) until the step
+# returns False on the `✦` terminator (or an unreadable list). There is NO jump
+# step here — a jump inside exploration would re-create the double-jump. The
+# onward hop is fired by TRAVERSAL, which run_arrival_then_branch chains
+# UNCONDITIONALLY after this proc completes (C2-D5).
+#
+# BEST-EFFORT by design (D-D): NO required steps. The loop's correctness rests on
+#   (a) nav_supercruise_unexplored's skip_to="target_next_route" exit on False,
+#   (b) the loop_max cap on the set_throttle back-edge (fail-closed budget),
+#   (c) should_abort, checked every step by the interpreter.
+# Any read failure exits the loop and jumps on — never drives blind. Traversal
+# (chained after) owns the REQUIRED target/orient/jump.
+#
+# BLOCKED-ON-KYLE carried, not resolved:
+#   BK-1  wait_body_scanned gates on the AutoScan seq-advance; confirm AutoScan
+#         (not Scan / FSSBodySignals) is the right per-body edge live.
+#
+# step kinds:
+#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
+#   tap     atomic keypress, no precondition
+#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+#   observe reads the screen, presses nothing (never gates)
+#   wait    passive block on a journal edge — no input sent
+
+steps = [
+  # macro | LOOP-HEAD: SC-assist the NEXT unexplored body (detail page -> #8
+  # SUPERCRUISE ASSIST button). Returns True (engaged) -> run the body below and
+  # loop; False (the `✦` terminator, or an unreadable list) -> skip_to VAULTS the
+  # whole body straight to the exit (target_next_route). One body per call.
+  { action = "nav_supercruise_unexplored", skip_to = "target_next_route" },
+  # tap | body: throttle up to close on the body (best-effort; SC-assist manages
+  # the approach, this just ensures forward motion).
+  { action = "set_throttle", pct = 100 },
+  # vision | body: coarse-align toward the body. best-effort — orient_compass, NOT
+  # the traversal jump-align widget ring (D-C); a miss never blocks the tour.
+  { action = "orient_compass" },
+  # observe | body: read the SC-assist HUD prompt and LOG the ScHudState. Purely
+  # observational — returns True on every path, never gates the loop.
+  { action = "confirm_sc_assist_active" },
+  # wait | body: block until this body's AutoScan seq advances (event gate, no
+  # wall-clock). best-effort — a missed scan exits to the next body, never hangs.
+  { action = "wait_body_scanned" },
+  # tap | BACK-EDGE: throttle to 0 (hold) and LOOP BACK to pick the next
+  # unexplored body. loop_max caps the tour at 64 bodies (fail-closed budget: a
+  # non-terminating loop logs LoopBudgetExceeded and exits to target_next_route).
+  { action = "set_throttle", pct = 0, loop_to = "nav_supercruise_unexplored", loop_max = 64 },
+  # gated | EXIT: lock the next SYSTEM hop (the skip_to landing on the terminator).
+  # best-effort here (D-D); TRAVERSAL's own required target_next_route is the real
+  # gate for the jump.
+  { action = "target_next_route" },
+]

@@ -133,3 +133,38 @@ def test_load_procedures_reads_a_directory(tmp_path):
     _write(tmp_path / "b.toml", 'steps = [ { action = "wait", s = 2.0 } ]')
     procs = load_procedures(tmp_path)
     assert set(procs.keys()) == {"a", "b"}
+
+
+# ---- loop primitive: loop_to + loop_max (council #4) -----------------------
+
+def test_load_procedure_parses_loop_to_and_loop_max(tmp_path):
+    """loop_to + loop_max are Step fields like skip_to — stripped from params,
+    loop_max defaults to 64 when absent."""
+    f = _write(tmp_path / "exploration.toml", """
+        steps = [
+          { action = "head" },
+          { action = "back", pct = 0, loop_to = "head", loop_max = 12 },
+          { action = "tail" },
+        ]
+    """)
+    proc = load_procedure(f)
+    assert proc.steps[0].loop_to is None
+    assert proc.steps[0].loop_max == 64          # default when unset
+    back = proc.steps[1]
+    assert back.loop_to == "head"
+    assert back.loop_max == 12
+    assert back.params == {"pct": 0}             # loop_to/loop_max not leaked
+
+
+def test_validate_flags_unresolvable_loop_to(tmp_path):
+    """A loop_to naming no step fails validation loudly (same as skip_to) — left
+    silent it would degrade to a one-step advance and never loop."""
+    f = _write(tmp_path / "bad.toml", """
+        steps = [
+          { action = "head" },
+          { action = "back", loop_to = "nowhere" },
+        ]
+    """)
+    proc = load_procedure(f)
+    errors = validate_procedure(proc, known_actions={"head", "back"})
+    assert any("loop_to" in e and "nowhere" in e for e in errors)

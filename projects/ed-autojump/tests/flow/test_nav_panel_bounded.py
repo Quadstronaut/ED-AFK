@@ -171,64 +171,16 @@ def _arrival_ctx(status_fn, logs):
     )
 
 
-def test_arrival_close_star_runs_lock_then_orbit():
-    """CLOSE arrival (star at row 0, found fast): the real nav_panel_target
-    succeeds -> sc_assist_orbit RUNS (the get-around), then the lane proceeds to
-    target_next_route -> orient -> jump."""
-    proc = load_procedures(PROC_DIR)["arrival"]
-    fired, logs = [], []
-    ctx = _arrival_ctx(lambda: _status("Acihaut"), logs)
-    real = STEP_REGISTRY["nav_panel_target"]
-    result = run_procedure(
-        proc, ctx, registry=_fake_registry_running(real, fired, None))
-    assert result.completed is True and result.aborted is False
-    assert "nav_panel_target" in fired
-    assert "sc_assist_orbit" in fired          # the get-around RAN (close)
-    assert "target_next_route" in fired
-    assert "StepSkipped" not in dict(logs)     # no skip when close
-
-
-def test_arrival_far_star_skips_getaround_resumes_at_target_next_route():
-    """FAR arrival (star buried past the bound -> nav_panel_target returns
-    False fast): the get-around (sc_assist_orbit + its wait) is VAULTED via
-    skip_to, the lane resumes at target_next_route -> orient -> jump."""
-    proc = load_procedures(PROC_DIR)["arrival"]
-    fired, logs = [], []
-    # every row a wrong body -> bounded scan gives up -> False
-    ctx = _arrival_ctx(lambda: _status("$MULTIPLAYER_SCENARIO42_TITLE;"), logs)
-    real = STEP_REGISTRY["nav_panel_target"]
-    result = run_procedure(
-        proc, ctx, registry=_fake_registry_running(real, fired, None))
-    assert result.completed is True and result.aborted is False
-    assert "nav_panel_target" in fired
-    assert "sc_assist_orbit" not in fired      # the get-around was SKIPPED (far)
-    assert "target_next_route" in fired        # resumed past the block
-    skip = dict(logs)["StepSkipped"]
-    assert skip["from"] == "nav_panel_target"
-    assert skip["to"] == "target_next_route"
-
-
-# ---- THE CLOSED HOLE: near star ALWAYS orbits, no time dependence -------------
-
-def test_near_star_always_orbits_regardless_of_jump_age():
-    """The rejected jump-age design's hole: a ship STATIONARY NEAR the star for
-    a long time then restarting would (by age) skip the get-around and jump
-    INTO the star. The lock-speed design closes it: 'near' is decided by LOCK
-    SPEED, not time. With the star at row 0 (near), the orbit runs no matter
-    what jump_age reads — stale, fresh, or unknown. We run arrival three times
-    with wildly different ages; the orbit fires every time."""
-    proc = load_procedures(PROC_DIR)["arrival"]
-    real = STEP_REGISTRY["nav_panel_target"]
-    for age in (None, 0.0, 9999.0):            # unknown, fresh, very stale
-        fired, logs = [], []
-        ctx = _arrival_ctx(lambda: _status("Acihaut"), logs)
-        ctx.jump_age_supplier = lambda a=age: a   # the rejected design's signal
-        result = run_procedure(
-            proc, ctx, registry=_fake_registry_running(real, fired, None))
-        assert result.completed is True, f"age={age}"
-        # near star -> get-around ALWAYS runs, independent of jump age
-        assert "sc_assist_orbit" in fired, f"orbit skipped at age={age}"
-        assert "StepSkipped" not in dict(logs), f"skipped at age={age}"
+# NOTE (flow-redesign #1, 2026-06-27): the THREE end-to-end arrival cases that
+# used to live here — test_arrival_close_star_runs_lock_then_orbit,
+# test_arrival_far_star_skips_getaround_resumes_at_target_next_route,
+# test_near_star_always_orbits_regardless_of_jump_age — were DELETED. The new
+# arrival.toml no longer runs nav_panel_target / sc_assist_orbit / the get-around
+# (its action list is exactly [set_throttle, scoop_refuel, nav_supercruise_star]),
+# so those flows moved out of arrival entirely. The nav_panel_target STEP is still
+# exercised by the bounded-scan UNIT tests above, and route_complete_park keeps
+# the lock-then-orbit flow (its cases below stay green). The new arrival contract
+# is asserted in test_procedure_files.test_arrival_is_exactly_throttle_scoop_star.
 
 
 def test_arrival_has_no_jump_age_guard_step():

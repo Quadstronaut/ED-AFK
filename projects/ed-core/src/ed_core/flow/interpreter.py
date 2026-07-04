@@ -38,6 +38,10 @@ def run_procedure(
     result = ProcedureResult(name=proc.name)
     i = 0
     n = len(proc.steps)
+    # Per-back-edge fire counters for the loop primitive, keyed by step index.
+    # A spent budget (>= loop_max) stops the loop — the fail-closed cap that
+    # keeps a non-terminating loop from hanging the flight.
+    loop_counts: dict[int, int] = {}
     while i < n:
         if ctx.should_abort():
             # Panic / stop: abort the whole procedure NOW — no retries, no
@@ -134,6 +138,35 @@ def run_procedure(
             # Unresolvable skip target: fall through to normal advance — a
             # non-required miss is best-effort, never a lane abort. (The
             # loader's validate_procedure should have caught a bad name.)
+
+        # ON-SUCCESS BACK-EDGE (loop primitive, council #4 exploration LOOP): the
+        # on-True dual of skip_to's on-False forward hop. A step that opted into
+        # loop_to jumps the lane BACK to the named action so a scene can repeat a
+        # body (throttle/orient/confirm/wait) until the loop-head returns False
+        # (its skip_to exit). BOUNDED per back-edge by loop_max: once the budget
+        # is spent, log LoopBudgetExceeded and fall through to the next step (the
+        # loop's natural exit lies just past the back-edge) — a non-terminating
+        # loop can NEVER hang the flight. should_abort is rechecked at the top of
+        # the next iteration, so an operator stop mid-loop still aborts promptly.
+        if ok and step.loop_to is not None:
+            target = proc.index_of_action(step.loop_to)
+            if target is not None:
+                fired = loop_counts.get(i, 0)
+                if fired >= step.loop_max:
+                    ctx.log("LoopBudgetExceeded",
+                            {"procedure": proc.name, "at": step.action,
+                             "loop_to": step.loop_to, "loop_max": step.loop_max})
+                    # budget spent -> fall through to i += 1 (exit the loop)
+                else:
+                    loop_counts[i] = fired + 1
+                    ctx.log("StepLooped",
+                            {"procedure": proc.name, "from": step.action,
+                             "to": step.loop_to, "from_index": i,
+                             "to_index": target, "iteration": fired + 1})
+                    i = target
+                    continue
+            # Unresolvable loop target: fall through to a normal one-step advance
+            # (validate_procedure should have caught a bad name at load).
 
         if not ok and step.required:
             policy = proc.on_required_fail
