@@ -21,20 +21,23 @@ def _status():
                            fsd_cooldown=False, fsd_mass_locked=False, overheating=False)
 
 
-def test_arrival_aborts_without_jump_when_orient_fails():
+def test_traversal_aborts_without_jump_when_orient_fails():
+    """RE-HOMED from arrival (flow-redesign #1, 2026-06-27): arrival no longer
+    orients or jumps — traversal owns the hop, so the 'orient fail => no jump'
+    fail-closed safety property now belongs to traversal. reader never finds the
+    compass dot -> orient_compass fails every retry -> the lane aborts BEFORE
+    engage_jump_clearance ever presses Hyperspace."""
     procs = load_procedures(PROC_DIR)
     sender = FakeSender()
-    # reader never finds the dot -> orient_compass fails -> abort before engage_jump
     ctx = StepContext(
         sender=sender, sleeper=lambda s: None,
-        compass_reader=FakeReader([CompassRead.not_found()] * 500),  # arrival v2 steps (nav verify + pitch) read ~52 before orient
+        compass_reader=FakeReader([CompassRead.not_found()] * 500),
         frame_grabber=lambda: object(), compass_samples=1,
         status_supplier=_status,
         align_kwargs={"max_iters": 2, "timeout_s": 999, "settle_s": 0.0},
     )
-    result = run_procedure(procs["arrival"], ctx)
+    result = run_procedure(procs["traversal"], ctx)
     assert result.aborted is True
-    # The JUMP key must never fire when orient fails. (SetSpeed100 IS expected
-    # earlier â€” it's the legitimate fly-out throttle before the orient gate â€”
-    # so we assert on the jump combo, not the throttle.)
+    # The JUMP key must never fire when orient fails. engage_jump_clearance is the
+    # only Hyperspace press and it sits AFTER the failed orient gate.
     assert "Hyperspace" not in sender.actions()   # NEVER jumped

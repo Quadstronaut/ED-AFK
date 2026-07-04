@@ -7,10 +7,13 @@
 # simply never runs.
 #
 # After auto-launch the ship is mass-locked by the station; ED forbids FSD
-# spool within ~10km. The docking computer flies the ship out; we wait on the
-# FsdMassLocked flag CLEARING (Status bit 16 — the same gate step_engage_jump
-# checks) before the normal target-next -> orient -> jump. NEVER gated on a
-# timer — launch-queue and fly-out are queue-variable.
+# spool within ~10km. Operator (2026-07-03, LIVE): "out of a station we just
+# have to fly straight at top speed until that happens" — so throttle goes to
+# 100 straight off the launch, no orient, and we wait on the FsdMassLocked
+# flag CLEARING (Status bit 16 — the same gate step_engage_jump checks) before
+# the normal target-next -> orient -> jump. Purely log-driven: Undocked event,
+# then the Status flag. NEVER gated on a timer — launch-queue and fly-out are
+# queue-variable.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
@@ -32,13 +35,16 @@ steps = [
   # AUTO LAUNCH off the pad (S,S,Space). Gate on Undocked / status.docked
   # going False. Required: the rest of the flow assumes the ship is in space.
   { action = "auto_launch", required = true },                # macro  | 1 EXCLUSIVE — auto launch -> Undocked
-  # Wait out the station mass lock (FsdMassLocked flag clearing). The ADC
-  # flies the ship clear; this is flag-gated, no timer.
-  { action = "wait_masslock_clear", required = true },        # wait   | 2 station mass lock — flag-gated
+  # Fly STRAIGHT at top speed away from the station until the mass lock
+  # releases (operator 2026-07-03). No orient step — straight out.
+  { action = "set_throttle", pct = 100 },                     # tap    | 2 burn straight out
+  # Wait out the station mass lock (FsdMassLocked flag clearing) — >10km per
+  # the game's own radius; this is the log-driven distance gate, no timer.
+  { action = "wait_masslock_clear", required = true },        # wait   | 3 station mass lock — flag-gated
   # Normal route flow: lock the next system, clear, orient, jump.
-  { action = "target_next_route", required = true },          # gated  | 3 lock the NEXT SYSTEM in route
-  { action = "set_throttle", pct = 100 },                     # tap    | 4 burn
-  { action = "orient_compass", required = true },             # vision | 5a coarse align to the hop
-  { action = "orient_widget_ring", required = true },         # vision | 5b fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump_clearance", required = true },      # gated  | 6 FSD jump + clearance loop (replaces wait@5 + engage_jump@7 + hold_alignment@8)
+  { action = "target_next_route", required = true },          # gated  | 4 lock the NEXT SYSTEM in route
+  { action = "set_throttle", pct = 100 },                     # tap    | 5 burn
+  { action = "orient_compass", required = true },             # vision | 6a coarse align to the hop
+  { action = "orient_widget_ring", required = true },         # vision | 6b fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump_clearance", required = true },      # gated  | 7 FSD jump + clearance loop (replaces wait@5 + engage_jump@7 + hold_alignment@8)
 ]
