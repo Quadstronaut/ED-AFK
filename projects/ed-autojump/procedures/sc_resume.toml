@@ -1,45 +1,34 @@
-# SC restart RESUME path — ship already in supercruise and CLEAR of the main
-# star (2026-06-08 operator spec). Runs when _maybe_startup detects that the
-# Status.Destination is NOT the local star (a station, a route-hop system, or
-# nothing locked) and therefore the arrival get-around (nav_panel_target ->
-# sc_assist_orbit) is unnecessary AND harmful (the Robigo incident: that
-# get-around locked "DSV Stellar cross | 9589", a Fleet Carrier, and wrecked
-# the plotted route).
+# SC restart RESUME — ship already in supercruise, stale (jump_age past the
+# fresh window) with a CONFIDENT non-local-star Destination lock. Near-star /
+# fresh / indeterminate restarts route to arrival.toml instead
+# (dispatcher._maybe_startup priorities 1-3).
 #
-# A CLEAR-OF-STAR distance gate runs FIRST (2026-06-08 star-smack fix): if the
-# arrival star is close (locks in the top nav rows) sc_resume orbits it like
-# arrival BEFORE throttling; if it is far/clear (buried past the bound) the gate
-# skips to the fast resume. NO scoop pit-stop (scooping is an arrival-scene
-# concern). On the clear path the ship just targets the next hop, throttles up,
-# orients, and jumps — the post-orbit leg of arrival.toml without the prefix.
+# CV REWIRE 2026-07-05 (operator: "keep a CV distance gate — if we're 100 Ls
+# from the star we can likely just target our next destination and proceed"):
+# the blind trio (nav_panel_target max_rows=3 -> sc_assist_orbit -> wait 13s)
+# is GONE; #27/#28 died with it (operator-ratified 2026-06-27).
 #
-# CLEAR-OF-STAR GATE (2026-06-08 star-smack fix, session_100951): sc_resume is
-# dispatched on the classifier's jump_age>30s + non-local-star Destination
-# heuristic, which is NOT a sound clear-of-star proxy — a ship parked NOSE-ON
-# its arrival star carries a non-local-star Destination too (ED pre-loads the
-# next hop). Run 2 (jump_age 88s) was misclassified as a clear loiter and
-# set_throttle(100) drove it INTO the star.
+# WHY THE IN-SCENE GATE STAYS (live-proven, session_100951): the classifier's
+# non-local-star heuristic is NOT a sound clear-of-star proxy — a ship parked
+# NOSE-ON its arrival star carries a non-local-star Destination too (ED
+# pre-loads the next hop); run 2 (jump_age 88s) was misclassified as a clear
+# loiter and set_throttle(100) drove it INTO the star. The gate now reads the
+# ACTUAL row-0 distance (CV/OCR) instead of the old lock-speed proxy:
+#   < 100 Ls or UNREADABLE -> get-around (nav_supercruise_star + ORBITING
+#     wait) BEFORE any throttle — fail-closed, never blind-throttle at a
+#     maybe-near star.
+#   >= 100 Ls (confidently FAR) -> skip_to the fast resume (the Robigo loiter
+#     path: just lock the hop and go — no false-arrival regression).
 #
-# engage_jump is NOT an obstruction backstop: step_engage_jump gates only on
-# Status flags (charging/cooldown/mass-lock/overheat) and ED exposes NO
-# Status.json flag for star obstruction (it is a DISTANCE/CV signal — see the
-# ed-fsd-obstruction-distance memory). The previous comment claiming a
-# fail-closed obstruction check here was WRONG; nothing stood between the
-# throttle and the star.
-#
-# So sc_resume now self-gates on the SAME verified distance proxy arrival.toml
-# uses: the nav panel sorts by CURRENT distance, so a CLOSE star (parked
-# nose-on) locks in the top 3 rows and a FAR/clear star (genuine loiter at a
-# station) is buried. nav_panel_target(max_rows=3) found -> CLOSE -> run the
-# orbit get-around BEFORE throttling. NOT found -> FAR -> skip_to vaults the
-# get-around straight to the fast resume (the Robigo loiter path, unchanged).
-# Fail-closed without re-introducing the Robigo false-arrival: the orbit fires
-# ONLY when the star is provably close.
+# NO scoop pit-stop (scooping is an arrival-scene concern). The jump leg is
+# the standard clearance shape: engage_jump_clearance fails closed on
+# obstruction and move-retries.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
-#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
+#   vision  CV read / closed-loop steer — EXCLUSIVE where it owns input
+#   wait    passive block on journal event / Status flag or CV poll — no input
 parallel_tracks = ["honk"]   # honk fires every system, no matter what
 
 [on_required_fail]
@@ -48,17 +37,19 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  # CLEAR-OF-STAR get-around (mirrors arrival.toml's lock-speed gate exactly).
-  # FOUND in top 3 rows (CLOSE) -> True -> run sc_assist_orbit get-around.
-  # NOT found (FAR/clear)       -> False -> skip_to vaults to target_next_route
-  #                                          (the fast resume, Robigo loiter).
-  { action = "nav_panel_target", required = false, skip_to = "target_next_route", max_rows = 3 },  # macro  | 0a EXCLUSIVE — verified star lock, bounded (clear-of-star distance gate)
-  { action = "sc_assist_orbit" },                          # macro  | 0b EXCLUSIVE — guarded SC-assist orbit get-around (CLOSE-star only)
-  { action = "wait", s = 13.0 },                           # wait   | 0c let orbit acquire — TRAJECTORY PACING, not a gate
-  { action = "target_next_route", required = true },       # gated  | 1 lock next hop (also cancels any SC-assist)
-  { action = "set_throttle", pct = 100 },                  # tap    | 2 full burn
-  { action = "orient_compass", required = true },          # vision | 4a coarse align to the hop
-  { action = "orient_widget_ring", required = true },      # vision | 4b fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },             # gated  | 5 FSD jump (distance-based obstruction fail-closed gate)
-  { action = "hold_alignment", required = true },          # vision | 6 hold cone until StartJump — event/state-gated, no clock
+  # vision | 0 CLEAR-OF-STAR CV GATE. True (CLOSE/unreadable) -> get-around
+  # below; False (confidently FAR) -> skip_to the fast resume.
+  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 100.0 },  # vision | 0 EXCLUSIVE — row-0 distance read
+  # vision | 1 CLOSE lane (already in SC): CV-confirmed lock + SC-assist toward
+  # the star. Replaces blind nav_panel_target + sc_assist_orbit.
+  { action = "nav_supercruise_star", required = true },     # vision | 1 EXCLUSIVE — CV lock+assist get-around
+  # wait | 2 CV orbit-acquire (cyan ORBITING prompt, bounded poll, best-effort).
+  # Replaces the blind wait 13s.
+  { action = "wait_sc_assist_orbiting" },                   # wait   | 2 CV — cyan ORBITING prompt
+  # ── fast resume: the FAR lane lands here ──────────────────────────────────
+  { action = "target_next_route", required = true },        # gated  | 3 lock next hop (also cancels the assist)
+  { action = "set_throttle", pct = 100 },                   # tap    | 4 full burn
+  { action = "orient_compass", required = true },           # vision | 5 coarse
+  { action = "orient_widget_ring", required = true },       # vision | 6 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump_clearance", required = true },    # gated  | 7 FSD jump + obstruction clearance loop
 ]

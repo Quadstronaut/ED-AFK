@@ -123,6 +123,71 @@ def _is_nearby_system_row(raw: str) -> bool:
     return bool(m and m.group(2).upper() == "LY")
 
 
+# In-system distance token INCLUDING the close-range units (Km < Mm < Ls —
+# settled unit order). Row 0 is the arrival star, ALWAYS the closest in-system
+# row: parked at the star it can read in Mm or even Km, never Ly (a Ly row is a
+# nearby system and can never sort above the local star).
+_DIST_IN_SYSTEM_RE = re.compile(r"(\d[\d,\.]*)\s*(KM|MM|LS)\b", re.IGNORECASE)
+_LS_PER_KM = 1.0 / 299_792.0   # 1 light-second = 299,792 km
+
+
+def parse_first_row_distance_ls(lines: Iterable[str]) -> Optional[float]:
+    """Distance (in Ls) of the FIRST non-blank OCR line — nav-panel row 0, the
+    arrival star (selected by default on panel open, so its highlight gives the
+    best distance OCR). Km/Mm convert to Ls.
+
+    None when the top line carries no in-system distance token — callers treat
+    None as UNREADABLE and fail closed. Deliberately does NOT scan past the
+    first non-blank line: a farther row's clean distance must never stand in
+    for an unreadable row 0 (reporting FAR while the star is CLOSE would skip
+    the get-around at the exact moment it matters). PURE, never raises."""
+    for line in lines:
+        raw = (line or "").strip()
+        if not raw:
+            continue
+        m = _DIST_IN_SYSTEM_RE.search(raw)
+        if not m:
+            return None
+        try:
+            val = float(m.group(1).replace(",", ""))
+        except ValueError:
+            return None
+        unit = m.group(2).upper()
+        if unit == "KM":
+            return val * _LS_PER_KM
+        if unit == "MM":
+            return val * 1000.0 * _LS_PER_KM
+        return val
+    return None
+
+
+def read_first_row_distance_ls(
+    frame: Any,
+    *,
+    region: Sequence[int] = DEFAULT_NAV_REGION,
+) -> Optional[float]:
+    """FULL FRAME -> row-0 (arrival star) distance in Ls, or None.
+
+    Crops `region` ((x, y, w, h), 1080p-referenced, height-scaled like
+    navpanel_column0's crop idiom), OCRs it (read_nav_panel_lines, WinRT-first)
+    and parses the first line. None on ANY failure (bad frame, no OCR engine,
+    unreadable top row) — callers fail closed. Never raises."""
+    try:
+        import numpy as np  # type: ignore
+        arr = np.asarray(frame)
+        if arr.ndim < 2:
+            return None
+        sc = arr.shape[0] / 1080.0
+        x, y, w, h = region
+        crop = arr[int(y * sc):int((y + h) * sc), int(x * sc):int((x + w) * sc)]
+        if crop.size == 0:
+            return None
+        lines = read_nav_panel_lines(crop)
+    except Exception:  # noqa: BLE001 — perception fail-soft
+        return None
+    return parse_first_row_distance_ls(lines)
+
+
 def _system_prefix_match(norm_line: str, norm_system: str, fuzzy: float) -> Optional[str]:
     """If `norm_line` begins with the (possibly OCR-garbled) system name FOLLOWED
     BY A SPACE, return the remainder (the candidate designator); else None.

@@ -133,6 +133,8 @@ class FlowRunner:
         # (each consumer crops its own region). None -> blind/unreadable fallback.
         navpanel_detail_grabber: Optional[Callable[[], Any]] = None,
         navpanel_frame_grabber: Optional[Callable[[], Any]] = None,
+        # SC-assist HUD prompt reads (#17): full-frame grab, panel closed.
+        hud_grabber: Optional[Callable[[], Any]] = None,
         # Council B docking: right-side target-panel km read (float|None per
         # call). None -> steps see the fail-closed lambda: None default.
         dock_distance_km_supplier: Optional[Callable[[], Optional[float]]] = None,
@@ -176,6 +178,7 @@ class FlowRunner:
         # CV-action family full-frame grabbers (#3/#4/#5/#6) — see StepContext.
         self.navpanel_detail_grabber = navpanel_detail_grabber
         self.navpanel_frame_grabber = navpanel_frame_grabber
+        self.hud_grabber = hud_grabber
         self.dock_distance_km_supplier = dock_distance_km_supplier
         # Append-only log of systems visited on live FSDJump arrivals. Pure
         # observability: never touches a condition/action and is fail-soft on
@@ -522,6 +525,7 @@ class FlowRunner:
             # (detail) + the nav-list read (frame). One full-frame grab, both.
             navpanel_detail_grabber=self.navpanel_detail_grabber,
             navpanel_frame_grabber=self.navpanel_frame_grabber,
+            hud_grabber=self.hud_grabber,
             # <7.5km docking gate read; unwired -> fail-closed default.
             dock_distance_km_supplier=(self.dock_distance_km_supplier
                                        or (lambda: None)),
@@ -573,22 +577,24 @@ class FlowRunner:
         ctxs: list[StepContext] = []
         ctx = self._make_context()
         ctxs.append(ctx)
-        threads: list[threading.Thread] = []
         try:
             for track_name in proc.parallel_tracks:
                 track = self.procedures.get(track_name)
                 if track is None:
                     continue
+                # FULLY DETACHED (#26, operator-ratified): the parent never
+                # joins a parallel track — the main scene hands off to its
+                # successor the instant it finishes, honk still charging or
+                # not. The track ctx is deliberately NOT in `ctxs`: the track
+                # thread owns its OWN tail unsubscribe (in _run_track) so the
+                # parent's finally can't blind a still-holding honk mid-event
+                # (which would push the release to the 30s hold backstop).
+                # Threads are daemon: process exit reaps them.
                 track_ctx = self._make_context()
-                ctxs.append(track_ctx)
-                th = threading.Thread(
-                    target=run_procedure, args=(track, track_ctx), daemon=True
-                )
-                th.start()
-                threads.append(th)
+                threading.Thread(
+                    target=self._run_track, args=(track, track_ctx), daemon=True
+                ).start()
             result = run_procedure(proc, ctx)
-            for th in threads:
-                th.join(timeout=15.0)
             if result.aborted and self._preempt is not None:
                 # PREEMPTED, not aborted (2026-06-07 14:24:09Z: arrival's
                 # star-smack preempt printed "[ABORTED] ... manual intervention
@@ -629,15 +635,27 @@ class FlowRunner:
             if self._preempt is not None and self.record is not None:
                 self.record("Preempted", {"procedure": name,
                                           "reason": self._preempt})
-            # Drop every subscription, even for a track that outlived its
-            # join window â€” a leaked queue grows for the rest of the session.
-            # A late track polling an unsubscribed handle just gets [] and
-            # exits on its own backstop (see _TailHub.poll).
+            # Drop the MAIN ctx's subscription (detached tracks are not in
+            # `ctxs` — each unsubscribes itself in _run_track when it ends, so
+            # a still-running honk keeps seeing its release event).
             if self._hub is not None:
                 for c in ctxs:
                     h = getattr(c, "_tail_handle", None)
                     if h is not None:
                         self._hub.unsubscribe(h)
+
+    def _run_track(self, track: Any, track_ctx: StepContext) -> None:
+        """Detached parallel-track runner (#26): run the track to completion on
+        its own daemon thread, then release its tail subscription. The parent
+        scene never waits on this — a leaked queue is prevented HERE, by the
+        track itself, instead of by the parent's join-then-unsubscribe."""
+        try:
+            run_procedure(track, track_ctx)
+        finally:
+            if self._hub is not None:
+                h = getattr(track_ctx, "_tail_handle", None)
+                if h is not None:
+                    self._hub.unsubscribe(h)
 
     def _wait_for_event(self, handle: Optional[int], event_name: str,
                         timeout_s: float) -> bool:
