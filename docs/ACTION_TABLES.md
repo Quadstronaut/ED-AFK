@@ -125,22 +125,28 @@ Runs when a NEW route arrives while docked. Retry: from `target_next_route`, ×3
 | 3 | `wait_masslock_clear` | wait | req | `FsdMassLocked` (Status bit 16) CLEARING — game's own >~10 km signal | no timer; fails closed w/o Status |
 | 4-8 | jump leg | | | same shape as Traversal 2-7 (`engage_jump_clearance` re-checks mass-lock) | |
 
-## 7 · Startup (`startup.toml`) — cold start, normal space *(old flow, not yet CV-rewired)*
+## 7 · Startup (`startup.toml`) — cold start, normal space *(CV-rewired 2026-07-05)*
+
+Two lanes on a CV distance gate (operator). Retry: from `target_next_route`, ×3
+(inline recovery lane deleted). Honk rides in parallel.
 
 | # | Action | Kind | Req | Gate / signal | Notes |
 |---|---|---|---|---|---|
-| 1 | `nav_panel_target` (max_rows 3) | macro | | star found CLOSE → get-around; FAR → skip to 6 | clear-of-star distance gate |
-| 2 | `engage_supercruise` | gated | req | `SupercruiseEntry` | close-star lane |
-| 3 | `nav_panel_target` | macro | | — | re-lock star |
-| 4 | `sc_assist_orbit` | macro | | — | get-around orbit |
-| 5 | `wait 13s` | wait | | operator pacing | orbit acquire |
-| 6 | `target_next_route` | gated | req | — | shared continuation |
-| 7-10 | burn → orient ×2 → `engage_jump` → `hold_alignment` | | req | `StartJump` | + recovery lane 11-23 (retry anchor at 19) |
+| 1 | `star_distance_gate` | vision | | OCR row-0 (star) distance; <100 Ls or UNREADABLE → close lane; ≥100 Ls → skip to 5 | fail-closed to get-around; replaces blind max_rows gate (#28 dead) |
+| 2 | `engage_supercruise` | gated | req | `SupercruiseEntry` | close lane — SC first, no throttle at star |
+| 3 | `nav_supercruise_star` | vision | req | CV #8 label confirm | lock + assist get-around (blind re-lock/orbit dead) |
+| 4 | `wait_sc_assist_orbiting` | wait | | cyan ORBITING prompt (CV, bounded poll) | replaces blind 13s (#27 dead) |
+| 5 | `target_next_route` | gated | req | — | FAR lane lands here; cancels assist |
+| 6-8 | throttle 100 → orient ×2 | tap/vision | req | compass + widget CV | |
+| 9 | `engage_jump_clearance` | gated | req | obstruction clearance loop → `StartJump` | fail-closed backstop for both lanes |
 
-## 8 · SC resume (`sc_resume.toml`) — restart mid-SC, stale *(old flow)*
+## 8 · SC resume (`sc_resume.toml`) — restart mid-SC, stale *(CV-rewired 2026-07-05)*
 
-Same clear-of-star gate (1-3: `nav_panel_target` max_rows 3 → `sc_assist_orbit` → 13s) then
-`target_next_route`(req) → burn → orient ×2 (req) → `engage_jump`(req) → `hold_alignment`(req).
+Same shape minus SC entry (already in SC): `star_distance_gate` (skip_to fast resume) →
+`nav_supercruise_star`(req) → `wait_sc_assist_orbiting` → `target_next_route`(req) →
+throttle 100 → orient ×2(req) → `engage_jump_clearance`(req). The in-scene gate is
+live-proven necessary (session_100951: nose-on-star restart misclassified as clear
+loiter) — now a real distance READ instead of the lock-speed proxy.
 
 ## 9 · Smack recovery (`smack_recovery.toml`) — LOCKED LAW (operator 8-step)
 
@@ -170,12 +176,15 @@ until SupercruiseEntry`(req). In SC: hop lock(req, anchor) → burn → 13 s cle
    live-witnessed → park). Edge, bounded, known.
 3. **Capture-at-plot unconfirmed** — plot-to-station setting `Destination.Body!=0` at
    NavRoute time has never been observed live; station docking rides the settle-re-poll path.
-4. **#26 honk detach** — dispatcher still `join(timeout=15s)` on parallel tracks.
-5. **#12 rename** — `steps.py` `_FRESH_ARRIVAL_WINDOW_S` name-collision with boot's 30 s.
-6. **Startup / SC-resume still OLD blind flows** (`nav_panel_target`/`sc_assist_orbit`/13 s
-   waits live only here) — rewire to CV actions = the remaining departure work.
-7. **Smack #9** — escape-vector-presence ≠ smack (operator question) still open; one
-   pre-existing red test (`test_startup_smacked_with_live_cooldown_runs_smack_recovery`).
+4. ~~#26 honk detach~~ — DONE 2026-07-05: no parent join; tracks own their tail unsubscribe.
+5. ~~#12 rename~~ — DONE 2026-07-05: `_SCOOP_FRESH_ARRIVAL_WINDOW_S`.
+6. ~~Startup / SC-resume old blind flows~~ — DONE 2026-07-05: CV distance gate, two lanes,
+   ORBITING-prompt pacing, retry_from model. `nav_panel_target`/`sc_assist_orbit`/13 s waits
+   no longer referenced by ANY procedure (functions remain registered).
+7. **Smack #9** — escape-vector-presence ≠ smack (operator question) still open; TWO
+   pre-existing smack-domain reds (`test_startup_smacked_with_live_cooldown_runs_smack_recovery`,
+   `test_smacked_with_cooldown_still_runs_smack_recovery_not_sc_resume`) — fail identically
+   on every commit back to pre-council master.
 8. **Per-ship CV regions** — Mandalay-only by design (#16 deferred until all functions
    operator-approved).
 9. **First live run** needs the operator at the game (function-by-function approval).
