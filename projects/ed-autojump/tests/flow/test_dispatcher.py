@@ -730,6 +730,10 @@ def test_preempt_uses_event_slot_not_status_slot():
 
 
 def test_parallel_track_runs_alongside_main():
+    """DETACHED tracks (#26, operator 2026-06-27): the parent NEVER joins —
+    the honk may still be running when dispatch returns, so poll briefly for
+    its action instead of asserting synchronously."""
+    import time
     sender = FakeSender()
     procs = {
         "arrival": Procedure(name="arrival", steps=(Step("target_next_route"),),
@@ -739,9 +743,13 @@ def test_parallel_track_runs_alongside_main():
     }
     r = _runner(procs, sender, clock=lambda: 0.0)
     _dispatch(r, _ev("FSDJump", body_type="Star"))
-    acts = sender.actions()
-    assert "ExplorationFSSDiscoveryScan" in acts   # honk fired
-    assert "TargetNextRouteSystem" in acts          # arrival fired
+    assert "TargetNextRouteSystem" in sender.actions()   # arrival fired (sync)
+    deadline = time.monotonic() + 5.0                    # detached honk: bounded poll
+    while time.monotonic() < deadline:
+        if "ExplorationFSSDiscoveryScan" in sender.actions():
+            break
+        time.sleep(0.01)
+    assert "ExplorationFSSDiscoveryScan" in sender.actions()   # honk fired, detached
 
 
 # ---------------------------------------------------------------------------

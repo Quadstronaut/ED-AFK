@@ -540,7 +540,10 @@ def _scoop_window_rate(samples: list, now: float,
 # FSDJump->ScoopStart, session_2026-06-07T111951, 11:21:40Z); 120s is ~60x
 # any real fresh-arrival latency and far below the 25-min loiter that caused
 # the 11:57Z restart incident.
-_FRESH_ARRIVAL_WINDOW_S = 120.0
+# RENAMED from _FRESH_ARRIVAL_WINDOW_S (#12, operator-ratified): the old name
+# collided with boot_routes' FRESH_ARRIVAL_WINDOW_S (30.0, the CLASSIFIER
+# window) — two different constants, one name, a standing confusion trap.
+_SCOOP_FRESH_ARRIVAL_WINDOW_S = 120.0
 
 
 def step_scoop_refuel(
@@ -604,7 +607,7 @@ def step_scoop_refuel(
     # stale. None PROCEEDS: unknown age fails toward current working behavior
     # and keeps every bare-_ctx() unit test on the live path.
     age = ctx.jump_age_supplier()
-    if age is not None and age > _FRESH_ARRIVAL_WINDOW_S:
+    if age is not None and age > _SCOOP_FRESH_ARRIVAL_WINDOW_S:
         ctx.log("ScoopRefuelSkipped", {"reason": "stale_arrival", "age_s": age})
         return True
 
@@ -1688,6 +1691,101 @@ def step_confirm_orbiting(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
     return False
 
 
+def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
+                            settle_s: float = 0.4,
+                            panel_focus_action: str = "FocusLeftPanel") -> bool:
+    """CLEAR-OF-STAR CV DISTANCE GATE (operator 2026-07-05) — the CV
+    replacement for the blind nav_panel_target max_rows=3 lock-speed gate (#28
+    died with the blind flow). Used by startup.toml / sc_resume.toml as
+    `{ action = "star_distance_gate", skip_to = "target_next_route" }`:
+
+      True  = the arrival star is CLOSE (< threshold_ls) OR the read failed
+              -> fall through to the SC get-around lane below.
+      False = confidently FAR (>= threshold_ls)
+              -> skip_to vaults the get-around straight to the direct jump.
+
+    Row 0 = the arrival star, ALWAYS the closest in-system row, selected by
+    default on panel open (its highlight gives the best distance OCR).
+    ~100 Ls is the settled obstruction floor (ed-fsd-obstruction-distance:
+    >=~100 Ls most stars don't obstruct). Proven live necessity: the classifier
+    once misread a nose-on-star restart as a clear loiter and throttled into
+    the star (sc_resume session_100951) — this gate is the in-scene backstop.
+
+    FAIL-CLOSED: no grabber / bad frame / unreadable top row -> True (run the
+    get-around; never blind-throttle at a maybe-near star). The only False is
+    a POSITIVE far reading. Presses: open panel -> grab -> close panel."""
+    grabber = getattr(ctx, "navpanel_frame_grabber", None)
+    if grabber is None:
+        ctx.log("StarDistanceGate", {"verdict": "close", "reason": "no_grabber"})
+        return True
+    s = ctx.sender
+    sl = ctx.sleeper
+    frame = None
+    try:
+        s.press(panel_focus_action); sl(settle_s)   # open; row 0 (star) selected
+        try:
+            frame = grabber()
+        except Exception:  # noqa: BLE001 — grab failure -> frame None -> unreadable
+            frame = None
+        finally:
+            s.press(panel_focus_action); sl(settle_s)   # ALWAYS close the panel
+    except KeyError:
+        ctx.log("BindMissing", {"step": "star_distance_gate"})
+        return True                                  # fail-closed: get-around
+    try:
+        from ed_vision.navpanel_reader import read_first_row_distance_ls
+        ls = read_first_row_distance_ls(frame)
+    except Exception as exc:  # noqa: BLE001 — perception error -> fail closed
+        ctx.log("StarDistanceGate", {"verdict": "close",
+                                     "reason": "read_error",
+                                     "err": type(exc).__name__})
+        return True
+    if ls is None:
+        ctx.log("StarDistanceGate", {"verdict": "close", "reason": "unreadable"})
+        return True
+    verdict = "close" if ls < threshold_ls else "far"
+    ctx.log("StarDistanceGate", {"verdict": verdict, "ls": round(ls, 2),
+                                 "threshold_ls": threshold_ls})
+    return ls < threshold_ls
+
+
+def step_wait_sc_assist_orbiting(ctx: StepContext, *, poll_s: float = 1.0,
+                                 max_polls: int = 45) -> bool:
+    """Wait for the cyan ORBITING DESTINATION HUD prompt after
+    nav_supercruise_star — the CV replacement for the blind `wait s=13.0`
+    orbit-acquire pacing (#27 died with the blind flow). The get-around only
+    works once the assist actually has the ship orbiting off the star vector;
+    the prompt IS that signal (ed-sc-assist-hud-indicators, #17 reader).
+
+    BEST-EFFORT: returns True on EVERY exit (orbiting seen / abort / poll-count
+    backstop / no grabber) — the jump leg's engage_jump_clearance loop is the
+    fail-closed authority for an unclear star. Poll-COUNT backstop, never a
+    wall-clock success gate."""
+    hud_grabber = getattr(ctx, "hud_grabber", None)
+    if hud_grabber is None:
+        ctx.log("WaitScAssistOrbiting", {"result": "no_hud_grabber"})
+        return True
+    polls = 0
+    while polls < max(1, max_polls):
+        if ctx.should_abort():
+            ctx.log("WaitScAssistOrbiting", {"result": "abort", "polls": polls})
+            return True
+        try:
+            from ed_vision.hud_sc_indicators import detect_orbiting
+            if detect_orbiting(hud_grabber()):
+                ctx.log("WaitScAssistOrbiting",
+                        {"result": "orbiting", "polls": polls})
+                return True
+        except Exception as exc:  # noqa: BLE001 — read miss -> keep polling
+            ctx.log("WaitScAssistOrbiting", {"result": "read_error",
+                                             "err": type(exc).__name__,
+                                             "polls": polls})
+        polls += 1
+        ctx.sleeper(poll_s)
+    ctx.log("WaitScAssistOrbiting", {"result": "backstop", "polls": polls})
+    return True
+
+
 def step_confirm_sc_assist_active(ctx: StepContext) -> bool:
     """OBSERVATIONAL: read the center-screen SC-assist HUD prompt and LOG which
     state it shows (ACTIVE / ORBITING / ALIGN / NONE). NEVER gates — returns True
@@ -2148,6 +2246,12 @@ register_step("confirm_orbiting", step_confirm_orbiting)
 # ed_autojump.flow.steps makes exploration.toml validate clean.
 register_step("confirm_sc_assist_active", step_confirm_sc_assist_active)
 register_step("wait_body_scanned", step_wait_body_scanned)
+# Startup/sc_resume CV rewire (operator 2026-07-05): the clear-of-star distance
+# gate presses panel keys (open/grab/close) -> input_exclusive; the ORBITING
+# wait reads the HUD and presses nothing -> not exclusive (heat watchdog live).
+register_step("star_distance_gate", step_star_distance_gate,
+              input_exclusive=True)
+register_step("wait_sc_assist_orbiting", step_wait_sc_assist_orbiting)
 register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
 register_step("nav_supercruise_star", step_nav_supercruise_star, input_exclusive=True)

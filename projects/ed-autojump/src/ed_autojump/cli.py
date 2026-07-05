@@ -425,6 +425,9 @@ def cmd_run(args) -> int:
     # Council B docking <7.5km gate: right-side target-panel km supplier. None ->
     # dock_close_to_range fails closed (an unread distance is never "in range").
     dock_distance_km_supplier = None
+    # SC-assist HUD prompt reads (#17): confirm_orbiting / confirm_sc_assist_active
+    # / wait_sc_assist_orbiting. None -> each step's own fail-soft fallback.
+    hud_grabber = None
     if args.engage_keys:
         from ed_vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
@@ -479,6 +482,15 @@ def cmd_run(args) -> int:
                 return read_target_panel_km(_grab())
             print("vision: docking distance gate ON "
                   "(right-side target panel, <7.5km)")
+        # SC-assist HUD prompt reader (#17): the SAME bare full-frame grab —
+        # read_sc_hud/detect_orbiting crop HUD_REGION_FRAC themselves. Feeds
+        # the park orbit-confirm, exploration's ScHudState telemetry, and the
+        # startup/sc_resume get-around ORBITING wait (operator 2026-07-05
+        # rewire). WinRT-gated; unwired -> the steps' own fail-soft fallbacks.
+        if _navpanel_icon_full_frame is not None and _ocr.available():
+            hud_grabber = _navpanel_icon_full_frame
+            print("vision: SC-assist HUD reader ON "
+                  "(ORBITING/ACTIVE/ALIGN center prompts)")
         if nav_panel_reader is not None:
             print(f"exploration: nav-panel identity targeting ON "
                   f"(region={tuple(cfg.exploration.nav_panel_region)}) "
@@ -648,6 +660,7 @@ def cmd_run(args) -> int:
         navpanel_icon_grabber=navpanel_icon_grabber,
         navpanel_detail_grabber=navpanel_cv_grabber,
         navpanel_frame_grabber=navpanel_cv_grabber,
+        hud_grabber=hud_grabber,
         dock_distance_km_supplier=dock_distance_km_supplier,
         visited_logger=visited_logger,
         overlay=overlay,

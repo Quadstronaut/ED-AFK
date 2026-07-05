@@ -205,6 +205,14 @@ class StepContext:
     navpanel_detail_grabber: Optional[Callable[[], Any]] = None
     navpanel_frame_grabber: Optional[Callable[[], Any]] = None
 
+    # SC-ASSIST HUD prompt frame source (#17): FULL-frame .grab, panel CLOSED —
+    # hud_sc_indicators.read_sc_hud/detect_orbiting crop HUD_REGION_FRAC
+    # themselves. Consumers: confirm_orbiting (park), confirm_sc_assist_active
+    # (exploration telemetry), wait_sc_assist_orbiting (startup/sc_resume
+    # get-around pacing). None -> each step's own no-grabber fallback (fail-soft
+    # observe / immediate best-effort True), no regression.
+    hud_grabber: Optional[Callable[[], Any]] = None
+
     # DOCKED-MENU detector frame source (full-frame BGR .grab). When wired,
     # confirm_menu_item / station_services_macro read the live docked menu via
     # vision.station_menu.detect_menu_item to know which item is highlighted

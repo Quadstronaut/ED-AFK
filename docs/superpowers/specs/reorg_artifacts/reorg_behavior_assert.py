@@ -202,9 +202,11 @@ def main() -> int:
     results.append(("B1 classifier FRESH_ARRIVAL_WINDOW_S == 30.0",
                     b1 == 30.0, f"got {b1!r}"))
 
-    # B2 (distinct from B1)
-    b2 = module_constant(steps, "_FRESH_ARRIVAL_WINDOW_S")
-    results.append(("B2 steps._FRESH_ARRIVAL_WINDOW_S == 120.0 (!= B1)",
+    # B2 (distinct from B1). RENAMED 2026-07-05 (#12): the scoop constant is now
+    # _SCOOP_FRESH_ARRIVAL_WINDOW_S so it can't be confused with B1's classifier
+    # window; same 120.0 value, same distinctness assertion.
+    b2 = module_constant(steps, "_SCOOP_FRESH_ARRIVAL_WINDOW_S")
+    results.append(("B2 steps._SCOOP_FRESH_ARRIVAL_WINDOW_S == 120.0 (!= B1)",
                     b2 == 120.0 and b2 != b1, f"got {b2!r}"))
 
     # B3
