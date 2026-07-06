@@ -108,11 +108,11 @@ def test_cv_error_fails_closed(monkeypatch):
 # ---- STAR-ROW confirm (live 2026-07-06 starsmack fix) ------------------------
 
 def test_row0_not_star_refuses_before_opening_detail(monkeypatch):
-    """THE STARSMACK FIX: row 0 classifies as anything but STAR (here: a nav
-    beacon / signal row) -> refuse BEFORE UI_Select — the row's detail page is
-    never opened, nothing is pressed at it."""
-    monkeypatch.setattr(navicons, "detect_row_icon",
-                        lambda frame, row: navicons.NON_STAR)
+    """THE STARSMACK FIX: the selected row classifies as anything but STAR
+    (here: a nav beacon / signal row) -> refuse BEFORE UI_Select — the row's
+    detail page is never opened, nothing is pressed at it."""
+    monkeypatch.setattr(navicons, "detect_selected_row_star",
+                        lambda frame: (navicons.NON_STAR, 0.07))
     s = FakeSender()
     logs = []
     ctx = StepContext(sender=s, sleeper=lambda _x: None,
@@ -122,12 +122,13 @@ def test_row0_not_star_refuses_before_opening_detail(monkeypatch):
     assert s.actions() == [OPEN, OPEN]                    # open -> refuse -> close
     refusals = [p for k, p in logs if k == "NavSupercruiseStarRefused"]
     assert refusals and refusals[0]["reason"] == "row0_not_star"
+    assert refusals[0]["score"] == 0.07                   # confidence is logged
 
 
 def test_row0_star_proceeds_to_label_confirm(monkeypatch):
-    """Row 0 confirmed STAR -> the macro proceeds (blind label path here)."""
-    monkeypatch.setattr(navicons, "detect_row_icon",
-                        lambda frame, row: navicons.STAR)
+    """Selected row confirmed STAR -> the macro proceeds (blind label path)."""
+    monkeypatch.setattr(navicons, "detect_selected_row_star",
+                        lambda frame: (navicons.STAR, 0.79))
     s = FakeSender()
     ctx = StepContext(sender=s, sleeper=lambda _x: None)
     ctx.navpanel_frame_grabber = lambda: "frame"
@@ -137,9 +138,9 @@ def test_row0_star_proceeds_to_label_confirm(monkeypatch):
 
 def test_row_cv_error_fails_closed(monkeypatch):
     """Row-icon CV exception -> refuse, press nothing at the row."""
-    def boom(frame, row):
+    def boom(frame):
         raise RuntimeError("icon cv blew up")
-    monkeypatch.setattr(navicons, "detect_row_icon", boom)
+    monkeypatch.setattr(navicons, "detect_selected_row_star", boom)
     s = FakeSender()
     ctx = StepContext(sender=s, sleeper=lambda _x: None)
     ctx.navpanel_frame_grabber = lambda: "frame"

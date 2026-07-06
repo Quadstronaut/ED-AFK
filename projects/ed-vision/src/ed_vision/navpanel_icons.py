@@ -183,6 +183,33 @@ def classify_icon(cell: Any) -> str:
     return classify_icon_scored(cell)[0]
 
 
+# --- SELECTED-ROW star confirm (2026-07-06) -----------------------------------
+#
+# AUDIT NOTE (2026-07-06): the fixed-geometry readers in this module
+# (detect_row_icon / scan_navpanel_rows / selected_row_icon / selected_row_kind,
+# all built on row_cell_rect's ROW0_CY) are DEPRECATED for live use — audited
+# against four real frames, detect_row_icon read the right cell on exactly ONE
+# (capricorni, the frame its constant was tuned on). The dynamic
+# selected-band localizer below (selected_destination_icon and its
+# _selected_band/_locate_glyph internals, real-frame validated 2026-06-22)
+# is the ONE live path; detect_selected_row_star is its thin STAR/NON_STAR
+# face for callers that only need "is the selected row the arrival star".
+
+
+def detect_selected_row_star(frame: Any) -> tuple[str, float]:
+    """(verdict, score) for the SELECTED nav-list row's type icon, via the
+    validated dynamic localizer (selected_destination_icon — no fixed row or
+    icon coordinate). NONE/0.0 when no band / no glyph / unreadable — fail
+    closed, never raises. Validated 2026-07-06 on all seven committed real
+    frames: STAR 0.69-0.79 on the five star-selected frames, NON_STAR on the
+    system-row and station-row frames."""
+    try:
+        d = selected_destination_icon(frame)
+        return (d.get("verdict", NONE), float(d.get("score", 0.0)))
+    except Exception:  # noqa: BLE001 — perception fail-soft, callers fail closed
+        return (NONE, 0.0)
+
+
 # ===========================================================================
 # MULTI-KIND correlation (route-complete dock-vs-park) — EXTENDS the glyph
 # pipeline above, does NOT rebuild it.
