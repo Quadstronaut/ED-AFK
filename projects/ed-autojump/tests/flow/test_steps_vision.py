@@ -69,7 +69,7 @@ def test_orient_compass_returns_alignment_result():
 
 
 def test_orient_compass_logs_per_iteration_telemetry():
-    """Every align iteration lands in the session recording as OrientIter â€”
+    """Every align iteration lands in the session recording as OrientIter —
     reads were invisible in session_123734 and the oscillation could only be
     root-caused because ED happened to still be running (2026-06-06)."""
     reader = FakeReader([_ahead(-0.6), _ahead(0.0)])   # one press, then aligned
@@ -94,7 +94,7 @@ def test_orient_compass_dumps_frames_when_sink_wired():
 
 
 def test_orient_compass_no_sink_no_crash():
-    """frame_sink is optional â€” None must not break the align loop."""
+    """frame_sink is optional — None must not break the align loop."""
     reader = FakeReader([_ahead(0.0)])
     ctx, _ = _ctx(reader)
     assert ctx.frame_sink is None
@@ -134,7 +134,7 @@ def test_orient_compass_fails_closed_when_supercruise_lost():
 
 def test_orient_compass_guard_inert_when_starting_in_normal_space():
     """smack_recovery's escape-vector orient runs in NORMAL space (during the
-    SC charge). The guard arms only when the step STARTS in supercruise â€”
+    SC charge). The guard arms only when the step STARTS in supercruise —
     a normal-space start must orient exactly as before."""
     reader = FakeReader([_ahead(-0.6), _ahead(0.0)])   # one press, then aligned
     ctx, _ = _ctx(reader)

@@ -127,11 +127,13 @@ Runs when a NEW route arrives while docked. Retry: from `target_next_route`, ×3
 
 ## 7 · Startup (`startup.toml`) — cold start, normal space *(CV-rewired 2026-07-05; operator live reorder 2026-07-06)*
 
-Two lanes on a CV distance gate (operator). Retry: from `target_next_route`, ×3
-(inline recovery lane deleted). Honk rides in parallel. **Live finding 2026-07-06
-(run 000806): ED refuses SC entry at zero throttle (THROTTLE UP hang) — throttle
-now leads the scene.** Startup-only revision of the "no throttle before the gate"
-law; sc_resume (already in SC) keeps it.
+Two lanes on a CV distance gate (operator). Retry: from `star_distance_gate`, ×3
+(re-anchored 2026-07-06 after the run-010444 starsmack — no retry may bypass the
+gate into the burn lane; inline recovery lane deleted 07-05). Honk rides in
+parallel. **Live finding 2026-07-06 (run 000806): ED refuses SC entry at zero
+throttle (THROTTLE UP hang) — throttle now leads the scene.** Startup-only
+revision of the "no throttle before the gate" law; sc_resume (already in SC)
+keeps it.
 
 | # | Action | Kind | Req | Gate / signal | Notes |
 |---|---|---|---|---|---|
@@ -144,13 +146,22 @@ law; sc_resume (already in SC) keeps it.
 | 7-8 | orient ×2 | vision | req | compass + widget CV | shared-lane burn step gone (jump leg re-asserts throttle) |
 | 9 | `engage_jump_clearance` | gated | req | obstruction clearance loop → `StartJump` | fail-closed backstop for both lanes |
 
-## 8 · SC resume (`sc_resume.toml`) — restart mid-SC, stale *(CV-rewired 2026-07-05)*
+## 8 · SC resume (`sc_resume.toml`) — restart mid-SC, stale *(CV-rewired 2026-07-05; retry re-anchored 2026-07-06)*
 
 Same shape minus SC entry (already in SC): `star_distance_gate` (skip_to fast resume) →
 `nav_supercruise_star`(req) → `wait_sc_assist_orbiting` → `target_next_route`(req) →
 throttle 100 → orient ×2(req) → `engage_jump_clearance`(req). The in-scene gate is
 live-proven necessary (session_100951: nose-on-star restart misclassified as clear
 loiter) — now a real distance READ instead of the lock-speed proxy.
+
+**Retry anchor = `star_distance_gate` (both this scene and startup, live fix 2026-07-06):**
+run 010444 starsmacked L 32-8 because the old `target_next_route` anchor let a CLOSE-lane
+fail retry straight into the full-burn lane, nose still on the star. No retry may bypass
+the gate. Same run drove two more hardenings: `star_distance_gate` now GuiFocus-resets
+before its panel toggles (an interrupted run leaves the panel open and inverts every
+subsequent toggle), and `nav_supercruise_star` icon-confirms row 0 IS the star (trained
+star oracle) before pressing anything — a nav-beacon/signal row can sort first and its
+detail page also offers SUPERCRUISE ASSIST.
 
 ## 9 · Smack recovery (`smack_recovery.toml`) — LOCKED LAW (operator 8-step)
 
@@ -180,6 +191,13 @@ until SupercruiseEntry`(req). In SC: hop lock(req, anchor) → burn → 13 s cle
    live-witnessed → park). Edge, bounded, known.
 3. **Capture-at-plot unconfirmed** — plot-to-station setting `Destination.Body!=0` at
    NavRoute time has never been observed live; station docking rides the settle-re-poll path.
+3b. **Smack CV unwired → abstain (LIVE-HIT 2026-07-06)** — the L 32-8 starsmack preempted
+   sc_resume correctly, then `SmackDeterminationAbstained{cv_unwired}` and the bot idled.
+   The escape-vector CV module exists but `_escape_vector_grabber` was never wired (by
+   design, INV2, pending #9 which is PAUSED on the escape-vector-uniqueness question).
+   The abstain is now LOUD (console + persistent overlay status) but recovery still needs
+   Operator's ruling. 9 pre-existing smack-domain test reds encode the same pending decisions
+   (incl. the unmerged pips-reset shape in test_smack_recovery_flow).
 4. ~~#26 honk detach~~ — DONE 2026-07-05: no parent join; tracks own their tail unsubscribe.
 5. ~~#12 rename~~ — DONE 2026-07-05: `_SCOOP_FRESH_ARRIVAL_WINDOW_S`.
 6. ~~Startup / SC-resume old blind flows~~ — DONE 2026-07-05: CV distance gate, two lanes,

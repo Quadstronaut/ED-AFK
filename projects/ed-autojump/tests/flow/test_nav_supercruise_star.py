@@ -1,18 +1,29 @@
-"""Tests for step_nav_supercruise_star (#4): blind row-0 SC-assist + #8 label-confirm.
+"""Tests for step_nav_supercruise_star: STAR-ROW confirm + #8 label-confirm.
 
-The arrival star is always nav-panel row 0 (memory arrival-star-row0-blind-sc-assist),
-so the step blind-walks onto the Supercruise Assist button and, IF a detail-page
-grabber is wired, CONFIRMS the label reads SUPERCRUISE ASSIST before pressing.
+LIVE REVISION 2026-07-06 (run 010444 starsmack): "row 0 is always the arrival
+star" is REFUTED — a nav beacon / signal row can sort first and its detail page
+also offers SUPERCRUISE ASSIST. The step now (a) classifies row 0's column-0
+icon with the trained star oracle before touching it (fail-closed), and
+(b) re-reads a transiently-unreadable button label IN-STEP (bounded) instead
+of failing the whole procedure — the operator-hated triple panel-open.
 """
 
+from types import SimpleNamespace
+
 import ed_vision.navpanel_detail as navdetail
+import ed_vision.navpanel_icons as navicons
 from ed_core.flow.context import StepContext
+from ed_vision.navpanel_detail import DetailButton, DetailLabelRead
 
 from ed_autojump.flow.steps import step_nav_supercruise_star
 
 from . import FakeSender
 
 OPEN, SEL, RIGHT = "FocusLeftPanel", "UI_Select", "UI_Right"
+
+
+def _read(button, text=""):
+    return DetailLabelRead(button, text, button is not DetailButton.UNKNOWN)
 
 
 def test_blind_when_no_grabber():
@@ -26,7 +37,9 @@ def test_blind_when_no_grabber():
 
 def test_confirms_then_presses(monkeypatch):
     """Grabber wired + label IS the SC-assist button -> engage press fires."""
-    monkeypatch.setattr(navdetail, "confirm_button", lambda frame, expected: True)
+    monkeypatch.setattr(navdetail, "read_detail_button_label",
+                        lambda frame: _read(DetailButton.SC_ASSIST,
+                                            "SUPERCRUISE ASSIST AND ORBIT"))
     s = FakeSender()
     ctx = StepContext(sender=s, sleeper=lambda _x: None)
     ctx.navpanel_detail_grabber = lambda: "frame"
@@ -34,28 +47,104 @@ def test_confirms_then_presses(monkeypatch):
     assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
 
 
-def test_refuses_on_wrong_label(monkeypatch):
-    """Grabber wired + label NOT the SC-assist OFF button -> DO NOT press engage;
-    close the panel and fail-closed (never fire a wrong/already-on control)."""
-    monkeypatch.setattr(navdetail, "confirm_button", lambda frame, expected: False)
+def test_refuses_on_wrong_label_and_logs_raw_text(monkeypatch):
+    """Grabber wired + label NOT the SC-assist OFF button (all reads) -> DO NOT
+    press engage; close the panel, fail-closed, and the refusal carries the
+    RAW OCR text (live findings 3/5: refusals were undiagnosable without it)."""
+    monkeypatch.setattr(navdetail, "read_detail_button_label",
+                        lambda frame: _read(DetailButton.LOCK, "LOCK DESTINATION"))
     s = FakeSender()
-    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    logs = []
+    ctx = StepContext(sender=s, sleeper=lambda _x: None,
+                      record=lambda k, p: logs.append((k, p)))
     ctx.navpanel_detail_grabber = lambda: "frame"
     assert step_nav_supercruise_star(ctx) is False
     # open -> detail -> right -> CLOSE.  No second UI_Select (no engage).
     assert s.actions() == [OPEN, SEL, RIGHT, OPEN]
+    refusals = [p for k, p in logs if k == "NavSupercruiseStarRefused"]
+    assert refusals and refusals[0]["label"] == "LOCK DESTINATION"
+
+
+def test_transient_bad_read_recovers_in_step(monkeypatch):
+    """Live findings 3/5 fix: a transient UNKNOWN read must NOT fail the step —
+    the label is re-read in place and the engage still fires. No procedure
+    retry, no repeated panel opens."""
+    reads = [_read(DetailButton.UNKNOWN), _read(DetailButton.UNKNOWN),
+             _read(DetailButton.SC_ASSIST, "SUPERCRUISE ASSIST")]
+    monkeypatch.setattr(navdetail, "read_detail_button_label",
+                        lambda frame: reads.pop(0) if reads else _read(DetailButton.SC_ASSIST))
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.navpanel_detail_grabber = lambda: "frame"
+    assert step_nav_supercruise_star(ctx) is True
+    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]   # ONE panel pass
+
+
+def test_already_on_is_success_without_press(monkeypatch):
+    """DEACTIVATE label = the assist is ALREADY engaged = the goal state.
+    Pressing would turn it OFF — close and succeed with no engage press."""
+    monkeypatch.setattr(navdetail, "read_detail_button_label",
+                        lambda frame: _read(DetailButton.SC_DEACTIVATE,
+                                            "DEACTIVATE SUPERCRUISE ASSIST"))
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.navpanel_detail_grabber = lambda: "frame"
+    assert step_nav_supercruise_star(ctx) is True
+    assert s.actions() == [OPEN, SEL, RIGHT, OPEN]        # no second UI_Select
 
 
 def test_cv_error_fails_closed(monkeypatch):
     """A grabber/CV exception is swallowed and treated as not-confirmed -> refuse."""
-    def boom(frame, expected):
+    def boom(frame):
         raise RuntimeError("ocr blew up")
-    monkeypatch.setattr(navdetail, "confirm_button", boom)
+    monkeypatch.setattr(navdetail, "read_detail_button_label", boom)
     s = FakeSender()
     ctx = StepContext(sender=s, sleeper=lambda _x: None)
     ctx.navpanel_detail_grabber = lambda: "frame"
     assert step_nav_supercruise_star(ctx) is False
     assert s.actions() == [OPEN, SEL, RIGHT, OPEN]
+
+
+# ---- STAR-ROW confirm (live 2026-07-06 starsmack fix) ------------------------
+
+def test_row0_not_star_refuses_before_opening_detail(monkeypatch):
+    """THE STARSMACK FIX: row 0 classifies as anything but STAR (here: a nav
+    beacon / signal row) -> refuse BEFORE UI_Select — the row's detail page is
+    never opened, nothing is pressed at it."""
+    monkeypatch.setattr(navicons, "detect_row_icon",
+                        lambda frame, row: navicons.NON_STAR)
+    s = FakeSender()
+    logs = []
+    ctx = StepContext(sender=s, sleeper=lambda _x: None,
+                      record=lambda k, p: logs.append((k, p)))
+    ctx.navpanel_frame_grabber = lambda: "frame"
+    assert step_nav_supercruise_star(ctx) is False
+    assert s.actions() == [OPEN, OPEN]                    # open -> refuse -> close
+    refusals = [p for k, p in logs if k == "NavSupercruiseStarRefused"]
+    assert refusals and refusals[0]["reason"] == "row0_not_star"
+
+
+def test_row0_star_proceeds_to_label_confirm(monkeypatch):
+    """Row 0 confirmed STAR -> the macro proceeds (blind label path here)."""
+    monkeypatch.setattr(navicons, "detect_row_icon",
+                        lambda frame, row: navicons.STAR)
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.navpanel_frame_grabber = lambda: "frame"
+    assert step_nav_supercruise_star(ctx) is True
+    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
+
+
+def test_row_cv_error_fails_closed(monkeypatch):
+    """Row-icon CV exception -> refuse, press nothing at the row."""
+    def boom(frame, row):
+        raise RuntimeError("icon cv blew up")
+    monkeypatch.setattr(navicons, "detect_row_icon", boom)
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.navpanel_frame_grabber = lambda: "frame"
+    assert step_nav_supercruise_star(ctx) is False
+    assert s.actions() == [OPEN, OPEN]
 
 
 def test_emergency_drop_returns_false():

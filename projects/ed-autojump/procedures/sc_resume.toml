@@ -32,7 +32,14 @@
 parallel_tracks = ["honk"]   # honk fires every system, no matter what
 
 [on_required_fail]
-retry_from = "target_next_route"
+# LIVE FIX 2026-07-06 (run 010444 starsmack): retries re-run from the
+# CLEAR-OF-STAR GATE, never straight into the fast-resume burn. The old
+# target_next_route anchor let a CLOSE-lane fail (nav_supercruise_star
+# refused) retry into SetSpeed100 with the nose still on the star — the
+# session_100951 failure mode reborn through the retry path, and the exact
+# sequence that smacked L 32-8 (gate unreadable -> close lane -> refusal ->
+# retry -> full burn -> drop at the star 11s later).
+retry_from = "star_distance_gate"
 max_retries = 3
 backoff_s = 2.0
 

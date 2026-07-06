@@ -196,7 +196,10 @@ def test_startup_rewired_shape():
     gate = proc.steps[1]
     assert gate.skip_to == "target_next_route"      # FAR lane vault
     assert proc.parallel_tracks == ("honk",)
-    assert proc.on_required_fail.retry_from == "target_next_route"
+    # LIVE FIX 2026-07-06 (run 010444 starsmack): retries re-run the
+    # clear-of-star GATE — the old target_next_route anchor let a CLOSE-lane
+    # fail retry into a full burn with the nose still on the star.
+    assert proc.on_required_fail.retry_from == "star_distance_gate"
 
 
 def test_sc_resume_rewired_shape():
@@ -211,6 +214,9 @@ def test_sc_resume_rewired_shape():
         assert gone not in actions
     assert proc.steps[0].skip_to == "target_next_route"
     assert proc.parallel_tracks == ("honk",)
+    # LIVE FIX 2026-07-06 (run 010444 starsmack): same gate re-anchor as
+    # startup — no retry may bypass the clear-of-star gate into the burn.
+    assert proc.on_required_fail.retry_from == "star_distance_gate"
 
 
 def test_gate_throttle_order_per_scene():
