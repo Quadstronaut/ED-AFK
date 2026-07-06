@@ -125,19 +125,23 @@ Runs when a NEW route arrives while docked. Retry: from `target_next_route`, ×3
 | 3 | `wait_masslock_clear` | wait | req | `FsdMassLocked` (Status bit 16) CLEARING — game's own >~10 km signal | no timer; fails closed w/o Status |
 | 4-8 | jump leg | | | same shape as Traversal 2-7 (`engage_jump_clearance` re-checks mass-lock) | |
 
-## 7 · Startup (`startup.toml`) — cold start, normal space *(CV-rewired 2026-07-05)*
+## 7 · Startup (`startup.toml`) — cold start, normal space *(CV-rewired 2026-07-05; operator live reorder 2026-07-06)*
 
 Two lanes on a CV distance gate (operator). Retry: from `target_next_route`, ×3
-(inline recovery lane deleted). Honk rides in parallel.
+(inline recovery lane deleted). Honk rides in parallel. **Live finding 2026-07-06
+(run 000806): ED refuses SC entry at zero throttle (THROTTLE UP hang) — throttle
+now leads the scene.** Startup-only revision of the "no throttle before the gate"
+law; sc_resume (already in SC) keeps it.
 
 | # | Action | Kind | Req | Gate / signal | Notes |
 |---|---|---|---|---|---|
-| 1 | `star_distance_gate` | vision | | OCR row-0 (star) distance; <100 Ls or UNREADABLE → close lane; ≥100 Ls → skip to 5 | fail-closed to get-around; replaces blind max_rows gate (#28 dead) |
-| 2 | `engage_supercruise` | gated | req | `SupercruiseEntry` | close lane — SC first, no throttle at star |
-| 3 | `nav_supercruise_star` | vision | req | CV #8 label confirm | lock + assist get-around (blind re-lock/orbit dead) |
-| 4 | `wait_sc_assist_orbiting` | wait | | cyan ORBITING prompt (CV, bounded poll) | replaces blind 13s (#27 dead) |
-| 5 | `target_next_route` | gated | req | — | FAR lane lands here; cancels assist |
-| 6-8 | throttle 100 → orient ×2 | tap/vision | req | compass + widget CV | |
+| 1 | `set_throttle` 100 | tap | | — | FIRST: SC entry needs live throttle (live 2026-07-06) |
+| 2 | `star_distance_gate` | vision | | OCR row-0 (star) distance; <100 Ls or UNREADABLE → close lane; ≥100 Ls → skip to 6 | fail-closed to get-around; replaces blind max_rows gate (#28 dead) |
+| 3 | `engage_supercruise` | gated | req | `SupercruiseEntry` | close lane — throttle already up |
+| 4 | `nav_supercruise_star` | vision | req | CV #8 label confirm | lock + assist get-around (blind re-lock/orbit dead) |
+| 5 | `wait_sc_assist_orbiting` | wait | | cyan ORBITING prompt (CV, bounded poll) | replaces blind 13s (#27 dead) |
+| 6 | `target_next_route` | gated | req | — | FAR lane lands here; cancels assist |
+| 7-8 | orient ×2 | vision | req | compass + widget CV | shared-lane burn step gone (jump leg re-asserts throttle) |
 | 9 | `engage_jump_clearance` | gated | req | obstruction clearance loop → `StartJump` | fail-closed backstop for both lanes |
 
 ## 8 · SC resume (`sc_resume.toml`) — restart mid-SC, stale *(CV-rewired 2026-07-05)*

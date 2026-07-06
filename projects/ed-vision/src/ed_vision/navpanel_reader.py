@@ -45,6 +45,16 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence
 # READ layer stays CALIBRATION-PENDING); the PARSE/SELECT logic is validated.
 DEFAULT_NAV_REGION = (505, 435, 410, 330)
 
+# MEASURED @1920x1080 on the PINNED LIVE frame tests/fixtures/navpanel/
+# lawd26_sc_distance_1080.png (operator screenshot, LAWD 26, 2026-07-05): the
+# DISTANCE column of the NAVIGATION list, top ~10 rows. Complements
+# DEFAULT_NAV_REGION, whose crop EXCLUDES the distance column by design (fine
+# for the name parser, fatal for the distance gate — session_2026-07-06T001222
+# read names only and verdicted "unreadable" every run). First OCR line = the
+# selected row-0 distance. The "DISTANCE" column header sits just above y=395
+# and carries no digits, so panel drift pulling it into the crop fails closed.
+DEFAULT_NAV_DISTANCE_REGION = (1120, 395, 230, 380)
+
 
 def resolve_nav_region(
     default_region: Sequence[int],
@@ -130,6 +140,12 @@ def _is_nearby_system_row(raw: str) -> bool:
 _DIST_IN_SYSTEM_RE = re.compile(r"(\d[\d,\.]*)\s*(KM|MM|LS)\b", re.IGNORECASE)
 _LS_PER_KM = 1.0 / 299_792.0   # 1 light-second = 299,792 km
 
+# WinRT sometimes splits a thousands comma with a space ("79, 420Ls" for
+# 79,420Ls — live frame lawd26_sc_distance_1080.png, 2026-07-05). Left as-is,
+# _DIST_IN_SYSTEM_RE would match only the trailing group and report 420 Ls for
+# a 79,420 Ls star. Rejoin digit-comma-space-digit before matching.
+_COMMA_SPLIT_RE = re.compile(r"(\d),\s+(?=\d)")
+
 
 def parse_first_row_distance_ls(lines: Iterable[str]) -> Optional[float]:
     """Distance (in Ls) of the FIRST non-blank OCR line — nav-panel row 0, the
@@ -145,6 +161,7 @@ def parse_first_row_distance_ls(lines: Iterable[str]) -> Optional[float]:
         raw = (line or "").strip()
         if not raw:
             continue
+        raw = _COMMA_SPLIT_RE.sub(r"\1,", raw)
         m = _DIST_IN_SYSTEM_RE.search(raw)
         if not m:
             return None
@@ -164,14 +181,18 @@ def parse_first_row_distance_ls(lines: Iterable[str]) -> Optional[float]:
 def read_first_row_distance_ls(
     frame: Any,
     *,
-    region: Sequence[int] = DEFAULT_NAV_REGION,
+    region: Sequence[int] = DEFAULT_NAV_DISTANCE_REGION,
 ) -> Optional[float]:
     """FULL FRAME -> row-0 (arrival star) distance in Ls, or None.
 
     Crops `region` ((x, y, w, h), 1080p-referenced, height-scaled like
     navpanel_column0's crop idiom), OCRs it (read_nav_panel_lines, WinRT-first)
     and parses the first line. None on ANY failure (bad frame, no OCR engine,
-    unreadable top row) — callers fail closed. Never raises."""
+    unreadable top row) — callers fail closed. Never raises.
+
+    Region default is the DISTANCE column (DEFAULT_NAV_DISTANCE_REGION), NOT
+    DEFAULT_NAV_REGION: the name-column crop deliberately excludes the distance
+    column, so it can never yield a reading (live finding 2026-07-05)."""
     try:
         import numpy as np  # type: ignore
         arr = np.asarray(frame)

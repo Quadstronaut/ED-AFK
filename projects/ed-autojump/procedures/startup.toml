@@ -8,23 +8,29 @@
 # #27 (the 13s wait) and #28 (max_rows=3) died with the blind flow, as
 # operator-ratified 2026-06-27.
 #
+#   THROTTLE   set_throttle(100) FIRST — ED REFUSES SC entry at zero throttle
+#              (live 2026-07-06, run 000806: Supercruise pressed parked at the
+#              star, ship hung at the THROTTLE UP prompt, no SupercruiseEntry
+#              ever came). Operator reordered live. This supersedes the
+#              2026-06-08 "no throttle before the gate" law IN THIS SCENE
+#              ONLY — sc_resume (already in SC, no SC entry) keeps it. The
+#              burn window at a maybe-near star is the gate read (~1.5s);
+#              right after, the CLOSE lane's SC entry / get-around owns it.
 #   LANE GATE  star_distance_gate — CV: open panel, OCR row 0 (the arrival
 #              star, ALWAYS the closest in-system row, selected on open),
 #              close panel. < 100 Ls or UNREADABLE -> CLOSE lane (fail-closed:
-#              never blind-throttle at a maybe-near star — the 2026-06-08
-#              normal-space star-ram fix, now with a real distance read
-#              instead of the lock-speed proxy). >= 100 Ls -> skip_to vaults
-#              straight to the direct jump (~100 Ls = the settled obstruction
-#              floor, ed-fsd-obstruction-distance).
-#   CLOSE lane enter supercruise FIRST (takes NO throttle — a close star never
-#              gets set_throttle(100) pointed at it; in normal space you
+#              the 2026-06-08 normal-space star-ram fix, now with a real
+#              distance read instead of the lock-speed proxy). >= 100 Ls ->
+#              skip_to vaults straight to the direct jump (~100 Ls = the
+#              settled obstruction floor, ed-fsd-obstruction-distance).
+#   CLOSE lane enter supercruise (throttle already up; in normal space you
 #              cannot SC-assist, so SC entry precedes the orbit), then
 #              nav_supercruise_star (CV-confirmed lock+assist, replaces the
 #              blind re-lock + sc_assist_orbit), then wait for the cyan
 #              ORBITING DESTINATION HUD prompt (CV, bounded poll — replaces
 #              the blind 13s: the prompt IS "the orbit has the ship moving
 #              off the star", which is what the 13s guessed at).
-#   SHARED     lock next hop (cancels the assist) -> burn -> orient ->
+#   SHARED     lock next hop (cancels the assist) -> orient ->
 #              engage_jump_clearance (obstruction fails closed there and
 #              move-retries — the fail-closed backstop for both lanes).
 #
@@ -47,21 +53,23 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  # vision | 0 CLEAR-OF-STAR CV GATE. True (CLOSE/unreadable) -> fall through to
+  # tap | 0 THROTTLE UP FIRST — ED refuses SC entry at zero throttle (live
+  # 2026-07-06, THROTTLE UP hang; operator reorder — see header THROTTLE).
+  { action = "set_throttle", pct = 100 },                   # tap    | 0 SC entry needs live throttle
+  # vision | 1 CLEAR-OF-STAR CV GATE. True (CLOSE/unreadable) -> fall through to
   # the get-around; False (confidently FAR) -> skip_to the direct jump.
-  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 100.0 },  # vision | 0 EXCLUSIVE — row-0 distance read
-  # gated | 1 CLOSE lane: enter supercruise FIRST — no throttle at the star.
-  { action = "engage_supercruise", required = true },       # gated  | 1 event/state-gated on SupercruiseEntry
-  # vision | 2 CV-confirmed lock + SC-assist toward the star (row 0, #8 label
+  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 100.0 },  # vision | 1 EXCLUSIVE — row-0 distance read
+  # gated | 2 CLOSE lane: enter supercruise (throttle already up).
+  { action = "engage_supercruise", required = true },       # gated  | 2 event/state-gated on SupercruiseEntry
+  # vision | 3 CV-confirmed lock + SC-assist toward the star (row 0, #8 label
   # confirm before the press). Replaces blind nav_panel_target + sc_assist_orbit.
-  { action = "nav_supercruise_star", required = true },     # vision | 2 EXCLUSIVE — CV lock+assist get-around
-  # wait | 3 CV orbit-acquire: poll the center HUD for ORBITING DESTINATION
+  { action = "nav_supercruise_star", required = true },     # vision | 3 EXCLUSIVE — CV lock+assist get-around
+  # wait | 4 CV orbit-acquire: poll the center HUD for ORBITING DESTINATION
   # (bounded poll-count, best-effort — the clearance loop below is the
   # fail-closed authority). Replaces the blind wait 13s.
-  { action = "wait_sc_assist_orbiting" },                   # wait   | 3 CV — cyan ORBITING prompt
+  { action = "wait_sc_assist_orbiting" },                   # wait   | 4 CV — cyan ORBITING prompt
   # ── shared continuation: the FAR lane lands here ──────────────────────────
-  { action = "target_next_route", required = true },        # gated  | 4 lock the NEXT SYSTEM (cancels the assist)
-  { action = "set_throttle", pct = 100 },                   # tap    | 5 burn
+  { action = "target_next_route", required = true },        # gated  | 5 lock the NEXT SYSTEM (cancels the assist)
   { action = "orient_compass", required = true },           # vision | 6 coarse
   { action = "orient_widget_ring", required = true },       # vision | 7 fine (no-op unless [vision].widget_ring_alignment)
   { action = "engage_jump_clearance", required = true },    # gated  | 8 FSD jump + obstruction clearance loop
