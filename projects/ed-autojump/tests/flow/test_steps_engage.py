@@ -143,6 +143,70 @@ def test_target_next_route_ignores_route_origin_match():
     assert now[0] >= 60.0
 
 
+# ---------------------------------------------------------------------------
+# Confirmation path 3 — stale NavRoute.json after a galmap reroute
+# (live 2026-07-06, LAWD 26 run 001222)
+# ---------------------------------------------------------------------------
+
+def _stale_navroute_ctx(sender, *, dest_system=999, star_class="M", body=0):
+    """Live 2026-07-06 (LAWD 26): a galaxy-map REROUTE (fastest<->economical)
+    retargets the new first hop and fires FSDTarget — but ED emits NO NavRoute
+    event and does NOT rewrite NavRoute.json. The locked Destination is OFF
+    the stale file; the only class source is the FSDTarget already in state
+    (backlog-replayed across restarts). seq NEVER advances — the press on an
+    already-locked hop emits nothing."""
+    now = [0.0]
+    def waiter(ev, t):
+        now[0] += t
+        return False
+    st = SimpleNamespace(destination=SimpleNamespace(system=dest_system,
+                                                     body=body, name="L 32-8"))
+    tgt = SimpleNamespace(system_address=dest_system, star_class=star_class)
+    ctx = StepContext(
+        sender=sender,
+        clock=lambda: now[0],
+        sleeper=lambda s: None,
+        event_waiter=waiter,
+        fsd_target_supplier=lambda: (3, tgt),
+        status_supplier=lambda: st,
+        # The STALE fastest-mode plot — dest_system is not on it.
+        navroute_supplier=lambda: SimpleNamespace(route=[
+            SimpleNamespace(system_address=7, star_class="G"),
+            SimpleNamespace(system_address=42, star_class="K"),
+        ]),
+    )
+    return ctx, now
+
+
+def test_target_next_route_confirms_off_route_via_fsdtarget_state():
+    """The 2026-07-06 wedge, fixed: locked hop off the stale NavRoute.json,
+    but the journal's own FSDTarget carries the class -> confirm by state,
+    never the watchdog."""
+    sender = FakeSender()
+    ctx, now = _stale_navroute_ctx(sender, star_class="M")
+    assert STEP_REGISTRY["target_next_route"](ctx) is True
+    assert sender.actions() == ["TargetNextRouteSystem"]
+    assert now[0] < 60.0
+
+
+@pytest.mark.parametrize("cls", ["N", "DA", "H", "W"])
+def test_target_next_route_danger_filter_covers_fsdtarget_state_path(cls):
+    """Danger filter must also cover the stale-file fallback path."""
+    sender = FakeSender()
+    ctx, _ = _stale_navroute_ctx(sender, star_class=cls)
+    assert STEP_REGISTRY["target_next_route"](ctx) is False
+
+
+def test_target_next_route_fsdtarget_state_path_requires_body0():
+    """A local-BODY lock (Destination.Body != 0) must never ride the
+    stale-file fallback even when the addresses line up — FSD hop locks are
+    always Body 0 (destination-Body discriminator)."""
+    sender = FakeSender()
+    ctx, now = _stale_navroute_ctx(sender, body=3)
+    assert STEP_REGISTRY["target_next_route"](ctx) is False
+    assert now[0] >= 60.0
+
+
 def test_target_next_route_watchdog_when_no_fsdtarget():
     """No FSDTarget ever (no route plotted / press lost) -> the 60s
     stuck-state watchdog fails the step instead of waiting forever."""
