@@ -362,13 +362,17 @@ def test_arrived_no_route_goes_docking():
     assert _arrival_branch(r) == "docking"
 
 
-def test_arrived_local_star_goes_docking():
-    # Onward route present BUT Destination is the local primary star
-    # (corroborant) -> still arrived -> docking.
+def test_local_star_dest_with_onward_route_goes_traversal():
+    # LIVE REFUTATION 2026-07-06 (run 095532, finding 13): this exact shape —
+    # onward route present, Destination = the local primary star — is the
+    # NORMAL state after EVERY clean arrival (post-jump residual lock; and
+    # arrival's own SC-assist locks the local star by design). The old
+    # corroborant branched it "docking" with 17 jumps remaining. A non-empty
+    # route is an onward hop, PERIOD -> traversal.
     r = _Runner(
         status=_status(dest_name=SYS, dest_body=0, dest_system=SYS_ADDR),
         navroute=_route((SYS, SYS_ADDR), ("Next", 99)))
-    assert _arrival_branch(r) == "docking"
+    assert _arrival_branch(r) == "traversal"
 
 
 def test_onward_hop_exploration_off_goes_traversal():
@@ -526,11 +530,14 @@ def test_dest_is_system_none_route_is_terminal():
     assert _dest_is_system(_status(), None, SYS) is True
 
 
-def test_dest_is_system_corroborant_local_star():
-    # Non-empty route, dest IS the local primary star -> True (corroborant).
+def test_dest_is_system_local_star_dest_still_onward():
+    # LIVE REFUTATION 2026-07-06 (finding 13): non-empty route + dest = the
+    # local primary star is EVERY clean post-jump arrival's state — the old
+    # corroborant read it as 'arrived' and dispatched dock 17 jumps early.
+    # Non-empty route -> False, no corroborant override.
     st = _status(dest_name=SYS, dest_body=0, dest_system=SYS_ADDR)
     route = _route((SYS, SYS_ADDR), ("Next", 99)).route
-    assert _dest_is_system(st, route, SYS) is True
+    assert _dest_is_system(st, route, SYS) is False
 
 
 def test_dest_is_system_false_next_hop_star():
