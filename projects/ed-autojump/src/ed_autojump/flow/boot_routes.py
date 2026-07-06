@@ -449,6 +449,10 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
             runner._run("smack_recovery")
             return "smack_recovery"
         # No CV confirmation -> abstain. Fall through to route/startup logic.
+        # LOUD (2026-07-06): every smack abstain announces itself -- see the
+        # cv_unwired site in _route_sc_exit for the incident.
+        print("[SMACK?] restarted smacked (FSD cooldown live) -- no CV "
+              "confirmation, continuing normal boot", flush=True)
         if runner.record is not None:
             runner.record("SmackDeterminationAbstained",
                           {"reason": "restart_no_cv", "fsd_cooldown": True})
@@ -1085,6 +1089,19 @@ def _route_sc_exit(runner: Any, ev: Any) -> Optional[str]:
 
     if grabber is None:
         # CV UNWIRED -> ABSTAIN. Never fire smack_recovery without CV evidence.
+        # LOUD ABSTAIN (live 2026-07-06, run 010444): the ship starsmacked,
+        # this abstain fired SILENTLY, and the bot idled with zero indication
+        # while the operator watched nothing happen for 78s. Abstaining is
+        # still correct (INV1/INV2) but it must never again be invisible.
+        msg = (f"[SMACK?] dropped at {body_type} -- smack CV unwired, "
+               f"NOT recovering (operator eyes needed)")
+        print(msg, flush=True)
+        if runner.overlay is not None:
+            try:
+                runner.overlay.event(msg)
+                runner.overlay.status(msg)   # persistent: stays on screen
+            except Exception:  # noqa: BLE001 -- overlay is fail-soft
+                pass
         if runner.record is not None:
             runner.record("SmackDeterminationAbstained",
                           {"reason": "cv_unwired", "body_type": body_type})

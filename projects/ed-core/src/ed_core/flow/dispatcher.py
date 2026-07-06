@@ -41,7 +41,7 @@ _PREEMPT_ON_SMACK = frozenset({"arrival", "startup", "dock", "sc_resume"})
 # timestamps, not wall clock) we accept between that clear and the arriving
 # FSDJump before treating the clear as belonging to a different event (e.g. a
 # manual re-plot minutes earlier). This is a CORRELATION window between two
-# journal events â€” NOT a wall-clock success/failure gate (house rule).
+# journal events — NOT a wall-clock success/failure gate (house rule).
 _CLEAR_JOIN_WINDOW_S = 60.0
 
 
@@ -59,7 +59,7 @@ class _TailHub:
 
     def __init__(self, tail: Any, on_event: Optional[Callable[[Any], None]] = None):
         self._tail = tail
-        self._on_event = on_event   # state tracking â€” called ONCE per event
+        self._on_event = on_event   # state tracking — called ONCE per event
         self._lock = threading.Lock()
         self._queues: dict[int, list] = {}
         self._next_handle = 0
@@ -228,11 +228,11 @@ class FlowRunner:
         self._navpanel_icon_grabber = navpanel_icon_grabber
         # Witchspace latch (hyperspace loading screen). SET on a Hyperspace
         # StartJump (JumpType=="Hyperspace"), CLEARED on FSDJump (~18s window,
-        # journal-confirmed). While set the interpreter PAUSES every step â€”
+        # journal-confirmed). While set the interpreter PAUSES every step —
         # the nav panel / orient scene is invalid and input is harmful.
         # Belt-and-suspenders: also cleared on SupercruiseEntry / Docked so a
         # missed FSDJump line can never permanently wedge the bot. Event-gated
-        # only â€” NO clock/timer (no-arbitrary-timed-waits rule).
+        # only — NO clock/timer (no-arbitrary-timed-waits rule).
         self._in_witchspace = False
         self._latest_status: Optional[Any] = status_supplier()
         self._caught_up = False
@@ -251,20 +251,20 @@ class FlowRunner:
         self._hub: Optional[_TailHub] = (
             _TailHub(tail, on_event=self._on_tail_event) if tail is not None else None)
         # Status.json is read from the main loop, honk waiters, and the heat
-        # watchdog thread â€” serialise the reader.
+        # watchdog thread — serialise the reader.
         self._status_lock = threading.Lock()
         # >0 while a UI macro owns input (heat watchdog pauses). Counter, not
         # a bool, so a parallel track can't clear the main track's hold.
         self._exclusive_lock = threading.Lock()
         self._exclusive_count = 0
-        # Latest FSDTarget + monotone seq â€” target_next_route's danger gate
+        # Latest FSDTarget + monotone seq — target_next_route's danger gate
         # reads these to tell a NEW target from a stale one.
         self._fsd_target_seq = 0
         self._latest_fsd_target: Optional[Any] = None
         # body_tour latches (set in _apply_state, exposed via _make_context).
         # _autoscan_bodies / _autoscan_seq / _fss_discovered are SYSTEM-SCOPED
         # (reset on FSDJump). _drop_seq / _scex_seq are monotone SESSION
-        # counters compared only against a same-loop snapshot â€” resetting them
+        # counters compared only against a same-loop snapshot — resetting them
         # is unnecessary and a mid-arrival reset cannot occur during a SC-only
         # tour (matches _fsd_target_seq, which also never resets).
         self._autoscan_bodies: set[str] = set()
@@ -273,7 +273,7 @@ class FlowRunner:
         self._fss_body_count = 0        # FSSDiscoveryScan BodyCount (min-bodies gate)
         self._drop_seq = 0              # SupercruiseDestinationDrop counter (PD1)
         self._scex_seq = 0              # SupercruiseExit counter (PD7)
-        # scoop_refuel inputs (spec 2026-06-06-scoop-refuel-design Â§4.3),
+        # scoop_refuel inputs (spec 2026-06-06-scoop-refuel-design §4.3),
         # fed by backlog AND live events like _smacked:
         # - the CURRENT system's arrival-star class = the last HYPERSPACE
         #   StartJump's StarClass (FSDTarget at arrival time is the NEXT hop;
@@ -282,9 +282,9 @@ class FlowRunner:
         #   (written at every LoadGame, so backlog always provides one).
         self._arrival_star_class: Optional[str] = None
         # Current system name (FSDJump/Location StarSystem, backlog AND live)
-        # â€” feeds the star-lock identity check (2026-06-07 council).
+        # — feeds the star-lock identity check (2026-06-07 council).
         self._current_system: Optional[str] = None
-        # Current ship model â€” lowercase internal name as emitted by the journal
+        # Current ship model — lowercase internal name as emitted by the journal
         # "Ship" field of LoadGame and Loadout events (e.g. "mandalay", "type9").
         # Feeds dock-pitch duration via ship_sizes.pitch_s_for_ship.
         self._current_ship: Optional[str] = None
@@ -292,7 +292,7 @@ class FlowRunner:
         # AWARE-UTC timestamp of the last FSDJump, parsed from the EVENT'S OWN
         # journal timestamp (NOT _event_times["jump"], which is monotonic
         # clock() stamped at backlog REPLAY time and reads a 25-min-stale
-        # restart as a fresh arrival â€” the 11:57Z incident). scoop_refuel's
+        # restart as a fresh arrival — the 11:57Z incident). scoop_refuel's
         # stale-arrival skip derives its age from this.
         self._last_fsdjump_utc: Optional[datetime] = None
         # Route-complete detection (council-ratified 2026-06-07). The final hop
@@ -308,7 +308,7 @@ class FlowRunner:
         #
         # _final_waypoint is cached from the NavRoute EVENT when present, but is
         # ALSO resolved at decision time from the DURABLE NavRoute.json reader
-        # (_navroute_state) â€” the event is missing across a journal rotation /
+        # (_navroute_state) — the event is missing across a journal rotation /
         # game restart mid-route, while the FILE persists (FIX 2026-06-07: the
         # missed-fire bug where a rotation dropped the cache and the final hop
         # fell into the 5m40s false-abort grind).
@@ -332,14 +332,14 @@ class FlowRunner:
         # relaunch behavior as the safe default.
         self._docked_system_addr: Optional[int] = None
         # True once the station has broadcast "$STATION_NoFireZone_entered;"
-        # via ReceiveText â€” the live-verified (2026-06-07 operator journal)
+        # via ReceiveText — the live-verified (2026-06-07 operator journal)
         # signal that the ship is inside the 7.5km docking request range.
         # Cleared by _clear_no_fire_zone at the start of each dock_approach
         # run so the flag only holds for THE CURRENT approach leg.
         self._no_fire_zone_entered: bool = False
         # CAPTURE-AT-PLOT (station-dock): when the operator plots a route to a
         # STATION (galaxy map -> station), the game may set Status.Destination
-        # to the station body (Body != 0) at the NavRoute event â€” BEFORE the
+        # to the station body (Body != 0) at the NavRoute event — BEFORE the
         # bot's first TargetNextRouteSystem overwrites it to the route's first
         # hop system star (Body 0). We snapshot it here and use it as the dock
         # trigger at route-complete instead of the (by-then-overwritten) live
@@ -403,7 +403,7 @@ class FlowRunner:
         """Seconds since the last FSDJump, per the EVENT'S OWN journal
         timestamp. None when no FSDJump has been seen. Evaluated at call time
         (now_utc()) so a context wires the live age, not a build-time snapshot.
-        Both sides are AWARE-UTC datetimes â€” subtraction is well-defined."""
+        Both sides are AWARE-UTC datetimes — subtraction is well-defined."""
         if self._last_fsdjump_utc is None:
             return None
         return (self.now_utc() - self._last_fsdjump_utc).total_seconds()
@@ -421,7 +421,7 @@ class FlowRunner:
 
     def _fresh_status(self) -> Optional[Any]:
         """Re-poll Status.json on every read. The previous wiring handed steps
-        a snapshot frozen at procedure start â€” `_poll_status` only ran in the
+        a snapshot frozen at procedure start — `_poll_status` only ran in the
         outer live loop, so engage_jump's fsd_charging gate and any in-step
         state machine were reading STALE flags for the procedure's whole life.
         Event-driven steps need live state; a stat() per read is cheap.
@@ -438,7 +438,7 @@ class FlowRunner:
 
     def _should_abort(self) -> bool:
         """Operator abort signal: panic hotkey or stop request. OPERATOR-ONLY
-        by design â€” the preempt flag must not flow through here (the heat
+        by design — the preempt flag must not flow through here (the heat
         watchdog exits PERMANENTLY on this signal; a transient preemption
         would kill heat protection for the rest of the session). Per-run
         contexts get the combined signal via _run_abort instead."""
@@ -451,7 +451,7 @@ class FlowRunner:
         """Abort signal for the CURRENT procedure's contexts: operator abort
         OR scene preemption. run_procedure polls this before every step and
         every in-step loop consults it, so a preempt lands at the next poll
-        â€” cooperative, key-release-safe, no thread killing."""
+        — cooperative, key-release-safe, no thread killing."""
         return self._should_abort() or self._preempt is not None
 
     # ---- exclusive-input guard (heat watchdog pauses) ----------------------
@@ -529,7 +529,7 @@ class FlowRunner:
             # <7.5km docking gate read; unwired -> fail-closed default.
             dock_distance_km_supplier=(self.dock_distance_km_supplier
                                        or (lambda: None)),
-            # Current ship model (journal LoadGame/Loadout latch) â€” feeds the
+            # Current ship model (journal LoadGame/Loadout latch) — feeds the
             # dock blind-maneuver's ship-size pitch duration.
             ship_supplier=lambda: self._current_ship,
             fss_body_count_supplier=lambda: self._fss_body_count,
@@ -550,7 +550,7 @@ class FlowRunner:
             current_system_supplier=lambda: self._current_system,
             ship_fuel_supplier=lambda: self._ship_fuel,
             # Bound method, NOT a lambda capturing a value: jump age must be
-            # evaluated at call time (now_utc() advances) â€” a build-time
+            # evaluated at call time (now_utc() advances) — a build-time
             # snapshot would freeze the age at context construction.
             jump_age_supplier=self._jump_age,
             docking_denied_supplier=lambda: self._docking_denied_reason,
@@ -598,14 +598,16 @@ class FlowRunner:
             if result.aborted and self._preempt is not None:
                 # PREEMPTED, not aborted (2026-06-07 14:24:09Z: arrival's
                 # star-smack preempt printed "[ABORTED] ... manual intervention
-                # needed" then smack_recovery auto-dispatched 61ms later â€” the
+                # needed" then smack_recovery auto-dispatched 61ms later — the
                 # message lied). A preempt is a scene handoff, NOT a terminal
                 # abort: no "manual intervention", no failed-at clause, and the
                 # successor name is NOT hardcoded (run_live's queued event owns
-                # the dispatch). Transient EVENT slot only â€” never status():
+                # the dispatch). Transient EVENT slot only — never status():
                 # the persistent status line belongs to true terminal aborts
                 # (council intersection: event-slot + status-stays-empty).
-                msg = f"[PREEMPTED] {name} â€” {self._preempt}"
+                # ASCII-only console text (operator order 2026-07-06: the
+                # em-dash rendered as "â€”" garbage on the PS console).
+                msg = f"[PREEMPTED] {name} -- {self._preempt}"
                 print(msg, flush=True)
                 if self.overlay is not None:
                     try:
@@ -618,13 +620,13 @@ class FlowRunner:
                 # one, but guard the operator-abort case where the last step
                 # may not be the failer (or there are no steps at all) so the
                 # message stays sensible either way.
-                msg = f"[ABORTED] {name} â€” manual intervention needed"
+                msg = f"[ABORTED] {name} -- manual intervention needed"
                 if result.steps:
                     msg += f" (failed at {result.steps[-1].action})"
                 print(msg, flush=True)
                 if self.overlay is not None:
                     # Persistent STATUS slot (the keepalive line that stays
-                    # up), NOT event() â€” an abort must remain visible. Fail-soft
+                    # up), NOT event() — an abort must remain visible. Fail-soft
                     # like every other overlay call here.
                     try:
                         self.overlay.status(msg)
@@ -661,7 +663,7 @@ class FlowRunner:
                         timeout_s: float) -> bool:
         """Poll this subscriber's event queue until `event_name` arrives or
         the window closes. `timeout_s` is the caller's poll cadence (steps
-        pass their poll_s) â€” never a success/failure gate by itself."""
+        pass their poll_s) — never a success/failure gate by itself."""
         if self._hub is None or handle is None:
             return True  # no tail wired (unit tests) -> proceed
         deadline = self.clock() + timeout_s
@@ -674,7 +676,7 @@ class FlowRunner:
             self.sleeper(0.2)
 
     def _on_tail_event(self, ev: Any) -> None:
-        """Hub callback â€” exactly once per journal event, whichever
+        """Hub callback — exactly once per journal event, whichever
         subscriber's poll pumped it."""
         self._record_event_time(ev)
         self._apply_state(ev)
@@ -684,7 +686,7 @@ class FlowRunner:
         if name == "FSDJump":
             # Staleness instrument (2026-06-07 council): lets routing and
             # diagnostics tell a fresh hyperspace arrival from an N-minute
-            # loiter â€” both scenes read in_supercruise=true.
+            # loiter — both scenes read in_supercruise=true.
             self._event_times["jump"] = self.clock()
         # BUG C fix: widen preempt to Star OR Planet (INV5 — planet-smack coverage).
         # TWO-STAGE DESIGN: this preempt is CONSERVATIVE-WIDE (aborts the current
@@ -728,7 +730,7 @@ class FlowRunner:
             self._smacked = False
             self._smack_kind = None
 
-        # Witchspace latch â€” SET on a Hyperspace StartJump, CLEARED on FSDJump.
+        # Witchspace latch — SET on a Hyperspace StartJump, CLEARED on FSDJump.
         # Supercruise StartJumps (JumpType=="Supercruise") must NOT set it.
         # Belt-and-suspenders releases on SupercruiseEntry / Docked ensure a
         # missed FSDJump can never permanently wedge the interpreter pause.
@@ -749,7 +751,7 @@ class FlowRunner:
         elif name == "StartJump":
             # Hyperspace-only: this StartJump's StarClass is the star the
             # ship arrives AT, i.e. the current system once FSDJump lands.
-            # A supercruise StartJump carries star_class=None â€” ignoring it
+            # A supercruise StartJump carries star_class=None — ignoring it
             # (rather than clobbering) is council must-fix #3, pinned by test.
             if (getattr(ev, "jump_type", None) == "Hyperspace"
                     and getattr(ev, "star_class", None)):
@@ -763,7 +765,7 @@ class FlowRunner:
                 self._current_system = sysname
             if name == "Location" and getattr(ev, "docked", False):
                 # Respawn/restart world-state repair (GATEWALK gap #1): a
-                # rebuy respawn puts the ship ON A PAD with no Docked event â€”
+                # rebuy respawn puts the ship ON A PAD with no Docked event —
                 # Location(Docked=true) is the only signal. Without this the
                 # docked flag stays stale-False and the pit-stop resume
                 # trigger (NavRoute-while-docked) never arms.
@@ -793,7 +795,7 @@ class FlowRunner:
             # NavRouteClear that precedes the final FSDJump). Re-arm: a fresh
             # plot clears any prior clear latch so a NEW route can complete.
             # (_is_route_complete also re-resolves from the durable file reader
-            # when this event is missed across a rotation â€” see
+            # when this event is missed across a rotation — see
             # _resolve_final_waypoint.)
             nr = self._navroute_state()
             route = getattr(nr, "route", None) if nr is not None else None
@@ -821,7 +823,7 @@ class FlowRunner:
                     getattr(d, "body", 0),
                     (getattr(d, "name", "") or "").strip(),
                 )
-                # TRACE (gate-walk): make capture-at-plot observable â€” did the
+                # TRACE (gate-walk): make capture-at-plot observable — did the
                 # station actually win the read at the NavRoute instant?
                 if self.record is not None:
                     self.record("DockTargetCaptured", {
@@ -844,7 +846,7 @@ class FlowRunner:
                         "dest_body": getattr(_dm, "body", None)})
         elif name == "NavRouteClear":
             # Route cleared. Latch it + its journal timestamp. This fires on the
-            # final hop (in witchspace) AND on a manual re-plot â€” the FSDJump
+            # final hop (in witchspace) AND on a manual re-plot — the FSDJump
             # branch in dispatch() correlates by SystemAddress + the join window
             # to tell the two apart, so we never act on the clear alone.
             self._navroute_cleared = True
@@ -926,7 +928,7 @@ class FlowRunner:
 
     def _navroute_state(self) -> Optional[Any]:
         """Latest parsed NavRoute.json. poll() refreshes on mtime change and
-        returns None when unchanged â€” fall through to .current so steps
+        returns None when unchanged — fall through to .current so steps
         always see the last good parse. WIRED 2026-06-06: the reader had
         been constructed and stored since v1 with no consumer."""
         r = self.navroute_reader
@@ -956,7 +958,7 @@ class FlowRunner:
         OverHeating during long steps (alignment holds, star escapes,
         fly-outs, scooping) gets a heatsink WITHOUT waiting for the procedure
         to end. EDAPGui runs its heat/SCO monitor the same way. Exits on
-        stop, panic, or stop_requested â€” after a panic the operator owns the
+        stop, panic, or stop_requested — after a panic the operator owns the
         ship, no input from us."""
         while not stop.is_set():
             if self._should_abort():
@@ -998,7 +1000,7 @@ class FlowRunner:
             raise RuntimeError("run_live requires a journal tail")
         main_handle = self._hub.subscribe()
         # Heat protection lives on its own thread (covers long steps too);
-        # the inline heat_guard call is gone â€” single owner, no double-fire.
+        # the inline heat_guard call is gone — single owner, no double-fire.
         watchdog_stop = threading.Event()
         watchdog = threading.Thread(
             target=self._heat_watchdog_loop, args=(watchdog_stop,), daemon=True)
@@ -1029,12 +1031,12 @@ class FlowRunner:
                                 getattr(ev, "star_system", None),
                                 getattr(ev, "timestamp", None))
                         run_event_routes(self, ev)
-        except Exception as exc:  # noqa: BLE001 â€” never die silently mid-flight
+        except Exception as exc:  # noqa: BLE001 — never die silently mid-flight
             # PARK, don't crash (council 2026-06-09). An unhandled exception
             # anywhere in the live loop (a step raise the interpreter didn't
             # catch, a dispatch/_maybe_startup fault, a library error) used to
             # propagate out, kill the process, and leave the overlay FROZEN on
-            # its last line â€” the 2026-06-09 NE-Y b34-0 "stuck on hold_alignment
+            # its last line — the 2026-06-09 NE-Y b34-0 "stuck on hold_alignment
             # forever" report. Park instead: record the reason, release keys,
             # label the overlay, trip panic, and stop the loop cleanly via the
             # finally below. KeyboardInterrupt/BaseException are NOT caught here,

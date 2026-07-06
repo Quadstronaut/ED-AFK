@@ -348,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
         runner._run = _trace_dispatch  # type: ignore[method-assign]
 
     print("=" * 80)
-    print(f"  GATE/PATH WALK  ·  mode={args.mode}  ·  keys=OFF (NullSender)")
+    print(f"  GATE/PATH WALK  -  mode={args.mode}  -  keys=OFF (NullSender)")
     print(f"  journal : {journal_dir}")
     print(f"  session : {session_path}")
     print("  [STATE] = every flag/condition the gates read (changes + heartbeat).")
@@ -369,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         runner.run_live(duration_s=args.duration)
     except KeyboardInterrupt:
-        print("\ninterrupted — stopping walk")
+        print("\ninterrupted -- stopping walk")
         panic.trip()
         runner.request_stop()
     finally:

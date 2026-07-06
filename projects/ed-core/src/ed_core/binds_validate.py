@@ -153,7 +153,7 @@ def _cli(argv: Iterable[str] | None = None) -> int:
     except BindsValidationError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
-    print(f"OK: {args.binds.name} — all {len(REQUIRED_ACTIONS)} required "
+    print(f"OK: {args.binds.name} -- all {len(REQUIRED_ACTIONS)} required "
           f"actions bound, no same-context key collisions")
     return 0
 
