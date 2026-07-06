@@ -335,12 +335,19 @@ def classify_icon_kind(cell: Any, registry: Any = None) -> dict:
 # side target/contact panels (which also glow orange). Resolution-aware (_scale).
 NAVLIST_X0, NAVLIST_X1 = 280, 940
 NAVLIST_Y0, NAVLIST_Y1 = 430, 800
-# Icon-column search band inside the bar — right of the sort-arrow/divider, left
-# of where the longest names run. The glyph is found within this x range.
-GLYPH_SCAN_X0, GLYPH_SCAN_X1 = 495, 660
+# Icon scan SPAN right of the band's own measured left edge (LIVE FIX
+# 2026-07-06, run 063740: the panel FLOATS horizontally with head/ship
+# attitude — a fixed x window clipped the star glyph clean out of scan and
+# the leftmost rule crowned a name letter, refusing a real star 4x).
+GLYPH_SCAN_SPAN = 300
 SELECTED_ROW_FRAC = 0.45    # row mean-orange (over the list width) above this -> selected bar
-GLYPH_MIN_W, GLYPH_MAX_W = 10, 46   # icon-blob width bounds (1080p px) — excludes the thin divider + wide text
+# Icon-blob geometry from the OPERATOR-MEASURED box (navpanel_calib_columns
+# box_size ~24x22): the HEIGHT floor is the load-bearing discriminator — name
+# letters are h<=15 on every committed frame, type icons h 19-24.
+GLYPH_MIN_W, GLYPH_MAX_W = 14, 46
+GLYPH_MIN_H, GLYPH_MAX_H = 16, 32
 GLYPH_MIN_AREA = 60
+_BAND_COL_FRAC = 0.60       # column mean-orange over the band height -> inside the bar
 
 
 def _selected_band(om: Any) -> Optional[tuple]:
@@ -367,30 +374,71 @@ def _selected_band(om: Any) -> Optional[tuple]:
     return yy0, yy1, (yy0 + yy1) // 2
 
 
-def _locate_glyph(om: Any, y0: int, y1: int) -> Optional[tuple]:
-    """Leftmost compact DARK blob inside the selected orange bar = the body icon.
-    Returns (cx, cy, w, h) full-frame, or None. The thin vertical divider (w<min)
-    and the wide name text (further right) are excluded by the size + leftmost
-    rule. cv2/numpy lazy-imported."""
+def _band_x_extent(om: Any, y0: int, y1: int) -> Optional[tuple]:
+    """(x_left, x_right) of the solid highlight bar within its row span:
+    columns whose mean orange over the band height clears _BAND_COL_FRAC.
+    Clamped to a generous panel window so cockpit wash cannot stretch it."""
+    import numpy as np
+
+    h = om.shape[0]
+    lo, hi = _scale(NAVLIST_X0, h), min(_scale(1500, h), om.shape[1])
+    colmean = om[y0:y1, lo:hi].mean(axis=0)
+    xs = np.where(colmean > _BAND_COL_FRAC)[0]
+    if not len(xs):
+        return None
+    return lo + int(xs[0]), lo + int(xs[-1])
+
+
+def _locate_glyph(om: Any, y0: int, y1: int, arr: Any = None) -> Optional[tuple]:
+    """Leftmost ICON-GEOMETRY dark blob inside the selected orange bar = the
+    body type icon. Returns (cx, cy, w, h) full-frame, or None.
+
+    Scan x is anchored to the band's own measured left edge (the panel
+    floats horizontally — see GLYPH_SCAN_SPAN). Candidates are filtered by
+    the operator-measured icon box: name letters (h<=15), the thin divider,
+    underline strips (h<=15) and traversal arrows (narrow) all fail the
+    filter on every committed frame. When `arr` (the BGR frame) is given,
+    BLUE-dominant blobs are excluded — the cyan current-location marker is
+    icon-sized and fails the orange test just like a glyph does (live
+    2026-07-06 run 063740: on a wash-dimmed band it was the only qualifying
+    blob and produced a confident-looking false NON_STAR). A heavily
+    wash-dimmed band end can still hide its true glyph from the global
+    orange test — that reads NONE and callers fail closed/abstain (frames
+    are captured for calibration). cv2/numpy lazy-imported."""
     import cv2
     import numpy as np
 
     h = om.shape[0]
-    gx0, gx1 = _scale(GLYPH_SCAN_X0, h), _scale(GLYPH_SCAN_X1, h)
+    ext = _band_x_extent(om, y0, y1)
+    if ext is None:
+        return None
+    gx0 = ext[0] + _scale(4, h)
+    gx1 = min(ext[0] + _scale(GLYPH_SCAN_SPAN, h), ext[1])
+    if gx1 - gx0 < 8:
+        return None
     band_h = y1 - y0
     dark = (om[y0:y1, gx0:gx1] < 0.5).astype(np.uint8)   # dark glyph inside the bright bar
     n, lab, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
     wmin, wmax = _scale(GLYPH_MIN_W, h), _scale(GLYPH_MAX_W, h)
+    hmin, hmax = _scale(GLYPH_MIN_H, h), _scale(GLYPH_MAX_H, h)
     amin = _scale(GLYPH_MIN_AREA, h)
     cands = []
     for i in range(1, n):
         x, y, w, hh, area = (stats[i, 0], stats[i, 1], stats[i, 2],
                              stats[i, 3], stats[i, 4])
-        if wmin <= w <= wmax and 8 <= hh <= band_h and area >= amin:
-            cands.append((gx0 + int(x), y0 + int(y), int(w), int(hh)))
+        if not (wmin <= w <= wmax and hmin <= hh <= min(hmax, band_h)
+                and area >= amin):
+            continue
+        if arr is not None:
+            box = np.asarray(arr)[y0 + y:y0 + y + hh, gx0 + x:gx0 + x + w]
+            sel = (lab[y:y + hh, x:x + w] == i)   # the blob's OWN pixels only
+            if box.size and sel.any() and \
+                    float(box[:, :, 0][sel].mean()) > float(box[:, :, 2][sel].mean()):
+                continue                      # cyan marker: blue-dominant, never a glyph
+        cands.append((gx0 + int(x), y0 + int(y), int(w), int(hh)))
     if not cands:
         return None
-    cands.sort(key=lambda c: c[0])            # leftmost = icon; text is wider & right
+    cands.sort(key=lambda c: c[0])            # leftmost icon-sized blob = the type icon
     x, y, w, hh = cands[0]
     return (x + w // 2, y + hh // 2, w, hh)
 
@@ -424,7 +472,7 @@ def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
         if band is None:
             return none
         y0, y1, cy = band
-        g = _locate_glyph(om, y0, y1)
+        g = _locate_glyph(om, y0, y1, arr=arr)
         if g is None:
             return none
         cx, gcy, gw, gh = g
