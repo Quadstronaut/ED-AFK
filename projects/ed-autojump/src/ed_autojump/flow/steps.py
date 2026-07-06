@@ -194,6 +194,7 @@ def step_engage_jump_clearance(
     *,
     poll_s: float = 0.8,
     max_jump_polls: int = 12,
+    max_charge_polls: int = 75,  # LIVE FIX 2026-07-06 — 75*0.8s = the 60s operator watchdog class
     max_clear_attempts: int = 3,
     pitch_dir: str = "down",
     pitch_hold_s: float = 0.0,   # 0.0 -> ship-size table (same as dock_blind_maneuver)
@@ -209,15 +210,32 @@ def step_engage_jump_clearance(
     CONTRACT (see _council_c1_jumpflow_spec.md):
       C1  Press jump exactly as step_engage_jump does (Status-flag gate first;
           SetSpeed100; Hyperspace bind). REUSES step_engage_jump's gate logic.
-      C2  BOUNDED-POLL for a HYPERSPACE StartJump by READ-COUNT (max_jump_polls),
-          never by wall-clock. Poll cadence via ctx.sleeper(poll_s) only.
+      C2  BOUNDED-POLL by READ-COUNT, never by wall-clock. Poll cadence via
+          ctx.sleeper(poll_s) only. CHARGE-AWARE since the 2026-07-06 LIVE FIX
+          (run 004703): the ~15s hyperspace spool shows NEITHER commit signal,
+          so the original 12-poll window verdicted every HEALTHY jump
+          "obscured" and the C4 move pitched the ship off its own live charge
+          (operator-witnessed; journal held the charge 21s after the press —
+          EngageBlocked{status_flag} on the retry). fsd_charging (the Status
+          bit engage_supercruise gates on) is the took-signal:
+            - no charge within max_jump_polls -> ED refused the press ->
+              genuinely obstructed -> C4 move edge;
+            - charging -> wait it out (max_charge_polls ceiling, the 60s
+              operator stuck-state watchdog class) for the C3 commit;
+            - charge DROPS without commit -> one grace poll (status-write
+              race), then C4 move edge;
+            - charge OUTLIVES the ceiling (ALIGN hold / wedged FSD) ->
+              return False: the outer retry re-orients WHILE the charge is
+              live — pitching away from a live charge is exactly the
+              sabotage this fix removes.
       C3  SUCCESS EDGE: ctx.in_witchspace() THEN status.fsd_jump (bit 30).
           On confirmation -> return True immediately; no further input is sent.
           The interpreter's in_witchspace pause enforces no-input through the
           tunnel, so hold_alignment is NOT needed after this step.
-      C4  OBSTRUCTED EDGE: StartJump absent after max_jump_polls -> MOVE: pitch
-          away from the body, HARDCODE SetSpeed100 (NOT step_set_throttle per
-          spec boundaries), fly clear_burn_s, then RETRY from C1.
+      C4  OBSTRUCTED EDGE: no charge after max_jump_polls (or a dropped
+          charge) -> MOVE: pitch away from the body, HARDCODE SetSpeed100
+          (NOT step_set_throttle per spec boundaries), fly clear_burn_s,
+          then RETRY from C1.
       C5  Pitch duration uses the same ship-size table as step_dock_blind_maneuver
           (pitch_s_for_ship). pitch_hold_s > 0 overrides the table.
       C6  CEILING ABORT: max_clear_attempts move+retry cycles; ceiling with no
@@ -243,6 +261,10 @@ def step_engage_jump_clearance(
     if attempts != max_clear_attempts:
         ctx.log("EngageJumpClearanceClamp",
                 {"max_clear_attempts": max_clear_attempts, "clamped": attempts})
+    charge_ceiling = max(1, int(max_charge_polls))
+    if charge_ceiling != max_charge_polls:
+        ctx.log("EngageJumpClearanceClamp",
+                {"max_charge_polls": max_charge_polls, "clamped": charge_ceiling})
 
     # --- Pitch duration from ship-size table (mirrors step_dock_blind_maneuver) ---
     from ed_core.ship_sizes import pitch_s_for_ship, size_for_ship
@@ -289,8 +311,13 @@ def step_engage_jump_clearance(
         if not _press(ctx, "Hyperspace"):
             return False
 
-        # --- C2/C3: BOUNDED-POLL for hyperspace StartJump ---
-        for poll_i in range(effective_polls):
+        # --- C2/C3: CHARGE-AWARE bounded poll (LIVE FIX 2026-07-06, see
+        # docstring C2). Read-count ceilings only, no wall-clock gates. ---
+        charge_seen = False
+        no_charge_polls = 0
+        charging_polls = 0
+        poll_i = 0
+        while True:
             if ctx.should_abort():
                 ctx.log("EngageJumpClearanceAborted",
                         {"reason": "abort", "attempt": attempt})
@@ -299,6 +326,35 @@ def step_engage_jump_clearance(
                 ctx.log("EngageJumpClearanceStarted", {"attempt": attempt,
                                                         "poll": poll_i})
                 return True   # C3 success edge — cease all input
+            st = ctx.status_supplier()
+            if st is not None and getattr(st, "fsd_charging", False):
+                charge_seen = True
+                charging_polls += 1
+                if charging_polls >= charge_ceiling:
+                    # ALIGN hold / wedged FSD: NEVER pitch off a live charge —
+                    # fail to the outer retry, whose orient re-aligns while
+                    # the charge is still spooling.
+                    ctx.log("EngageJumpClearanceAborted",
+                            {"reason": "charge_stuck", "attempt": attempt,
+                             "polls": charging_polls})
+                    return False
+            elif charge_seen:
+                # Charge dropped without a commit. One grace poll absorbs the
+                # Status-write vs journal-write race (engage_supercruise's
+                # proven idiom), then it's a real drop -> C4 move edge.
+                ctx.sleeper(poll_s)
+                if _is_hyperspace_committed():
+                    ctx.log("EngageJumpClearanceStarted",
+                            {"attempt": attempt, "poll": poll_i})
+                    return True
+                ctx.log("EngageJumpClearanceChargeDropped",
+                        {"attempt": attempt, "polls": poll_i})
+                break             # -> C4 obstructed/move edge
+            else:
+                no_charge_polls += 1
+                if no_charge_polls >= effective_polls:
+                    break         # press refused, no charge -> C4 move edge
+            poll_i += 1
             ctx.sleeper(poll_s)
 
         # --- AC8 ABORT GRAFT: post-poll abort check BEFORE any directional press ---
