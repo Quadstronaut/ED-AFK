@@ -2028,19 +2028,25 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
         s.press(panel_focus_action); sl(settle_s)   # open panel; row 0 selected
         # --- ROW CONFIRM: row 0 must BE the star before we open/act on it ---
         if frame_grabber is not None:
-            from ed_vision.navpanel_icons import STAR, detect_row_icon
-            verdict = None
+            # SELECTED-ROW star confirm via the validated DYNAMIC localizer
+            # (2026-07-06 audit: the fixed-y detect_row_icon read the right
+            # cell on 1 of 4 real frames — only the one its constant was tuned
+            # on; selected_destination_icon's band+glyph search reads 7/7).
+            # Row 0 is selected on open, so the highlight band IS row 0.
+            from ed_vision.navpanel_icons import STAR, detect_selected_row_star
+            verdict, score = None, 0.0
             try:
                 row_frame = frame_grabber()
                 if row_frame is not None and ctx.frame_sink is not None:
                     ctx.frame_sink(f"navstar_row0_{t0}", row_frame)
-                verdict = detect_row_icon(row_frame, 0)
+                verdict, score = detect_selected_row_star(row_frame)
             except Exception as exc:  # noqa: BLE001 — CV error -> fail closed
                 ctx.log("NavSupercruiseStarUnconfirmed",
                         {"reason": "row_cv_error", "err": type(exc).__name__})
             if verdict != STAR:
                 ctx.log("NavSupercruiseStarRefused",
-                        {"reason": "row0_not_star", "verdict": verdict})
+                        {"reason": "row0_not_star", "verdict": verdict,
+                         "score": round(float(score), 3)})
                 s.press(panel_focus_action); sl(settle_s)   # close; press nothing
                 return False
         s.press("UI_Select"); sl(settle_s)           # open the star's detail page

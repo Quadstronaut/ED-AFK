@@ -812,7 +812,11 @@ def _destination_icon_is_star(runner: Any) -> "bool | None":
     if grabber is None:
         return None
     try:
-        from ed_vision.navpanel_icons import selected_row_icon, STAR, NON_STAR
+        # 2026-07-06 audit: selected_row_icon rides the DEPRECATED fixed
+        # row_cell_rect geometry (right cell on 1 of 4 real frames); the
+        # dynamic localizer is the one live path for selected-row reads.
+        from ed_vision.navpanel_icons import (STAR, NON_STAR,
+                                              selected_destination_icon)
         guard = getattr(runner, "_exclusive_input", None)
         if callable(guard):
             with guard():
@@ -821,7 +825,7 @@ def _destination_icon_is_star(runner: Any) -> "bool | None":
             frame = grabber()
         if frame is None:
             return None
-        verdict = selected_row_icon(frame).get("verdict")
+        verdict = selected_destination_icon(frame).get("verdict")
         if verdict == STAR:
             return True
         if verdict == NON_STAR:
