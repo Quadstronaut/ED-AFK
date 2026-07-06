@@ -704,6 +704,7 @@ def step_engage_supercruise(
     ctx: StepContext, *, poll_s: float = 0.8, max_charge_s: float = 60.0,
     presses: int = 1, between_press_s: float = 8.0,
     until_charging: bool = False, press: bool = True,
+    escape_vector_abort: bool = False,
 ) -> bool:
     """Press Supercruise, then gate on game signals — no success-window clock.
 
@@ -737,6 +738,17 @@ def step_engage_supercruise(
     `press=False` (ADDED 2026-06-06 run 10): gate-only mode — the charge is
     ALREADY live (a prior until_charging step got it) and the ship was just
     aligned; pressing again would CANCEL it. Pure wait for entry/dropped.
+
+    `escape_vector_abort` (OPERATOR WIRE-IN 2026-07-06, run 233422: a boot
+    restarted AFTER the smack cooldown expired classified as STARTUP and flew
+    at the star — "it likely didn't look for the align with escape vector.
+    WIRE THESE IN"): while waiting for entry, watch the center HUD for the
+    ALIGN WITH ESCAPE VECTOR prompt. Seen -> the ship is in a gravity well
+    (smack state), NOT a normal SC entry: log, dump the frame, fire
+    ctx.escape_vector_notify (latches the boot override + preempts the
+    running procedure — zero retry flapping), return False. startup.toml
+    sets this True; smack_recovery's own engage EXPECTS the vector and keeps
+    it False. Needs ctx.hud_grabber; unwired -> the watch is inert.
     """
     st = ctx.status_supplier()
     if st is not None and getattr(st, "in_supercruise", False):
@@ -753,6 +765,23 @@ def step_engage_supercruise(
             if ctx.should_abort():
                 ctx.log("EngageSupercruiseDone", {"reason": "abort"})
                 return False
+            if escape_vector_abort:
+                hud = getattr(ctx, "hud_grabber", None)
+                if hud is not None:
+                    try:
+                        from ed_vision.hud_sc_indicators import detect_align_escape_vector
+                        hf = hud()
+                        if hf is not None and detect_align_escape_vector(hf):
+                            if ctx.frame_sink is not None:
+                                ctx.frame_sink(f"escvec_{int(ctx.clock())}", hf)
+                            ctx.log("EscapeVectorDetected",
+                                    {"step": "engage_supercruise"})
+                            notify = getattr(ctx, "escape_vector_notify", None)
+                            if callable(notify):
+                                notify()
+                            return False
+                    except Exception:  # noqa: BLE001 — watch is best-effort;
+                        pass           # a CV error never blocks a real entry
             now = ctx.clock()
             if now - start > max_charge_s:
                 ctx.log("EngageSupercruiseDone", {"reason": "watchdog",

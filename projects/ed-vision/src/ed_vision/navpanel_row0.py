@@ -235,6 +235,17 @@ def read_row0_selected(frame: Any) -> Row0Read:
             state = "scrolled" if thumb is False else "bright"
         else:
             state = "dark"
+        # CV-debug overlay box (operator 2026-07-06: "I should see boxes and
+        # indicators for where things are being CV'd"): flash the measured
+        # row-0 cell, green=bright / red=not. Inert unless VISION toggle on.
+        try:
+            from .debug_overlay import get_debug_sink
+            sink = get_debug_sink()
+            if sink is not None:
+                sink.box("row0", rect, "hit" if state == "bright" else "miss",
+                         label=f"row0 {state} {frac:.2f}")
+        except Exception:  # noqa: BLE001 — overlay is decoration, never the read
+            pass
         return Row0Read(state, int(div), round(frac, 4), thumb, rect, int(row_y))
     except Exception:  # noqa: BLE001 — perception fail-soft; callers fail closed
         return _UNREADABLE

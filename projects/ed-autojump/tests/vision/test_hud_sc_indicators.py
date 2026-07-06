@@ -37,6 +37,13 @@ WHOLE = (0.0, 0.0, 1.0, 1.0)   # the on-disk fixtures are already cropped to the
     ("ORBITING DESTINATION", ScHudState.ORBITING),
     ("SUPERCRUISE ASSIST ACTIVE", ScHudState.ACTIVE),
     ("ALIGN WITH TARGET DESTINATION", ScHudState.ALIGN),
+    # ALIGN WITH ESCAPE VECTOR (operator wire-in 2026-07-06): the SMACK prompt
+    # carries ALIGN too — ESCAPE/VECTOR tokens must win, live garble included
+    # ("VECTOH" observed on the run-233422 frame; the sky marker's own
+    # "ESCAPE VECTOR" label + CHARGING classifies the aligned case as well):
+    ("ALIGN WITH ESCAPE VECTOR", ScHudState.ESCAPE_VECTOR),
+    ("ALIGN WITH ESCAPE VECTOH", ScHudState.ESCAPE_VECTOR),
+    ("CHARGING ESCAPE VECTOR", ScHudState.ESCAPE_VECTOR),
     # observed live OCR garble must still classify:
     ("ORBITINGPES(INATION", ScHudState.ORBITING),      # DESTINATION garbled
     ("SUPERCRUIS ASSIST ACTIVE", ScHudState.ACTIVE),   # SUPERCRUISE clipped

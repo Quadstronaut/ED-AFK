@@ -56,6 +56,13 @@ class ScHudState(str, Enum):
     ACTIVE = "active"        # SUPERCRUISE ASSIST ACTIVE — engaged, in transit
     ORBITING = "orbiting"    # ORBITING DESTINATION — arrived / holding
     ALIGN = "align"          # ALIGN WITH TARGET DESTINATION — off-target
+    # ALIGN WITH ESCAPE VECTOR — the SMACK-state prompt (operator wire-in
+    # 2026-07-06): an SC charge attempted inside a star's gravity well holds
+    # until the ship aligns with the escape vector. Same center band as ALIGN;
+    # the VECTOR/ESCAPE tokens discriminate. Fixtures:
+    # tests/fixtures/smack/smack_align_escape_vector_startup_1080.png +
+    # repo-root smack_align_escape_vector.png.
+    ESCAPE_VECTOR = "escape_vector"
     NONE = "none"            # no SC-assist HUD prompt detected (fail-closed)
 
 
@@ -102,6 +109,11 @@ def classify_hud_text(text: str) -> ScHudState:
     norm = " ".join((text or "").upper().split())
     if "ORBITING" in norm or "RBITING" in norm:    # ORBITING DESTINATION
         return ScHudState.ORBITING
+    # ALIGN WITH ESCAPE VECTOR must be checked BEFORE the target-destination
+    # ALIGN (both carry the ALIGN token). ESCAPE / VECTOR are exclusive to the
+    # smack prompt; either token (OCR-garble tolerance) classifies it.
+    if "ESCAPE" in norm or "VECTOR" in norm:       # ALIGN WITH ESCAPE VECTOR
+        return ScHudState.ESCAPE_VECTOR
     if "ALIGN" in norm:                            # ALIGN WITH TARGET DESTINATION
         return ScHudState.ALIGN
     if "ACTIVE" in norm:                           # SUPERCRUISE ASSIST ACTIVE
@@ -141,6 +153,23 @@ def read_sc_hud(
     # ocr_detailed returns OcrLine objects; a test stub may return plain strings.
     text = " ".join(getattr(ln, "text", ln) for ln in (lines or []))
     state = classify_hud_text(text)
+    # CV-debug overlay box (operator 2026-07-06: "I should see ... looking for
+    # align with escape vector"): flash the read band, green on a classified
+    # prompt / white on none. Global sink; inert unless the VISION toggle is on.
+    try:
+        import numpy as np  # type: ignore
+        from .debug_overlay import get_debug_sink
+        sink = get_debug_sink()
+        if sink is not None:
+            fh, fw = np.asarray(frame).shape[:2]
+            rect = (int(region_frac[0] * fw), int(region_frac[1] * fh),
+                    int((region_frac[2] - region_frac[0]) * fw),
+                    int((region_frac[3] - region_frac[1]) * fh))
+            sink.box("sc_hud", rect,
+                     "hit" if state is not ScHudState.NONE else None,
+                     label=state.value)
+    except Exception:  # noqa: BLE001 — overlay is decoration, never the read
+        pass
     return ScHudRead(state, text, state is not ScHudState.NONE)
 
 
@@ -177,3 +206,13 @@ def detect_align_warning(frame: Any, *, region_frac=HUD_REGION_FRAC,
     """True iff ALIGN WITH TARGET DESTINATION is showing (off-target / not pointed
     at the jump). The jump-alignment gate fails CLOSED when this is True."""
     return read_sc_hud(frame, region_frac=region_frac, ocr=ocr).state is ScHudState.ALIGN
+
+
+def detect_align_escape_vector(frame: Any, *, region_frac=HUD_REGION_FRAC,
+                               ocr: Optional[Callable[[Any], Any]] = None) -> bool:
+    """True iff ALIGN WITH ESCAPE VECTOR is showing — the SMACK-state prompt
+    (operator wire-in 2026-07-06): the ship is inside a gravity well and the SC
+    charge is holding for escape-vector alignment. startup's engage_supercruise
+    watches this to override a boot-smacked start into smack_recovery."""
+    return read_sc_hud(frame, region_frac=region_frac,
+                       ocr=ocr).state is ScHudState.ESCAPE_VECTOR
