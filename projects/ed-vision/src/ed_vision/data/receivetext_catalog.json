@@ -11,10 +11,10 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 2383,
+    "count": 2384,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-06-27T11:49:00Z",
+    "last_seen": "2026-07-05T23:55:08Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
@@ -461,10 +461,10 @@
   "$Trader_OnEnemyShipDetection02;": {
     "category": "other",
     "channel": "npc",
-    "count": 8,
+    "count": 9,
     "first_seen": "2026-01-10T04:25:57Z",
     "from_example": "Keiner Wars",
-    "last_seen": "2026-06-08T04:53:45Z",
+    "last_seen": "2026-07-05T23:57:43Z",
     "message_localised": "I strongly advise you against this."
   },
   "$Trader_OnEnemyShipDetection03;": {
