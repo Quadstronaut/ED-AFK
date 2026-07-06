@@ -164,15 +164,18 @@ def test_skip_tank_healthy():
 
 # ---- Q4: always top off at the destination (refuel_below=1.0) --------------
 
-def test_arrival_toml_scoop_refuel_below_is_half():
-    """arrival.toml scoop_refuel is set to refuel_below = 0.50 (MASTER-SPEC step 3
-    / task #2, 2026-06-27): scoop when the tank is below HALF. This SUPERSEDES the
-    2026-06-22 always-top-off 1.0 (D-A / BK-3) — the destination top-off (0.99)
-    stays owned by route_complete_park.toml, which is byte-unchanged."""
+def test_arrival_toml_scoop_always_tops_off_at_50pct_throttle():
+    """OPERATOR RESTORE 2026-07-06 (run 102104): refuel_below = 1.0 — ALWAYS
+    top off at every scoopable arrival (the operator's own Q4 ruling from
+    2026-06-22; the council-A rebuild's 0.50 trigger let the tank drain across
+    jumps skipping 'tank_healthy' at 85%). approach_pct = 50 (operator: "go
+    forward at 50% throttle until at maximum refuel rate"). The destination
+    top-off (0.99) stays owned by route_complete_park.toml."""
     procs = load_procedures(PROC_DIR)
     arrival = procs["arrival"]
     scoop = next(s for s in arrival.steps if s.action == "scoop_refuel")
-    assert scoop.params.get("refuel_below") == 0.50
+    assert scoop.params.get("refuel_below") == 1.0
+    assert scoop.params.get("approach_pct") == 50
 
 
 def test_refuel_below_one_does_not_skip_healthy_tank_scoopable():
