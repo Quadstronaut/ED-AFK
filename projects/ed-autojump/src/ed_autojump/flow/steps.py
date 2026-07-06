@@ -54,7 +54,7 @@ def step_target_next_route(
     2026-06-06 â€” the filter existed since v1 with no caller; until now
     nothing stopped a plotted route through a neutron star.
 
-    State-gated, two confirmations (2026-06-06 dead run: the hop had been
+    State-gated, three confirmations (2026-06-06 dead run: the hop had been
     locked since route plot, the press emitted NO new FSDTarget, and the
     event-only gate watchdogged out and aborted the whole run):
       1. a NEW FSDTarget journal event (seq advances past the pre-press
@@ -62,7 +62,13 @@ def step_target_next_route(
       2. Status.Destination already locked on an ONWARD route hop â€”
          StarClass looked up by SystemAddress in NavRoute.json. route[0]
          is the system we're sitting in, so a match there is a local-body
-         lock, not the next hop â€” never confirmed.
+         lock, not the next hop â€” never confirmed; or
+      3. Status.Destination matching the LATEST FSDTarget already in state
+         (live 2026-07-06): a galmap REROUTE (fastest<->economical) leaves
+         NavRoute.json STALE â€” no NavRoute event, no file rewrite â€” so the
+         locked hop is off-file and path 2 can never conclude. The FSDTarget
+         the reroute fired carries the class; backlog replay restores it
+         across bot restarts.
     Dangerous class -> False on either path and the procedure's required-
     fail policy takes over â€” FAIL CLOSED, the ship never jumps at it.
     Unknown class (off-route Destination, no NavRoute) also fails closed
@@ -130,6 +136,29 @@ def step_target_next_route(
                         return False
                     ctx.log("TargetConfirmed",
                             {"star_class": sc, "via": "status+navroute"})
+                    return True
+            # STALE-FILE FALLBACK (live 2026-07-06, LAWD 26 run 001222): a
+            # galaxy-map REROUTE (fastest<->economical) retargets the new first
+            # hop and fires FSDTarget — but ED neither emits a NavRoute event
+            # nor rewrites NavRoute.json, so the locked hop is OFF the stale
+            # file and the scan above can never conclude (the 24s spin the
+            # operator killed). The journal's latest FSDTarget carries the
+            # SAME lock WITH its StarClass (backlog-replayed on restart), so
+            # when its address matches the locked Destination, class-check
+            # THAT. Same danger gate; no matching/classless FSDTarget still
+            # falls through to the watchdog — fail-closed is preserved.
+            # Body==0 guard: an FSD hop lock is always Body 0 (destination-Body
+            # discriminator); a local-BODY lock (Body != 0) must never confirm
+            # here even if a stale FSDTarget's address lines up.
+            if target is not None and getattr(dest, "body", 0) == 0 and \
+                    getattr(target, "system_address", None) == dest_addr:
+                sc = getattr(target, "star_class", "") or ""
+                if sc:
+                    if is_dangerous(sc):
+                        ctx.log("TargetDangerRefused", {"star_class": sc})
+                        return False
+                    ctx.log("TargetConfirmed",
+                            {"star_class": sc, "via": "status+fsdtarget"})
                     return True
 
 
