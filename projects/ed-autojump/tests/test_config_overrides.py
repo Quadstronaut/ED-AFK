@@ -30,7 +30,9 @@ def test_local_toml_applies_even_without_primary(tmp_path):
 
 def test_defaults_when_nothing_present(tmp_path):
     cfg = load_config(tmp_path / "config.toml", environ={})
-    assert cfg.overlay.cv_debug is True            # ships ON, opt-out (2026-06-13)
+    # ships OFF, opt-in via launcher VISION toggle (operator directive
+    # 2026-06-14, supersedes the 2026-06-13 default-on this test once encoded)
+    assert cfg.overlay.cv_debug is False
     assert cfg.overlay.cv_debug_ttl_s == 2.0
 
 
