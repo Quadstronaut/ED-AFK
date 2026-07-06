@@ -27,6 +27,14 @@ CASES = [
     ("lhs2509_unexplored_1080.png",      STAR,     0.60),  # star selected
     ("capricorni_systems_full.png",      NON_STAR, None),  # SYSTEM glyph selected
     ("navpanel_nav_station_km_1080.png", NON_STAR, None),  # STATION row selected
+    # LIVE 2026-07-06 run 063740 (normal space, heat-sink wash): the star IS
+    # the selected row but the wash-dimmed band end hides its glyph from the
+    # global orange test, and the cyan location marker (the only icon-sized
+    # blob visible) is excluded by the blue-dominance guard -> honest ABSTAIN
+    # (NONE), never a false verdict. OPEN CALIBRATION ITEM: a wash-tolerant
+    # read should flip this expectation to STAR — that flip is the signal the
+    # calibration round landed.
+    ("l32-8_washed_normalspace_1080.png", "NONE",  None),
 ]
 
 
