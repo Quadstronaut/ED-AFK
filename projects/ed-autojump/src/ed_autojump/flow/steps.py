@@ -1992,7 +1992,9 @@ def step_wait_body_scanned(ctx: StepContext, *, poll_s: float = 0.5,
 def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
                               panel_focus_action: str = "FocusLeftPanel",
                               label_reads: int = 5,
-                              label_retry_s: float = 0.5) -> bool:
+                              label_retry_s: float = 0.5,
+                              row_reads: int = 3,
+                              row_retry_s: float = 0.5) -> bool:
     """SC-assist the ARRIVAL STAR (nav-panel row 0) — with a CV STAR-ROW
     confirm AND a CV label-confirm. Replaces the blind sc_assist_orbit.
 
@@ -2003,7 +2005,11 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
     zone (operator-witnessed: "caught onto a random signal"). Before touching
     the row, classify its column-0 icon with the trained star oracle
     (navpanel_icons.detect_row_icon, measured thresholds, fail-closed): not a
-    confirmed STAR -> refuse, press nothing.
+    confirmed STAR -> refuse, press nothing. Like the label below, the row is
+    re-read IN PLACE up to `row_reads` times (`row_retry_s` apart) within the
+    ONE panel open before refusing (operator directive 2026-07-06 after the
+    run-085221 loop: "we do shit once" — a transient bad frame must never
+    cost a procedure retry and another panel-open cycle).
 
     LABEL CONFIRM with IN-STEP RE-READS (live findings 3/5): a transient bad
     label read used to fail the whole step -> full panel close + procedure
@@ -2035,18 +2041,24 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
             # Row 0 is selected on open, so the highlight band IS row 0.
             from ed_vision.navpanel_icons import STAR, detect_selected_row_star
             verdict, score = None, 0.0
-            try:
-                row_frame = frame_grabber()
-                if row_frame is not None and ctx.frame_sink is not None:
-                    ctx.frame_sink(f"navstar_row0_{t0}", row_frame)
-                verdict, score = detect_selected_row_star(row_frame)
-            except Exception as exc:  # noqa: BLE001 — CV error -> fail closed
-                ctx.log("NavSupercruiseStarUnconfirmed",
-                        {"reason": "row_cv_error", "err": type(exc).__name__})
+            for attempt in range(max(1, row_reads)):
+                try:
+                    row_frame = frame_grabber()
+                    if row_frame is not None and ctx.frame_sink is not None:
+                        ctx.frame_sink(f"navstar_row0_{t0}_r{attempt}", row_frame)
+                    verdict, score = detect_selected_row_star(row_frame)
+                except Exception as exc:  # noqa: BLE001 — CV error -> fail closed
+                    ctx.log("NavSupercruiseStarUnconfirmed",
+                            {"reason": "row_cv_error", "err": type(exc).__name__})
+                    verdict, score = None, 0.0
+                if verdict == STAR:
+                    break
+                sl(row_retry_s)                      # transient artifact: re-read in place
             if verdict != STAR:
                 ctx.log("NavSupercruiseStarRefused",
                         {"reason": "row0_not_star", "verdict": verdict,
-                         "score": round(float(score), 3)})
+                         "score": round(float(score), 3),
+                         "reads": max(1, row_reads)})
                 s.press(panel_focus_action); sl(settle_s)   # close; press nothing
                 return False
         s.press("UI_Select"); sl(settle_s)           # open the star's detail page

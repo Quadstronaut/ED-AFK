@@ -63,6 +63,9 @@ def test_arrival_is_exactly_throttle_scoop_star():
     assert star.required is True
     assert arrival.parallel_tracks == ("honk",)
     assert arrival.on_required_fail.retry_from == "scoop_refuel"
+    # OPERATOR 2026-07-06 (run 085221, "we do shit once"): transient reads are
+    # absorbed IN-STEP; the procedure retry is ONE re-settle pass, then abort.
+    assert arrival.on_required_fail.max_retries == 1
 
 
 def test_exploration_loads_and_is_a_bounded_loop():
