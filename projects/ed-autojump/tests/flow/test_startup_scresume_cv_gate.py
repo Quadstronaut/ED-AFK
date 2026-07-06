@@ -52,6 +52,19 @@ def test_parse_first_row_ly_token_is_none():
     assert npr.parse_first_row_distance_ls(["WOLF 359 7.8 LY"]) is None
 
 
+def test_parse_first_row_ocr_comma_space_split_rejoined():
+    """WinRT splits a thousands comma with a space ("79, 420Ls" — live frame
+    lawd26_sc_distance_1080.png, 2026-07-05). Must parse the WHOLE number,
+    never the trailing group alone (420 Ls for a 79,420 Ls star)."""
+    assert npr.parse_first_row_distance_ls(["79, 420Ls"]) == 79420.0
+
+
+def test_parse_first_row_comma_split_garbled_unit_stays_none():
+    """Same live frame, tighter crop: "Ls" misread as "1.5" leaves no unit
+    token after the rejoin -> unreadable, fail closed."""
+    assert npr.parse_first_row_distance_ls(["79, 4201.5"]) is None
+
+
 # ---- step_star_distance_gate --------------------------------------------------
 
 def _gate_ctx(sender, monkeypatch, ls, logs=None):
@@ -165,10 +178,14 @@ def _shape(name):
 
 
 def test_startup_rewired_shape():
+    """Operator LIVE reorder 2026-07-06 (session 000806): ED refuses SC entry
+    at zero throttle (THROTTLE UP hang), so set_throttle(100) now leads the
+    scene, before the gate; the old shared-lane burn step is gone (the jump
+    leg re-asserts throttle itself)."""
     proc, actions = _shape("startup")
     assert actions == [
-        "star_distance_gate", "engage_supercruise", "nav_supercruise_star",
-        "wait_sc_assist_orbiting", "target_next_route", "set_throttle",
+        "set_throttle", "star_distance_gate", "engage_supercruise",
+        "nav_supercruise_star", "wait_sc_assist_orbiting", "target_next_route",
         "orient_compass", "orient_widget_ring", "engage_jump_clearance",
     ]
     # The blind flow is DEAD (#18/#27/#28): no nav_panel_target, no
@@ -176,7 +193,7 @@ def test_startup_rewired_shape():
     for gone in ("nav_panel_target", "sc_assist_orbit", "wait",
                  "engage_jump", "hold_alignment", "target_ahead"):
         assert gone not in actions
-    gate = proc.steps[0]
+    gate = proc.steps[1]
     assert gate.skip_to == "target_next_route"      # FAR lane vault
     assert proc.parallel_tracks == ("honk",)
     assert proc.on_required_fail.retry_from == "target_next_route"
@@ -196,10 +213,18 @@ def test_sc_resume_rewired_shape():
     assert proc.parallel_tracks == ("honk",)
 
 
-def test_gates_precede_any_throttle():
-    """The 2026-06-08 star-ram law, carried into the CV rewire: NO set_throttle
-    may appear before the clear-of-star gate in either scene."""
-    for name in ("startup", "sc_resume"):
-        _, actions = _shape(name)
-        assert actions.index("star_distance_gate") < actions.index("set_throttle")
-        assert actions[0] == "star_distance_gate"
+def test_gate_throttle_order_per_scene():
+    """The 2026-06-08 star-ram law, LIVE-REVISED 2026-07-06: ED refuses SC
+    entry at zero throttle (run 000806 hung at the THROTTLE UP prompt), so in
+    STARTUP the operator moved set_throttle(100) ahead of the gate — the gate
+    still precedes SC entry, and there is exactly ONE throttle step (the old
+    shared-lane burn is gone). sc_resume starts ALREADY in supercruise (no SC
+    entry), so the original law holds there: no throttle before the gate."""
+    _, actions = _shape("startup")
+    assert actions[0] == "set_throttle"            # SC entry needs live throttle
+    assert actions[1] == "star_distance_gate"      # gate still precedes SC entry
+    assert actions.index("star_distance_gate") < actions.index("engage_supercruise")
+    assert actions.count("set_throttle") == 1
+    _, actions = _shape("sc_resume")
+    assert actions[0] == "star_distance_gate"
+    assert actions.index("star_distance_gate") < actions.index("set_throttle")
