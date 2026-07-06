@@ -16,8 +16,10 @@
 #              ONLY — sc_resume (already in SC, no SC entry) keeps it. The
 #              burn window at a maybe-near star is the gate read (~1.5s);
 #              right after, the CLOSE lane's SC entry / get-around owns it.
-#   LANE GATE  star_distance_gate — CV: open panel, OCR row 0 (the arrival
-#              star, ALWAYS the closest in-system row, selected on open),
+#   LANE GATE  star_distance_gate — CV: open panel, OCR row 0 (the closest
+#              in-system row, selected on open — usually the arrival star,
+#              but a beacon/signal can sort first [live 2026-07-06]; either
+#              way row-0 distance is a sound "am I near the star" proxy),
 #              close panel. < 100 Ls or UNREADABLE -> CLOSE lane (fail-closed:
 #              the 2026-06-08 normal-space star-ram fix, now with a real
 #              distance read instead of the lock-speed proxy). >= 100 Ls ->
@@ -34,10 +36,17 @@
 #              engage_jump_clearance (obstruction fails closed there and
 #              move-retries — the fail-closed backstop for both lanes).
 #
-# RETRY (operator 2026-07-05: standard retry_from anchor, recovery lane
-# deleted): a required fail re-runs from target_next_route — re-lock, re-orient,
-# re-jump. SC state survives a retry; an engage_supercruise fail exhausts to
-# abort-to-human rather than looping a broken SC entry.
+# RETRY (LIVE FIX 2026-07-06, run 010444 starsmack — supersedes the 07-05
+# target_next_route anchor): retries re-run from the CLEAR-OF-STAR GATE. The
+# old anchor let a CLOSE-lane required fail (nav_supercruise_star refused)
+# retry INTO the far lane — throttle 100 + orient + jump with the nose still
+# on the star; that exact path drove the ship into L 32-8. Re-gating on every
+# retry costs one cheap CV read when the ship is genuinely clear (gate says
+# FAR -> skip_to as normal) and re-runs the get-around when it is not — the
+# gate is the in-scene backstop and now no retry can bypass it. Note the
+# 07-05 "engage_supercruise fail exhausts to abort" property is traded away:
+# an SC-entry fail now re-runs the gate + SC entry up to max_retries, then
+# aborts to human.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
@@ -48,7 +57,7 @@
 parallel_tracks = ["honk"]
 
 [on_required_fail]
-retry_from = "target_next_route"
+retry_from = "star_distance_gate"
 max_retries = 3
 backoff_s = 2.0
 
