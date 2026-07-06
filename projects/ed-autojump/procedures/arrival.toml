@@ -45,17 +45,15 @@ steps = [
   { action = "set_throttle", pct = 0 },
   # gated | 3 scoop pit stop. GATE: arrival star scoopable (KGBFOAM, last
   # hyperspace StartJump StarClass) and tank not already full (full_epsilon).
-  # refuel_below = 1.0 — ALWAYS top off (OPERATOR Q4 ruling 2026-06-22,
-  # RESTORED 2026-07-06: the council-A rebuild @1b7ddb9 knocked this to 0.50
-  # against that ruling; live run 102104 then drained the tank across jumps
-  # skipping "tank_healthy" at 85%. Operator: "it worked every time. and you
-  # fucking broke it."). approach_pct = 50 (operator order 2026-07-06: "go
-  # forward at 50% throttle until at maximum refuel rate"), rate gate stays
-  # standoff_frac = 0.80 of the equipped scoop's table max — the
+  # refuel_below = 0.75 (OPERATOR 2026-07-06 final: scoop when tank under
+  # three-quarters; supersedes same-day 1.0 restore and council-A's 0.50 —
+  # 0.50 drained tank live, run 102104). approach_pct = 50 (operator order:
+  # "go forward at 50% throttle until at maximum refuel rate"), rate gate
+  # stays standoff_frac = 0.80 of the equipped scoop's table max — the
   # live-validated cut-throttle point. The is_scoopable gate still skips
   # non-scoopable classes; the stale-arrival guard still holds. BEST-EFFORT:
   # a skip/fail never blocks the star lock below.
-  { action = "scoop_refuel", approach_pct = 50, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 1.0, full_epsilon = 0.2 },  # gated | 3 pit stop
+  { action = "scoop_refuel", approach_pct = 50, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.75, full_epsilon = 0.2 },  # gated | 3 pit stop
   # macro | 4 SC-assist the ARRIVAL STAR (nav-panel row 0, blind-fire with a #8
   # label CONFIRM). Replaces the old blind sc_assist_orbit. REQUIRED: on a
   # terminal fail arrival aborts (retry_from re-settles at the scoop); the onward
