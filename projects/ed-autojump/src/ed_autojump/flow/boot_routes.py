@@ -491,7 +491,25 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
             except Exception:              # noqa: BLE001 -- overlay is fail-soft
                 pass
         return None
+    return _run_startup_with_escape_override(runner)
+
+
+def _run_startup_with_escape_override(runner: Any) -> str:
+    """Run startup; if a step saw ALIGN WITH ESCAPE VECTOR (the boot-smack
+    AFTER-cooldown case — operator wire-in 2026-07-06, run 233422), hand off
+    to the locked-law smack_recovery. The detecting step already preempted
+    startup via _preempt="escape_vector", so startup exits at its next abort
+    poll as a [PREEMPTED] scene handoff — zero retry flapping in the gravity
+    well; _run() clears the preempt slate on smack_recovery entry."""
+    runner._escape_vector_seen = False              # fresh run, fresh latch
     runner._run("startup")
+    if getattr(runner, "_escape_vector_seen", False):
+        runner._escape_vector_seen = False
+        if runner.record is not None:
+            runner.record("EscapeVectorBootOverride",
+                          {"system": runner._current_system})
+        runner._run("smack_recovery")
+        return "smack_recovery"
     return "startup"
 
 
@@ -510,6 +528,25 @@ def classify_startup(runner: Any) -> Optional[str]:
     if st is None:                                       # PRESERVED: no status -> wait
         return None
     runner._startup_done = True                          # PIN-SHOT: consume on EVERY path
+
+    # OPERATOR WIRE-IN 2026-07-06 ("restarting smacked BEFORE the drive was
+    # ready ... it doesn't actually check the drive cooldown. WIRE THESE IN"):
+    # a REAL-SPACE, undocked boot with the FSD still on COOLDOWN (Status bit
+    # 18) is smack-state evidence — the ship just dropped hard and the drive
+    # is not ready; startup's throttle + SC-entry at a maybe-star is exactly
+    # the wrong move (live run 233422 flew at the star, screenshot-confirmed).
+    # Route the locked-law smack_recovery directly. BOOT-TIME ONLY: this does
+    # not touch the event path's INV1 rule (a bare SupercruiseExit never
+    # dispatches recovery without CV) — at boot there is no event to misread,
+    # only the still-burning cooldown flag.
+    if (not getattr(st, "in_supercruise", False)
+            and not getattr(st, "docked", False)
+            and fsd_cooldown_blocked(st)):
+        if runner.record is not None:
+            runner.record("BootCooldownSmackRoute",
+                          {"system": runner._current_system})
+        runner._run("smack_recovery")
+        return "smack_recovery"
 
     try:
         ctx = build_determine_context(runner)            # E1
@@ -535,6 +572,8 @@ def classify_startup(runner: Any) -> Optional[str]:
         if payload == "arrival":
             run_arrival_then_branch(runner)
             return "arrival"
+        if payload == "startup":
+            return _run_startup_with_escape_override(runner)
         runner._run(payload)
         return payload
     except Exception as exc:                             # noqa: BLE001

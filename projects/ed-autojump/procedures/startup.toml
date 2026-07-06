@@ -69,7 +69,15 @@ steps = [
   # the get-around; False (confidently FAR) -> skip_to the direct jump.
   { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 100.0 },  # vision | 1 EXCLUSIVE — row-0 distance read
   # gated | 2 CLOSE lane: enter supercruise (throttle already up).
-  { action = "engage_supercruise", required = true },       # gated  | 2 event/state-gated on SupercruiseEntry
+  # escape_vector_abort (OPERATOR WIRE-IN 2026-07-06, run 233422): while
+  # waiting for entry, CV-watch the center HUD for ALIGN WITH ESCAPE VECTOR —
+  # a boot that restarted SMACKED (cooldown already expired) classifies as
+  # STARTUP and only reveals the gravity well when the SC charge holds at the
+  # escape vector. Seen -> preempt startup, hand off to smack_recovery
+  # (boot_routes._run_startup_with_escape_override). Real-space starts only —
+  # this scene IS the real-space scene; smack_recovery's own engage EXPECTS
+  # the vector and does not set this.
+  { action = "engage_supercruise", required = true, escape_vector_abort = true },  # gated | 2 event/state-gated on SupercruiseEntry
   # vision | 3 CV-confirmed lock + SC-assist toward the star (row 0, #8 label
   # confirm before the press). Replaces blind nav_panel_target + sc_assist_orbit.
   { action = "nav_supercruise_star", required = true },     # vision | 3 EXCLUSIVE — CV lock+assist get-around

@@ -247,6 +247,10 @@ class FlowRunner:
         # beat late, never torn.
         self._running_proc: Optional[str] = None
         self._preempt: Optional[str] = None
+        # OPERATOR WIRE-IN 2026-07-06: a step saw ALIGN WITH ESCAPE VECTOR
+        # (boot-smack state). Latched by ctx.escape_vector_notify; consumed by
+        # boot_routes' startup override, which hands off to smack_recovery.
+        self._escape_vector_seen: bool = False
         # Single tail consumer + fan-out (see _TailHub). None without a tail.
         self._hub: Optional[_TailHub] = (
             _TailHub(tail, on_event=self._on_tail_event) if tail is not None else None)
@@ -562,6 +566,15 @@ class FlowRunner:
             frame_sink=self.frame_sink,
         )
         ctx._tail_handle = handle   # for _run's unsubscribe; None without a tail
+
+        def _escape_vector_notify() -> None:
+            # OPERATOR WIRE-IN 2026-07-06: ALIGN WITH ESCAPE VECTOR seen mid-
+            # step = smack state. Latch for the boot-override consumer AND
+            # preempt the running procedure at its next abort poll — a scene
+            # handoff ([PREEMPTED]), never retry flapping in a gravity well.
+            self._escape_vector_seen = True
+            self._preempt = "escape_vector"
+        ctx.escape_vector_notify = _escape_vector_notify
         return ctx
 
     # ---- running procedures ----------------------------------------------
