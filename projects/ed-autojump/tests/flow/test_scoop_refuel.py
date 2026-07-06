@@ -168,14 +168,14 @@ def test_arrival_toml_scoop_trigger_and_throttle():
     """OPERATOR 2026-07-06 final: refuel_below = 0.75 — scoop when the tank is
     under three-quarters (supersedes the same-day 1.0 restore and council-A's
     0.50, which drained the tank live skipping 'tank_healthy' at 85%).
-    approach_pct = 50 (operator: "go forward at 50% throttle until at maximum
-    refuel rate"). The destination top-off (0.99) stays owned by
-    route_complete_park.toml."""
+    approach_pct = 25 (operator reverted his own same-day 50% order after
+    live run 231135 overshot the scoop band: "it never stood a chance").
+    The destination top-off (0.99) stays owned by route_complete_park.toml."""
     procs = load_procedures(PROC_DIR)
     arrival = procs["arrival"]
     scoop = next(s for s in arrival.steps if s.action == "scoop_refuel")
     assert scoop.params.get("refuel_below") == 0.75
-    assert scoop.params.get("approach_pct") == 50
+    assert scoop.params.get("approach_pct") == 25
 
 
 def test_refuel_below_one_does_not_skip_healthy_tank_scoopable():
