@@ -110,9 +110,12 @@ def test_cv_error_fails_closed(monkeypatch):
 def test_row0_not_star_refuses_before_opening_detail(monkeypatch):
     """THE STARSMACK FIX: the selected row classifies as anything but STAR
     (here: a nav beacon / signal row) -> refuse BEFORE UI_Select — the row's
-    detail page is never opened, nothing is pressed at it."""
+    detail page is never opened, nothing is pressed at it. All in-place
+    re-reads happen within the ONE panel open (operator: "we do shit once")
+    and the refusal payload carries the read count."""
+    calls = []
     monkeypatch.setattr(navicons, "detect_selected_row_star",
-                        lambda frame: (navicons.NON_STAR, 0.07))
+                        lambda frame: calls.append(1) or (navicons.NON_STAR, 0.07))
     s = FakeSender()
     logs = []
     ctx = StepContext(sender=s, sleeper=lambda _x: None,
@@ -120,9 +123,25 @@ def test_row0_not_star_refuses_before_opening_detail(monkeypatch):
     ctx.navpanel_frame_grabber = lambda: "frame"
     assert step_nav_supercruise_star(ctx) is False
     assert s.actions() == [OPEN, OPEN]                    # open -> refuse -> close
+    assert len(calls) == 3                                # bounded in-place re-reads
     refusals = [p for k, p in logs if k == "NavSupercruiseStarRefused"]
     assert refusals and refusals[0]["reason"] == "row0_not_star"
     assert refusals[0]["score"] == 0.07                   # confidence is logged
+    assert refusals[0]["reads"] == 3
+
+
+def test_transient_row_read_recovers_in_step(monkeypatch):
+    """Run-085221 loop fix: a transiently-unreadable row (bad frame, mid-fade)
+    must NOT fail the step — the row is re-read in place within the SAME panel
+    open and the macro proceeds. No procedure retry, no repeated panel opens."""
+    verdicts = [(navicons.NONE, 0.0), (navicons.STAR, 0.71)]
+    monkeypatch.setattr(navicons, "detect_selected_row_star",
+                        lambda frame: verdicts.pop(0) if verdicts else (navicons.STAR, 0.71))
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.navpanel_frame_grabber = lambda: "frame"
+    assert step_nav_supercruise_star(ctx) is True
+    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]   # ONE panel pass
 
 
 def test_row0_star_proceeds_to_label_confirm(monkeypatch):

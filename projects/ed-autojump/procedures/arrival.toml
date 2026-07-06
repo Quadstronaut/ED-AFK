@@ -30,8 +30,14 @@ parallel_tracks = ["honk"]   # honk fires every system, no matter what (step 2)
 # branches (abort != _transition_aborted); the fail-closed backstop is
 # traversal's engage_jump_clearance clearance loop (an obstructed jump fails
 # closed there). (C3 sketch / D-B.)
+#
+# max_retries 3 -> 1 (OPERATOR 2026-07-06, run 085221: four identical panel-
+# open cycles on a deterministic CV refusal — "we do shit once"). Transient
+# bad frames are now absorbed IN-STEP (nav_supercruise_star re-reads the row
+# and the label in place within ONE panel open), so the procedure-level retry
+# only covers pose/state disturbances; one re-settle pass, then abort loudly.
 retry_from = "scoop_refuel"
-max_retries = 3
+max_retries = 1
 backoff_s = 2.0
 
 steps = [
