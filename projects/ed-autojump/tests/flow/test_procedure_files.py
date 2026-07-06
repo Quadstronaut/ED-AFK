@@ -50,15 +50,17 @@ def test_arrival_does_not_orient_or_jump():
 
 def test_arrival_is_exactly_throttle_scoop_star():
     """The new arrival contract (acceptance): the action list is EXACTLY
-    [set_throttle, scoop_refuel, nav_supercruise_star]; scoop refuel_below==0.50;
-    nav_supercruise_star required; parallel_tracks==(honk,); retry_from==scoop."""
+    [set_throttle, scoop_refuel, nav_supercruise_star]; scoop refuel_below==1.0
+    (always top off); nav_supercruise_star required; parallel_tracks==(honk,);
+    retry_from==scoop."""
     arrival = load_procedures(PROC_DIR)["arrival"]
     assert [s.action for s in arrival.steps] == [
         "set_throttle", "scoop_refuel", "nav_supercruise_star"]
     scoop = next(s for s in arrival.steps if s.action == "scoop_refuel")
-    # D-A / BK-3: 0.50 SUPERSEDES the 2026-06-22 always-top-off 1.0. The
+    # OPERATOR RESTORE 2026-07-06: 1.0 = always top off (Q4 ruling 2026-06-22;
+    # the council-A 0.50 trigger drained the tank live, run 102104). The
     # destination top-off (0.99) stays in route_complete_park.toml.
-    assert scoop.params.get("refuel_below") == 0.50
+    assert scoop.params.get("refuel_below") == 1.0
     star = next(s for s in arrival.steps if s.action == "nav_supercruise_star")
     assert star.required is True
     assert arrival.parallel_tracks == ("honk",)
