@@ -222,17 +222,24 @@ def _dest_is_system(st: Any, route: Any, system_name: Optional[str]) -> bool:
     """Is the journey's terminal destination the CURRENT system (terminal
     Docking), as opposed to an onward hop?
 
-    Empty/None route is the PRIMARY signal: no further FSD hop is plotted, so
-    this arrival IS the destination -> True. A non-empty route is an onward
-    hop UNLESS the locked Destination corroborates the local star (the
-    CORROBORANT signal via the settled _destination_is_local_star, which
-    returns True/False/None — only an explicit True counts as 'arrived',
-    so a None/False unjudgeable dest fails closed to 'not arrived', INV-7)."""
-    from ed_core.flow.predicates import _destination_is_local_star
+    Empty/None route is THE signal: no further FSD hop is plotted, so this
+    arrival IS the destination -> True. A NON-EMPTY route is an onward hop ->
+    False, PERIOD.
 
-    if not route:                                       # None / [] -> terminal
-        return True
-    return _destination_is_local_star(st, system_name) is True
+    LIVE REFUTATION 2026-07-06 (run 095532, finding 13 — supersedes INV-7's
+    corroborant): the old "non-empty route is an onward hop UNLESS the locked
+    Destination corroborates the local star" clause branched a 17-jumps-
+    remaining arrival into DOCK. After a clean arrival the locked Destination
+    is ALWAYS the local star — the post-jump residual lock is the just-arrived
+    system (Body 0, bare name), and arrival's own nav_supercruise_star then
+    locks the local star BY DESIGN — so the corroborant read True on every
+    clean post-jump arrival and could never discriminate anything at this
+    call site. The true terminal arrival needs no corroborant here: the game
+    clears NavRoute on the final hop (NavRouteClear -> empty route file), and
+    the NavRouteClear-correlated route-complete determination
+    (dispatch_route_complete) runs upstream of this branch besides.
+    st/system_name are kept for call-site compatibility."""
+    return not route
 
 
 def _dest_is_station(st: Any) -> bool:
@@ -283,10 +290,22 @@ def _arrival_branch(runner: Any) -> str:
     route = _route_of(runner)
     system = getattr(runner, "_current_system", None)
     if _dest_is_system(st, route, system):
-        return "docking"
-    if _exploration_active(runner):
-        return "exploration"
-    return "traversal"
+        section = "docking"
+    elif _exploration_active(runner):
+        section = "exploration"
+    else:
+        section = "traversal"
+    # BRANCH TRACE (finding 13: the wrong-branch dock dispatch was SILENT in
+    # the session log — the decision and its inputs must be diagnosable).
+    rec = getattr(runner, "record", None)
+    if rec is not None:
+        d = getattr(st, "destination", None) if st is not None else None
+        rec("ArrivalBranch", {
+            "section": section,
+            "route_len": len(route) if route else 0,
+            "system": system,
+            "dest_name": getattr(d, "name", None)})
+    return section
 
 
 def transition_to(runner: Any, section: str) -> str:
