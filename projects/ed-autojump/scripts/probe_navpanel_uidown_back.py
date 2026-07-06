@@ -246,7 +246,7 @@ def phase_a(sender, log: ProbeLog, stamp: str, *, dry: bool) -> dict:
 
     Returns a summary dict with answers to Q1.
     """
-    print("\n=== Phase A: Q1 — UI_Back close behaviour ===", flush=True)
+    print("\n=== Phase A: Q1 -- UI_Back close behaviour ===", flush=True)
 
     result: dict = {
         "baseline_focus": None,
@@ -366,7 +366,7 @@ def phase_b(
 
     Returns a summary dict.
     """
-    print("\n=== Phase B: Q2 — UI_Down wrap/saturate past bottom ===", flush=True)
+    print("\n=== Phase B: Q2 -- UI_Down wrap/saturate past bottom ===", flush=True)
 
     result: dict = {
         "panel_opened": False,
@@ -505,7 +505,7 @@ def main() -> None:
         print("[dry-run] No keys will be sent.  Logging plan to stdout only.",
               flush=True)
     else:
-        print(f"[probe] live run — log -> {log_path}", flush=True)
+        print(f"[probe] live run -- log -> {log_path}", flush=True)
 
     # Build sender.
     if dry:
@@ -516,7 +516,7 @@ def main() -> None:
         from ed_core.launcher.focus import focus_ed_window
         sender = DirectInputSender(parse_binds(BINDS_PATH))
         if not focus_ed_window():
-            print("[probe] ABORT: could not focus ED window — NOT sending any keys.",
+            print("[probe] ABORT: could not focus ED window -- NOT sending any keys.",
                   flush=True)
             sys.exit(1)
         # Let the OS input pipeline settle after the foreground transition.

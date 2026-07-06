@@ -119,8 +119,8 @@ def main(argv: list[str] | None = None) -> int:
                       if getattr(e, "event", None) == args.split_event), 0)
 
     print("=" * 80)
-    print(f"  REPLAY DRIVER  ·  {args.journal.name}")
-    print(f"  {len(events)} events · backlog=0..{split} · live={split}..{len(events)}")
+    print(f"  REPLAY DRIVER  -  {args.journal.name}")
+    print(f"  {len(events)} events - backlog=0..{split} - live={split}..{len(events)}")
     print(f"  split at first {args.split_event!r}" if args.split_index is None
           else f"  split at index {split}")
     print("=" * 80)
@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
               "loop — this IS a dispatch-logic bug. Investigate _is_route_complete "
               "and the _caught_up gate.")
     else:
-        print("  VERDICT: no live FSDJump in the replayed window — re-run with a "
+        print("  VERDICT: no live FSDJump in the replayed window -- re-run with a "
               "--split-index before the arrival you care about.")
     print("=" * 80)
     return 0

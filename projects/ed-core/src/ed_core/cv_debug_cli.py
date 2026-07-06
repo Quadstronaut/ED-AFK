@@ -37,12 +37,12 @@ def run_calibration(cfg: Any) -> int:
     """
     ov = getattr(cfg, "overlay", None)
     if ov is None or not getattr(ov, "enabled", False):
-        print("[overlay].enabled is false — enable the overlay first.")
+        print("[overlay].enabled is false -- enable the overlay first.")
         return 1
     try:
         import keyboard
     except Exception as e:  # noqa: BLE001
-        print(f"`keyboard` package unavailable ({e}) — install project deps.")
+        print(f"`keyboard` package unavailable ({e}) -- install project deps.")
         return 1
 
     from .overlay import OverlayWriter
@@ -71,7 +71,7 @@ def run_calibration(cfg: Any) -> int:
     while time.monotonic() < deadline and not writer.connected:
         time.sleep(0.25)
     if not writer.connected:
-        print("EDMCOverlay unreachable — is ED running (windowed/borderless)")
+        print("EDMCOverlay unreachable -- is ED running (windowed/borderless)")
         print("and EDMCOverlay installed? (it exits without the game)")
         writer.close()
         return 1
@@ -163,12 +163,12 @@ def run_navpanel_overlay(cfg: Any, *, n_rows: int = 12,
     """
     ov = getattr(cfg, "overlay", None)
     if ov is None or not getattr(ov, "enabled", False):
-        print("[overlay].enabled is false — enable the overlay first.")
+        print("[overlay].enabled is false -- enable the overlay first.")
         return 1
     try:
         import keyboard
     except Exception as e:  # noqa: BLE001
-        print(f"`keyboard` package unavailable ({e}) — install project deps.")
+        print(f"`keyboard` package unavailable ({e}) -- install project deps.")
         return 1
 
     import os
@@ -194,14 +194,14 @@ def run_navpanel_overlay(cfg: Any, *, n_rows: int = 12,
     while time.monotonic() < deadline and not writer.connected:
         time.sleep(0.25)
     if not writer.connected:
-        print("EDMCOverlay unreachable — is ED running (windowed/borderless)")
+        print("EDMCOverlay unreachable -- is ED running (windowed/borderless)")
         print("and EDMCOverlay installed? (it exits without the game)")
         writer.close()
         return 1
 
     sink = CvDebugSink(writer, transform, ttl_s=max(2.0, refresh_s * 5))
     verdict_color = {ni.STAR: "hit", ni.NON_STAR: "miss", ni.NONE: None}
-    print(f"LIVE nav-panel overlay — scanning {n_rows} rows.")
+    print(f"LIVE nav-panel overlay -- scanning {n_rows} rows.")
     print("Open the NAVIGATION panel; KEEP ELITE FOCUSED. Press q to quit.")
     try:
         while True:
@@ -235,7 +235,7 @@ def run_cv_debug(cfg: Any, *, refresh_s: float = 0.4) -> int:
     foreground; press q to quit."""
     ov = getattr(cfg, "overlay", None)
     if ov is None or not getattr(ov, "enabled", False):
-        print("[overlay].enabled is false — enable the overlay first.")
+        print("[overlay].enabled is false -- enable the overlay first.")
         return 1
     try:
         import keyboard
@@ -302,7 +302,7 @@ def run_cv_debug(cfg: Any, *, refresh_s: float = 0.4) -> int:
     while time.monotonic() < deadline and not writer.connected:
         time.sleep(0.25)
     if not writer.connected:
-        print("EDMCOverlay unreachable — is ED running + EDMCOverlay installed?")
+        print("EDMCOverlay unreachable -- is ED running + EDMCOverlay installed?")
         writer.close(); return 1
     sink = CvDebugSink(writer, transform, ttl_s=max(2.0, refresh_s * 5))
 

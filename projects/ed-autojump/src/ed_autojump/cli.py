@@ -79,12 +79,14 @@ def _parser() -> argparse.ArgumentParser:
         help="how many seconds to tail the journal before exiting (0 = exit immediately, useful for dry-run)",
     )
     sub_run.add_argument(
-        "--record", dest="record", action="store_true", default=False,
-        help="record session events to JSONL (default: off)",
+        # OPERATOR ORDER 2026-07-06: recording (and with it CV frame capture)
+        # is DEFAULT ON ALWAYS until further notice — testing blind is over.
+        "--record", dest="record", action="store_true", default=True,
+        help="record session events to JSONL (default: ON, operator order 2026-07-06)",
     )
     sub_run.add_argument(
         "--no-record", dest="record", action="store_false",
-        help="explicitly disable recording (default behaviour)",
+        help="explicitly disable recording",
     )
     sub_run.add_argument(
         "--engage-keys", dest="engage_keys", action="store_true", default=False,
@@ -319,22 +321,50 @@ def cmd_run(args) -> int:
         recorder = Recorder(session_path)
         print(f"recording -> {session_path}")
 
-    # Orient frame dumps — every align iteration's compass crops as PNGs next
-    # to the session jsonl, so a failed orient is replayable offline against
-    # the reader (2026-06-06: the 12:37 oscillation was only root-causable
-    # because ED happened to still be running with the ship parked).
-    # Fail-soft: a diagnostic write must never touch the flight.
+    # CV frame dumps — every CV read's frame as PNG next to the session jsonl,
+    # so any failed read is replayable offline against its reader (2026-06-06:
+    # the 12:37 oscillation was only root-causable because ED happened to
+    # still be running with the ship parked).
+    #
+    # OPERATOR ORDER 2026-07-06: frame capture DEFAULT ON ALWAYS until further
+    # notice. The previous sink swallowed EVERY failure silently ("except:
+    # pass") — zero _frames dirs since 06-16 with no way to know why; the
+    # operator tested blind for three weeks. A diagnostic write must never
+    # touch the flight (still fail-soft) but it must NEVER fail silently:
+    # cv2 resolves ONCE up front (loud console warning if missing, .npy
+    # fallback via numpy so frames land regardless), and per-call failures
+    # record a FrameSinkError outcome once per failure type.
     frame_sink = None
     if recorder is not None:
         _frames_dir = session_path.with_name(session_path.stem + "_frames")
+        try:
+            import cv2 as _cv2_sink
+        except Exception as _cv2_exc:  # noqa: BLE001 — degraded, NOT silent
+            _cv2_sink = None
+            print(f"WARNING frame-dump: cv2 unavailable ({type(_cv2_exc).__name__}: "
+                  f"{_cv2_exc}) -- falling back to raw .npy frame dumps")
+        _sink_errs: set[str] = set()
 
-        def frame_sink(name: str, frame, _d=_frames_dir) -> None:
+        def frame_sink(name: str, frame, _d=_frames_dir, _cv2=_cv2_sink,
+                       _errs=_sink_errs) -> None:
             try:
-                import cv2
                 _d.mkdir(parents=True, exist_ok=True)
-                cv2.imwrite(str(_d / f"{name}.png"), frame)
-            except Exception:
-                pass
+                if _cv2 is not None:
+                    if not _cv2.imwrite(str(_d / f"{name}.png"), frame):
+                        raise RuntimeError("cv2.imwrite returned False")
+                else:
+                    import numpy as _np
+                    _np.save(str(_d / f"{name}.npy"), _np.asarray(frame))
+            except Exception as exc:  # noqa: BLE001 — fail-soft but LOUD, once per type
+                key = f"{type(exc).__name__}: {exc}"
+                if key not in _errs:
+                    _errs.add(key)
+                    print(f"WARNING frame-dump failed ({key}) -- frame {name!r}")
+                    try:
+                        recorder.record_outcome("FrameSinkError",
+                                                {"err": key, "frame": name})
+                    except Exception:  # noqa: BLE001 — recorder must not kill flight
+                        pass
 
     # Sender selection. Real key dispatch requires the binds preset.
     if args.engage_keys:
@@ -397,7 +427,7 @@ def cmd_run(args) -> int:
             pre_flight_dryrun=args.dryrun_pre_flight,
         )
         if result.status not in (FlowStatus.OK, FlowStatus.MAIN_MENU_READY):
-            print(f"--launch failed: {result.status.value} — {result.detail}")
+            print(f"--launch failed: {result.status.value} -- {result.detail}")
             return 1
 
     # Wire nav-compass alignment when engaging keys. build_vision returns
@@ -502,7 +532,7 @@ def cmd_run(args) -> int:
             # Loud, so a blind run is never mistaken for a steering one.
             reason = ("[vision].enabled = false" if not cfg.vision.enabled
                       else "no compass region calibrated")
-            print(f"vision: alignment OFF ({reason}) — the ship will NOT be "
+            print(f"vision: alignment OFF ({reason}) -- the ship will NOT be "
                   "steered. Run `ed-autojump calibrate-compass` and set "
                   "[vision].enabled = true to enable orientation.")
 
@@ -687,7 +717,7 @@ def cmd_run(args) -> int:
         print(f"route: {len(_plotted)} systems plotted (next hop "
               f"{_plotted[0].star_system!r}).")
     elif args.route_plot:
-        print(f"route: NONE plotted — auto-plot is ON, will plot to "
+        print(f"route: NONE plotted -- auto-plot is ON, will plot to "
               f"{cfg.routing.destination!r} when able.")
     else:
         print("=" * 64)
@@ -722,12 +752,12 @@ def cmd_run(args) -> int:
             from ed_core.launcher.focus import focus_ed_window
             print("[run] focusing ED window before key dispatch...")
             if not focus_ed_window():
-                print("[run] WARN: could not focus EliteDangerous64.exe — "
+                print("[run] WARN: could not focus EliteDangerous64.exe -- "
                       "keys may go to the wrong window")
         runner.run_live(duration_s=args.duration)
         return 0
     except KeyboardInterrupt:
-        print("\ninterrupted — tripping panic switch")
+        print("\ninterrupted -- tripping panic switch")
         # Route through the idempotent guard so the same release-keys + panic
         # + close path runs whether we got here via Ctrl+C, a signal handler,
         # or the win32 console handler — exactly once regardless.
@@ -823,12 +853,12 @@ def cmd_launch(args) -> int:
     )
 
     if result.status == FlowStatus.OK:
-        print(f"[launch] OK — entered as {result.load_game_event.commander}")
+        print(f"[launch] OK -- entered as {result.load_game_event.commander}")
         return 0
     if result.status == FlowStatus.MAIN_MENU_READY:
-        print(f"[launch] main menu ready — operator handoff. {result.detail}")
+        print(f"[launch] main menu ready -- operator handoff. {result.detail}")
         return 0
-    print(f"[launch] FAILED: {result.status.value} — {result.detail}")
+    print(f"[launch] FAILED: {result.status.value} -- {result.detail}")
     return 1
 
 
@@ -889,7 +919,7 @@ def cmd_calibrate_menu(args) -> int:
     print("")
     if menu_nav_header_needed:
         print("NOTE: place the [menu_nav] block BEFORE any [menu_nav.calibration.*]")
-        print("blocks in your config.toml — TOML treats them as nested tables and")
+        print("blocks in your config.toml -- TOML treats them as nested tables and")
         print("requires the parent table's own keys to be defined first.")
     return 0
 
@@ -945,12 +975,12 @@ def cmd_calibrate_compass(args) -> int:
         cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 0), 2)
         outpath = outdir / "compass_calibration.png"
         cv2.imwrite(str(outpath), annotated)
-        print(f"(saved annotated capture to {outpath} — check the green ring + box)")
+        print(f"(saved annotated capture to {outpath} -- check the green ring + box)")
     except Exception:  # noqa: BLE001
         pass
 
     print("")
-    print("=== Compass located — add this to your config.toml ===")
+    print("=== Compass located -- add this to your config.toml ===")
     print("")
     print("[vision]")
     print("enabled = true")
@@ -1001,7 +1031,7 @@ def cmd_panic(args) -> int:
     from ed_core.lifecycle import panic_release_keys
 
     panic_release_keys()
-    print("panic: release_all() sent — any held keys cleared")
+    print("panic: release_all() sent -- any held keys cleared")
     return 0
 
 
@@ -1022,7 +1052,7 @@ def cmd_doctor(args) -> int:
     print(format_results(results))
     rc = overall_status(results)
     print()
-    print("FAIL — fix the issues above before running the bot." if rc else "All critical checks passed.")
+    print("FAIL -- fix the issues above before running the bot." if rc else "All critical checks passed.")
     return rc
 
 
@@ -1065,7 +1095,7 @@ def cmd_pull_binds(args) -> int:
     print()
 
     if diff.is_empty():
-        print("No differences — repo preset is already up to date.")
+        print("No differences -- repo preset is already up to date.")
         return 0
 
     print(format_diff(diff))
