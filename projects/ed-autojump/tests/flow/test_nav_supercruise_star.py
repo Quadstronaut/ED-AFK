@@ -10,8 +10,11 @@ of failing the whole procedure — the operator-hated triple panel-open.
 
 from types import SimpleNamespace
 
+import pytest
+
 import ed_vision.navpanel_detail as navdetail
 import ed_vision.navpanel_icons as navicons
+import ed_vision.navpanel_row0 as nr0
 from ed_core.flow.context import StepContext
 from ed_vision.navpanel_detail import DetailButton, DetailLabelRead
 
@@ -20,6 +23,18 @@ from ed_autojump.flow.steps import step_nav_supercruise_star
 from . import FakeSender
 
 OPEN, SEL, RIGHT = "FocusLeftPanel", "UI_Select", "UI_Right"
+
+
+@pytest.fixture(autouse=True)
+def _row0_bright(monkeypatch):
+    """Row-0 brightness confirm STACKS in front of the icon confirm (council-v2).
+    These tests target the icon/label layer, so default row 0 to confirmed-bright;
+    the row0-unconfirmed refusal is covered in test_confirm_row0.py. Tests with no
+    navpanel_frame_grabber never invoke this, so the patch is inert for them."""
+    monkeypatch.setattr(
+        nr0, "read_row0_selected",
+        lambda frame: nr0.Row0Read("bright", 401, 0.75, True,
+                                   (490, 463, 410, 23), 474))
 
 
 def _read(button, text=""):
