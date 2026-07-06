@@ -7,6 +7,7 @@ startup.toml / sc_resume.toml shapes. Pure-Python — no game, no CV engine.
 from pathlib import Path
 
 import ed_vision.navpanel_reader as npr
+import ed_vision.navpanel_row0 as nr0
 import ed_vision.hud_sc_indicators as hud
 from ed_core.flow.context import StepContext
 from ed_core.flow.loader import load_procedures
@@ -67,7 +68,16 @@ def test_parse_first_row_comma_split_garbled_unit_stays_none():
 
 # ---- step_star_distance_gate --------------------------------------------------
 
+def _bright_row0(frame):
+    """A confirmed-bright ROW-0 read (row_y carries the distance-crop anchor)."""
+    return nr0.Row0Read(state="bright", header_y=401, orange_frac=0.75,
+                        thumb_at_top=True, row0_rect=(490, 463, 410, 23), row_y=474)
+
+
 def _gate_ctx(sender, monkeypatch, ls, logs=None):
+    # Row 0 confirmed bright -> the distance path runs (the gate now gates the
+    # read on a POSITIONAL row-0 confirm; unconfirmed forces CLOSE regardless).
+    monkeypatch.setattr(nr0, "read_row0_selected", _bright_row0)
     monkeypatch.setattr(npr, "read_first_row_distance_ls",
                         lambda frame, **kw: ls)
     return StepContext(sender=sender, sleeper=lambda s: None,
@@ -123,6 +133,42 @@ def test_gate_missing_bind_fails_closed_to_close():
     ctx = StepContext(sender=sender, sleeper=lambda s: None,
                       navpanel_frame_grabber=lambda: object())
     assert STEP_REGISTRY["star_distance_gate"](ctx) is True
+
+
+def test_gate_distance_read_anchored_on_confirmed_row0_y(monkeypatch):
+    """The distance OCR crop is anchored on the CONFIRMED row-0 y (row_y from the
+    row0 read) — NOT the fixed top-of-panel crop that can capture the LOCATION
+    summary distance one row above row 0."""
+    monkeypatch.setattr(nr0, "read_row0_selected", _bright_row0)
+    seen = {}
+
+    def spy(frame, **kw):
+        seen.update(kw)
+        return 12.0
+
+    monkeypatch.setattr(npr, "read_first_row_distance_ls", spy)
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None,
+                      navpanel_frame_grabber=lambda: object())
+    assert STEP_REGISTRY["star_distance_gate"](ctx) is True   # CLOSE
+    assert seen.get("row_y") == 474                           # == _bright_row0 row0_rect y+11
+
+
+def test_gate_row0_unconfirmed_forces_close(monkeypatch):
+    """Row-0 UNCONFIRMED -> CLOSE (True), reason row0_unconfirmed, and a would-be
+    FAR (504 Ls) read never produces False. Panel opened+closed exactly once."""
+    monkeypatch.setattr(nr0, "read_row0_selected",
+                        lambda frame: nr0.Row0Read("dark", 401, 0.08, None,
+                                                   (490, 463, 410, 23), 474))
+    monkeypatch.setattr(npr, "read_first_row_distance_ls", lambda frame, **kw: 504.0)
+    sender = FakeSender()
+    logs = []
+    ctx = StepContext(sender=sender, sleeper=lambda s: None,
+                      navpanel_frame_grabber=lambda: object(),
+                      record=lambda n, p: logs.append((n, p)))
+    assert STEP_REGISTRY["star_distance_gate"](ctx) is True   # CLOSE, not False
+    assert any(n == "StarDistanceGate" and p.get("reason") == "row0_unconfirmed"
+               for n, p in logs)
+    assert sender.actions() == ["FocusLeftPanel", "UI_Down", "UI_Up", "FocusLeftPanel"]
 
 
 # ---- step_wait_sc_assist_orbiting ----------------------------------------------

@@ -1776,79 +1776,80 @@ def step_confirm_orbiting(ctx: StepContext, *, settle_s: float = 0.4) -> bool:
     return False
 
 
-def _pin_row0_selected(ctx: StepContext, *, max_holds: int = 4,
-                       hold_s: float = 0.8, settle_s: float = 0.25,
-                       tol_px: int = 6) -> str:
-    """Pin the nav-panel cursor to ROW 0 before a row-0 read. OPERATOR ORDER
-    2026-07-06 (run 102104): the panel cursor PERSISTS across panel opens —
-    the 095532 dock row-walk left it rows down, and for the rest of the night
-    every arrival read the WRONG row's icon (NAV BEACON at the cursor -> real
-    stars refused, system after system) and the distance gate read the WRONG
-    row's distance (beacon 145Ls while the star sat 1.19Ls ahead -> false
-    FAR; the operator threw throttle 0 to stop the smack).
+from collections import namedtuple
 
-    Operator spec: check whether row 0 is BRIGHT (selected) or DARK; if dark,
-    HOLD W (UI_Up — panel-focused) until bright. Operationally: row 0 is
-    bright exactly when the bright selected band can rise no further, and
-    HOLDING UI_Up pins the cursor to the top without wrapping (operator-
-    tested 2026-06-07 mechanics; TAPS wrap, holds never do). So: grab ->
-    band y (_selected_band, the validated localizer) -> hold + re-grab until
-    the band y is stable. Already-at-top costs one no-op hold (~1s).
+# (status, read): status is "selected" | "unconfirmed"; read is the winning
+# Row0Read (carries row_y for the anchored distance crop) or None.
+Row0Confirm = namedtuple("Row0Confirm", ["status", "read"])
 
-    Returns "pinned" (row 0 is the bright selected row), "unreadable" (no
-    frame/band to steer by — the caller's own read will fail closed on the
-    same frames), or "unstable" (a band that never stopped moving — the ONE
-    dangerous verdict: something IS selected but row 0 could not be
-    confirmed). Callers pick their fail-closed reaction; logged either way.
 
-    SCOPE (operator clarification 2026-07-06): ONLY the row-0-expecting
-    readers (star_distance_gate, nav_supercruise_star). Exploration and dock
-    walk the cursor on purpose and must never call this."""
+def _confirm_row0_selected(ctx: StepContext, *, settle_s: float = 0.25,
+                           pin_hold_s: float = 4.0) -> Row0Confirm:
+    """VISUALLY confirm the nav-panel cursor is on ROW 0, with a bounded ONE-shot
+    recovery. The council-v2 replacement for the deleted `_pin_row0_selected`
+    band-walk (runs 102104 / 104612 / 010444 starsmacks — see
+    ed_vision.navpanel_row0 for the full autopsy). The panel is already OPEN
+    (the caller owns open/close).
+
+    Contract, exactly as the operator prescribed ("we do shit once"):
+      1. read_row0_selected(frame): a POSITIONAL read of row 0's cell brightness
+         anchored on the LOCATION header — NOT "find the bright band". Bright ->
+         'selected', ZERO presses.
+      2. Not bright (dark / scrolled / unreadable / no frame) -> recover ONCE:
+         tap UI_Down once (clears any at-top TAP-WRAP risk), then ONE continuous
+         UI_Up hold of `pin_hold_s` (saturates at row 0; over-holding is safe).
+         This reuses the PROVEN `_target_pin_and_walk` primitive — no loop, no
+         tap burst, no band-y steering.
+      3. Re-read EXACTLY once. Bright now -> 'selected'. Still not -> 'unconfirmed'.
+
+    STRUCTURAL guarantee (no motion heuristic can creep back in): UI_Up is
+    pressed at most once and UI_Down at most once on EVERY path. No grabber ->
+    'unconfirmed', presses NOTHING (the caller's own read fails closed too).
+    A recovery KeyError (unbound key) propagates to the caller's BindMissing
+    handler. Every read's frame is dumped (frame capture DEFAULT ON)."""
     grabber = getattr(ctx, "navpanel_frame_grabber", None)
     if grabber is None:
-        return "unreadable"
+        ctx.log("NavRow0Check", {"result": "unconfirmed", "reason": "no_grabber",
+                                 "presses": 0})
+        return Row0Confirm("unconfirmed", None)
 
-    def _band_y():
-        import numpy as np
-        from ed_vision.navpanel_icons import _orange, _selected_band
-
-        frame = grabber()
-        if frame is None:
-            return None, None
-        om = _orange(np.asarray(frame)).astype(np.float32)
-        band = _selected_band(om)
-        return (None, frame) if band is None else (band[0], frame)
-
+    from ed_vision.navpanel_row0 import read_row0_selected
     t0 = int(ctx.clock())
-    try:
-        prev, frame = _band_y()
-    except Exception:  # noqa: BLE001 — not steerable; caller fails closed
-        prev, frame = None, None
-    if prev is None:
-        ctx.log("NavRow0Pin", {"result": "unreadable", "holds": 0})
-        return "unreadable"
-    if frame is not None and ctx.frame_sink is not None:
-        ctx.frame_sink(f"navpin_{t0}_first", frame)
-    for holds in range(1, max(1, max_holds) + 1):
-        ctx.sender.press("UI_Up", hold=hold_s)   # HOLD pins to top; never wraps
-        ctx.sleeper(settle_s)
+
+    def _read(tag: str):
         try:
-            y, frame = _band_y()
-        except Exception:  # noqa: BLE001
-            y = None
-        if y is None:
-            ctx.log("NavRow0Pin", {"result": "unreadable", "holds": holds})
-            return "unreadable"
-        if abs(int(y) - int(prev)) <= tol_px:
-            ctx.log("NavRow0Pin", {"result": "pinned", "holds": holds,
-                                   "y": int(y)})
-            return "pinned"
-        prev = y
-    if frame is not None and ctx.frame_sink is not None:
-        ctx.frame_sink(f"navpin_{t0}_unstable", frame)
-    ctx.log("NavRow0Pin", {"result": "unstable", "holds": max(1, max_holds),
-                           "y": int(prev)})
-    return "unstable"
+            frame = grabber()
+        except Exception:  # noqa: BLE001 — grab failure -> not readable
+            return None
+        if frame is not None and ctx.frame_sink is not None:
+            ctx.frame_sink(f"navrow0_{t0}_{tag}", frame)
+        try:
+            return read_row0_selected(frame)
+        except Exception:  # noqa: BLE001 — read is fail-soft, but belt+braces
+            return None
+
+    r1 = _read("first")
+    if r1 is not None and r1.state == "bright":
+        ctx.log("NavRow0Check", {"result": "selected", "presses": 0,
+                                 "orange_frac": r1.orange_frac,
+                                 "header_y": r1.header_y})
+        return Row0Confirm("selected", r1)
+
+    # ONE-shot recovery: tap down once (off any top-edge tap-wrap), then a single
+    # 4.0s UI_Up hold. THE fix for the tap-burst-wrap smack — holds never wrap.
+    from ed_core.executor.navpanel import _target_pin_and_walk
+    _target_pin_and_walk(ctx.sender, ctx.sleeper, settle_s, 0, True, pin_hold_s)
+
+    r2 = _read("recheck")
+    if r2 is not None and r2.state == "bright":
+        ctx.log("NavRow0Check", {"result": "selected", "presses": 1,
+                                 "orange_frac": r2.orange_frac,
+                                 "header_y": r2.header_y})
+        return Row0Confirm("selected", r2)
+
+    ctx.log("NavRow0Check", {"result": "unconfirmed", "presses": 1,
+                             "state": r2.state if r2 is not None else "unreadable"})
+    return Row0Confirm("unconfirmed", r2)
 
 
 def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
@@ -1889,20 +1890,26 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
     s = ctx.sender
     sl = ctx.sleeper
     frame = None
+    row_y = None
     try:
         s.press(panel_focus_action); sl(settle_s)   # open the panel
-        # ROW-0 PIN (operator order 2026-07-06, run 102104): the cursor
-        # persists across opens — reading the SELECTED row's distance with
-        # the cursor rows down reads a beacon's distance as the star's
-        # (live: 145Ls FAR verdict with the star 1.19Ls ahead). Pin first;
-        # a band that will not stabilize means the read CANNOT be trusted
-        # -> CLOSE lane (the only dangerous gate output is a false FAR).
-        pinned = _pin_row0_selected(ctx)
-        if pinned == "unstable":
+        # ROW-0 VISUAL CONFIRM (council-v2, 2026-07-06): the cursor persists
+        # across opens — reading the SELECTED row's distance with the cursor
+        # rows down reads a beacon's distance as the star's (live: 145Ls FAR
+        # verdict with the star 1.19Ls ahead). Confirm row 0 is the BRIGHT row
+        # by a POSITIONAL brightness read anchored on the LOCATION header,
+        # with a bounded one-shot recovery. Row-0 UNCONFIRMED -> CLOSE lane:
+        # the ONLY dangerous gate output is a FAR taken off the wrong row.
+        conf = _confirm_row0_selected(ctx)
+        if conf.status != "selected":
             s.press(panel_focus_action); sl(settle_s)   # close the panel
             ctx.log("StarDistanceGate", {"verdict": "close",
-                                         "reason": "row0_unpinned"})
+                                         "reason": "row0_unconfirmed"})
             return True                              # fail-closed: get-around
+        # Anchor the distance OCR crop on the CONFIRMED row-0 y (closes the
+        # "LOCATION | FILTERS ACTIVE" summary-distance hazard sitting one row
+        # ABOVE row 0, inside the fixed top-of-panel crop).
+        row_y = conf.read.row_y if conf.read is not None else None
         try:
             frame = grabber()
         except Exception:  # noqa: BLE001 — grab failure -> frame None -> unreadable
@@ -1918,7 +1925,7 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
         ctx.frame_sink(f"stargate_{int(ctx.clock())}", frame)
     try:
         from ed_vision.navpanel_reader import read_first_row_distance_ls
-        ls = read_first_row_distance_ls(frame)
+        ls = read_first_row_distance_ls(frame, row_y=row_y)
     except Exception as exc:  # noqa: BLE001 — perception error -> fail closed
         ctx.log("StarDistanceGate", {"verdict": "close",
                                      "reason": "read_error",
@@ -1929,7 +1936,7 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
         return True
     verdict = "close" if ls < threshold_ls else "far"
     ctx.log("StarDistanceGate", {"verdict": verdict, "ls": round(ls, 2),
-                                 "threshold_ls": threshold_ls})
+                                 "threshold_ls": threshold_ls, "row_y": row_y})
     return ls < threshold_ls
 
 
@@ -2125,20 +2132,29 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
     t0 = int(ctx.clock())
     try:
         s.press(panel_focus_action); sl(settle_s)   # open the panel
-        # ROW-0 PIN (operator order 2026-07-06, run 102104): the cursor
-        # persists across opens — a prior scene's row-walk leaves it rows
-        # down and the confirm below then reads the WRONG row's icon (a
-        # night of real stars refused at NAV BEACON rows). Pin to row 0
-        # first; whatever the pin verdict, the fail-closed row confirm
-        # below stays the press authority.
-        _pin_row0_selected(ctx)
-        # --- ROW CONFIRM: row 0 must BE the star before we open/act on it ---
+        # --- ROW-0 VISUAL CONFIRM + STAR-ICON CONFIRM (defense in depth) ------
+        # The row-0 brightness check STACKS in FRONT of the icon confirm; it is
+        # engaged ONLY when the nav-list grabber is wired (unwired -> legacy
+        # blind press path, no regression).
         if frame_grabber is not None:
-            # SELECTED-ROW star confirm via the validated DYNAMIC localizer
+            # (1) POSITIONAL brightness read (council-v2, 2026-07-06): the cursor
+            # persists across opens — a prior scene's row-walk leaves it rows
+            # down and every confirm below then reads the WRONG row (a night of
+            # real stars refused at NAV BEACON rows, runs 102104/104612). Confirm
+            # row 0 is the BRIGHT row FIRST, anchored on the LOCATION header, with
+            # a bounded one-shot recovery. Row-0 UNCONFIRMED -> refuse, press
+            # NOTHING (the detail page is never opened).
+            conf = _confirm_row0_selected(ctx)
+            if conf.status != "selected":
+                ctx.log("NavSupercruiseStarRefused",
+                        {"reason": "row0_unconfirmed"})
+                s.press(panel_focus_action); sl(settle_s)   # close; press nothing
+                return False
+            # (2) SELECTED-ROW star confirm via the validated DYNAMIC localizer
             # (2026-07-06 audit: the fixed-y detect_row_icon read the right
             # cell on 1 of 4 real frames — only the one its constant was tuned
             # on; selected_destination_icon's band+glyph search reads 7/7).
-            # Row 0 is selected on open, so the highlight band IS row 0.
+            # Row 0 is confirmed selected, so the highlight band IS row 0.
             from ed_vision.navpanel_icons import STAR, detect_selected_row_star
             verdict, score = None, 0.0
             for attempt in range(max(1, row_reads)):

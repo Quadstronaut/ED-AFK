@@ -182,6 +182,7 @@ def read_first_row_distance_ls(
     frame: Any,
     *,
     region: Sequence[int] = DEFAULT_NAV_DISTANCE_REGION,
+    row_y: Optional[int] = None,
 ) -> Optional[float]:
     """FULL FRAME -> row-0 (arrival star) distance in Ls, or None.
 
@@ -192,7 +193,14 @@ def read_first_row_distance_ls(
 
     Region default is the DISTANCE column (DEFAULT_NAV_DISTANCE_REGION), NOT
     DEFAULT_NAV_REGION: the name-column crop deliberately excludes the distance
-    column, so it can never yield a reading (live finding 2026-07-05)."""
+    column, so it can never yield a reading (live finding 2026-07-05).
+
+    `row_y` (council-v2, 2026-07-06): when a CONFIRMED row-0 center y is supplied
+    (FRAME coords, e.g. from navpanel_row0.read_row0_selected), the crop's Y-BAND
+    is re-centered on it (±~22 px @1080p), keeping the region's distance-column X.
+    This closes the LATENT HAZARD that the fixed top-of-panel crop can capture the
+    "LOCATION | FILTERS ACTIVE" summary distance sitting one row ABOVE row 0. When
+    row_y is None the fixed region is used unchanged (no behaviour change)."""
     try:
         import numpy as np  # type: ignore
         arr = np.asarray(frame)
@@ -200,7 +208,13 @@ def read_first_row_distance_ls(
             return None
         sc = arr.shape[0] / 1080.0
         x, y, w, h = region
-        crop = arr[int(y * sc):int((y + h) * sc), int(x * sc):int((x + w) * sc)]
+        x0, x1 = int(x * sc), int((x + w) * sc)
+        if row_y is not None:
+            band = int(round(22 * sc))          # ~one row pitch, tilt-tolerant
+            y0, y1 = max(0, int(row_y) - band), int(row_y) + band
+        else:
+            y0, y1 = int(y * sc), int((y + h) * sc)
+        crop = arr[y0:y1, x0:x1]
         if crop.size == 0:
             return None
         lines = read_nav_panel_lines(crop)
