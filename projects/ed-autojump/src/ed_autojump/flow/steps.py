@@ -1847,12 +1847,18 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
 
 
 def step_wait_sc_assist_orbiting(ctx: StepContext, *, poll_s: float = 1.0,
-                                 max_polls: int = 45) -> bool:
+                                 max_polls: int = 22) -> bool:
     """Wait for the cyan ORBITING DESTINATION HUD prompt after
     nav_supercruise_star — the CV replacement for the blind `wait s=13.0`
     orbit-acquire pacing (#27 died with the blind flow). The get-around only
     works once the assist actually has the ship orbiting off the star vector;
     the prompt IS that signal (ed-sc-assist-hud-indicators, #17 reader).
+
+    max_polls 45 -> 22 (OPERATOR 2026-07-06, run 095532: a nose-away start
+    left the assist stuck at ALIGN WITH TARGET DESTINATION, the wait burned
+    all 45 polls (~48s) and fell through on the backstop anyway — "the
+    timeout was kind of long, I'd like to cut it in half"). Best-effort
+    stays: the clearance loop is still the fail-closed authority.
 
     BEST-EFFORT: returns True on EVERY exit (orbiting seen / abort / poll-count
     backstop / no grabber) — the jump leg's engage_jump_clearance loop is the
