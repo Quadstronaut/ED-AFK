@@ -3,9 +3,11 @@
 AUDIT REGRESSION ANCHOR (2026-07-06): the fixed-geometry readers
 (detect_row_icon et al., row_cell_rect's ROW0_CY) read the right cell on
 exactly ONE of four real frames — the one their constant was tuned on. The
-dynamic selected-band localizer (selected_destination_icon) reads all seven.
-Any future locator change must keep this table green — these ARE the
-operator's trained frames.
+dynamic RECTIFIED-BAR localizer (selected_destination_icon: bar center-line
+fit + straighten, then icon-geometry blob scan) reads all nine, including the
+two live 2026-07-06 refusal frames (tilt truncation, run 085221). Any future
+locator change must keep this table green — these ARE the operator's trained
+frames.
 
 Pure cv2 — no game, no OCR engine.
 """
@@ -27,14 +29,20 @@ CASES = [
     ("lhs2509_unexplored_1080.png",      STAR,     0.60),  # star selected
     ("capricorni_systems_full.png",      NON_STAR, None),  # SYSTEM glyph selected
     ("navpanel_nav_station_km_1080.png", NON_STAR, None),  # STATION row selected
-    # LIVE 2026-07-06 run 063740 (normal space, heat-sink wash): the star IS
-    # the selected row but the wash-dimmed band end hides its glyph from the
-    # global orange test, and the cyan location marker (the only icon-sized
-    # blob visible) is excluded by the blue-dominance guard -> honest ABSTAIN
-    # (NONE), never a false verdict. OPEN CALIBRATION ITEM: a wash-tolerant
-    # read should flip this expectation to STAR — that flip is the signal the
-    # calibration round landed.
-    ("l32-8_washed_normalspace_1080.png", "NONE",  None),
+    # LIVE 2026-07-06 run 063740 (normal space, heat-sink wash). Refused live;
+    # first pinned expecting NONE as the wash-abstain open item. ROOT CAUSE
+    # (found via run 085221) was mostly TILT, not wash: the slanted bar's left
+    # end failed the fixed-y extent test, cutting the star glyph out of the
+    # scan. The rectified-bar locator flips this to STAR — the documented
+    # "calibration landed" signal.
+    ("l32-8_washed_normalspace_1080.png", STAR,    0.60),
+    # LIVE 2026-07-06 run 085221 (arrival at L 32-8, optimal lighting): row 0
+    # WAS the star and the pre-rectification locator refused it 4x -> arrival
+    # aborted. The arrival row reads [star glyph] [name] [cyan you-are-here
+    # pin]; tilt (~-0.055 px/px) pushed the glyph left of the measured extent
+    # and the pin — the only icon-sized blob left in scan — is (correctly)
+    # excluded as blue-dominant. Rectification recovers the glyph.
+    ("l32-8_arrival_row0_cyanpin_1080.png", STAR,  0.60),
 ]
 
 

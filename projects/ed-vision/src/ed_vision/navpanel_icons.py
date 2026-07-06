@@ -324,21 +324,25 @@ def classify_icon_kind(cell: Any, registry: Any = None) -> dict:
 # 1080p). A fixed coordinate reads the wrong band on a real frame.
 #
 # This path takes NO fixed row/icon coordinate. It (1) finds the SELECTED orange
-# bar by its per-row orange peak in the nav-list window, then (2) finds the body
-# glyph as the LEFTMOST compact dark blob inside that bar (the icon is dark-on-
-# orange in a selected row; text is wider and further right), and (3) classifies
-# THAT cell. VALIDATED on real captures: tyriedgoea (star->park), lhs2509
-# (star->park), shinrarta (star->park), Jameson Memorial (station->dock).
+# bar by its per-row orange peak in the nav-list window, (2) fits the bar's
+# slanted center line and RECTIFIES it into a straight strip (the panel is a
+# tilted cockpit hologram — see TILT_PAD), (3) finds the body glyph as the
+# LEFTMOST icon-geometry dark blob in the strip (text letters fail the height
+# floor; the cyan location pin fails the blue-dominance guard), and (4)
+# classifies THAT cell. VALIDATED on real captures: tyriedgoea (star->park),
+# lhs2509 (star->park), shinrarta (star->park), Jameson Memorial
+# (station->dock), plus the 2026-07-06 live arrival frames (runs 063740 +
+# 085221, star + cyan pin under tilt -> STAR 0.64-0.76).
 # ===========================================================================
 
 # Nav-list search window @1080p reference (full-frame px). Excludes the right-
 # side target/contact panels (which also glow orange). Resolution-aware (_scale).
 NAVLIST_X0, NAVLIST_X1 = 280, 940
 NAVLIST_Y0, NAVLIST_Y1 = 430, 800
-# Icon scan SPAN right of the band's own measured left edge (LIVE FIX
-# 2026-07-06, run 063740: the panel FLOATS horizontally with head/ship
-# attitude — a fixed x window clipped the star glyph clean out of scan and
-# the leftmost rule crowned a name letter, refusing a real star 4x).
+# Icon scan SPAN right of the bar's true left edge (LIVE FIX 2026-07-06 run
+# 063740: the panel FLOATS horizontally with head/ship attitude — a fixed x
+# window clipped the star glyph clean out of scan and the leftmost rule
+# crowned a name letter, refusing a real star 4x).
 GLYPH_SCAN_SPAN = 300
 SELECTED_ROW_FRAC = 0.45    # row mean-orange (over the list width) above this -> selected bar
 # Icon-blob geometry from the OPERATOR-MEASURED box (navpanel_calib_columns
@@ -347,7 +351,20 @@ SELECTED_ROW_FRAC = 0.45    # row mean-orange (over the list width) above this -
 GLYPH_MIN_W, GLYPH_MAX_W = 14, 46
 GLYPH_MIN_H, GLYPH_MAX_H = 16, 32
 GLYPH_MIN_AREA = 60
-_BAND_COL_FRAC = 0.60       # column mean-orange over the band height -> inside the bar
+# Bar TILT handling (LIVE FIX 2026-07-06 run 085221): the panel is a cockpit
+# hologram, so the selected bar is a slanted RIBBON (measured slope ~-0.055
+# px/px — the bar's left end sits ~12px LOWER than the globally-measured y
+# band). A horizontal column test over that fixed y-band truncates the bar's
+# left end, which is exactly where the type glyph lives: on all four live
+# frames the extent started 30-40px right of the true bar edge, the star
+# glyph never entered the scan, and the only icon-sized blob left (the cyan
+# you-are-here location pin) was correctly excluded -> a REAL arrival star
+# refused 4x. Fix: fit the bar's center line and STRAIGHTEN it, then run the
+# unchanged blob geometry on the rectified strip.
+TILT_PAD = 16               # y allowance above/below the global band for the ribbon search
+_BAR_COL_FRAC = 0.60        # column orange (within padded window) -> bar member
+_CLEAN_COL_FRAC = 0.85      # near-full columns anchor the center-line fit
+_MIN_CLEAN_COLS = 20        # fewer clean columns than this -> no trustworthy fit
 
 
 def _selected_band(om: Any) -> Optional[tuple]:
@@ -374,73 +391,106 @@ def _selected_band(om: Any) -> Optional[tuple]:
     return yy0, yy1, (yy0 + yy1) // 2
 
 
-def _band_x_extent(om: Any, y0: int, y1: int) -> Optional[tuple]:
-    """(x_left, x_right) of the solid highlight bar within its row span:
-    columns whose mean orange over the band height clears _BAND_COL_FRAC.
-    Clamped to a generous panel window so cockpit wash cannot stretch it."""
+def _bar_line(om: Any, y0: int, y1: int) -> Optional[tuple]:
+    """Tilt-tolerant bar span + fitted center line for the selected bar.
+
+    Returns (xl, xr, a, c): xl/xr FULL-FRAME x of the bar's true extent, and
+    the bar's center line y = a*x + c in FULL-FRAME coords. Column membership
+    counts orange within a TILT_PAD-expanded y window (a slanted bar's left
+    end fails a fixed-y test — the run-085221 refusal), and the line is fit
+    only on near-full columns so glyph/text/pin holes cannot bend it. None
+    when no columns qualify or too few are clean to trust a fit."""
     import numpy as np
 
     h = om.shape[0]
+    bh = y1 - y0
+    m = _scale(TILT_PAD, h)
     lo, hi = _scale(NAVLIST_X0, h), min(_scale(1500, h), om.shape[1])
-    colmean = om[y0:y1, lo:hi].mean(axis=0)
-    xs = np.where(colmean > _BAND_COL_FRAC)[0]
+    t = max(0, y0 - m)
+    win = om[t: y1 + m, lo:hi]
+    counts = win.sum(axis=0)
+    xs = np.where(counts >= _BAR_COL_FRAC * bh)[0]
     if not len(xs):
         return None
-    return lo + int(xs[0]), lo + int(xs[-1])
+    clean = np.where(counts >= _CLEAN_COL_FRAC * bh)[0]
+    if len(clean) < _MIN_CLEAN_COLS:
+        return None
+    cys = []
+    for x in clean:
+        ys = np.where(win[:, x] > 0)[0]
+        cys.append((ys[0] + ys[-1]) / 2.0)
+    a, c = np.polyfit(clean.astype(float), np.asarray(cys, dtype=float), 1)
+    # window coords -> full frame: cy(X) = a*(X - lo) + c + t
+    return (lo + int(xs[0]), lo + int(xs[-1]), float(a),
+            float(c - a * lo + t))
 
 
-def _locate_glyph(om: Any, y0: int, y1: int, arr: Any = None) -> Optional[tuple]:
-    """Leftmost ICON-GEOMETRY dark blob inside the selected orange bar = the
-    body type icon. Returns (cx, cy, w, h) full-frame, or None.
+def _rectify_bar(arr: Any, om: Any, y0: int, y1: int) -> Optional[tuple]:
+    """The selected bar STRAIGHTENED: every bar column sampled at its fitted
+    center +- half. Returns (strip, xl, half, a, c) — strip is BGR, xl the
+    full-frame x of strip column 0, (a, c) the center line for mapping strip
+    coords back to the frame. None when no trustworthy bar line exists."""
+    import numpy as np
 
-    Scan x is anchored to the band's own measured left edge (the panel
-    floats horizontally — see GLYPH_SCAN_SPAN). Candidates are filtered by
-    the operator-measured icon box: name letters (h<=15), the thin divider,
-    underline strips (h<=15) and traversal arrows (narrow) all fail the
-    filter on every committed frame. When `arr` (the BGR frame) is given,
-    BLUE-dominant blobs are excluded — the cyan current-location marker is
-    icon-sized and fails the orange test just like a glyph does (live
-    2026-07-06 run 063740: on a wash-dimmed band it was the only qualifying
-    blob and produced a confident-looking false NON_STAR). A heavily
-    wash-dimmed band end can still hide its true glyph from the global
-    orange test — that reads NONE and callers fail closed/abstain (frames
-    are captured for calibration). cv2/numpy lazy-imported."""
+    line = _bar_line(om, y0, y1)
+    if line is None:
+        return None
+    xl, xr, a, c = line
+    h = arr.shape[0]
+    half = (y1 - y0) // 2 + _scale(6, h)   # margin: glyph must clear the edge
+    width = xr - xl + 1
+    strip = np.zeros((2 * half + 1, width, 3), dtype=arr.dtype)
+    for i in range(width):
+        x = xl + i
+        cyf = int(round(a * x + c))
+        top, bot = cyf - half, cyf + half + 1
+        if top < 0 or bot > h:
+            continue                        # off-frame column stays dark
+        strip[:, i] = arr[top:bot, x]
+    return (strip, xl, half, a, c)
+
+
+def _strip_glyph(strip: Any, frame_h: int) -> Optional[tuple]:
+    """Leftmost ICON-GEOMETRY dark blob in the rectified bar strip = the body
+    type icon. Returns (x, y, w, h) in STRIP coords, or None.
+
+    Same operator-measured icon-box filter as ever: name letters (h<=15),
+    divider/underline strips and narrow arrows all fail it on every committed
+    frame. BLUE-dominant blobs are excluded — the cyan you-are-here location
+    pin is icon-sized and fails the orange test exactly like a glyph (live
+    2026-07-06 runs 063740/085221: on the arrival row it sits right after the
+    system name and was the only qualifying blob once tilt truncated the
+    scan). A heavily wash-dimmed bar can still hide its glyph from the orange
+    test — that reads NONE and callers fail closed/abstain."""
     import cv2
     import numpy as np
 
-    h = om.shape[0]
-    ext = _band_x_extent(om, y0, y1)
-    if ext is None:
+    som = _orange(strip).astype(np.float32)
+    gx0, ytrim = _scale(4, frame_h), 2
+    gx1 = min(_scale(GLYPH_SCAN_SPAN, frame_h), strip.shape[1])
+    if gx1 - gx0 < 8 or strip.shape[0] <= 2 * ytrim:
         return None
-    gx0 = ext[0] + _scale(4, h)
-    gx1 = min(ext[0] + _scale(GLYPH_SCAN_SPAN, h), ext[1])
-    if gx1 - gx0 < 8:
-        return None
-    band_h = y1 - y0
-    dark = (om[y0:y1, gx0:gx1] < 0.5).astype(np.uint8)   # dark glyph inside the bright bar
+    dark = (som[ytrim:-ytrim, gx0:gx1] < 0.5).astype(np.uint8)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
-    wmin, wmax = _scale(GLYPH_MIN_W, h), _scale(GLYPH_MAX_W, h)
-    hmin, hmax = _scale(GLYPH_MIN_H, h), _scale(GLYPH_MAX_H, h)
-    amin = _scale(GLYPH_MIN_AREA, h)
+    wmin, wmax = _scale(GLYPH_MIN_W, frame_h), _scale(GLYPH_MAX_W, frame_h)
+    hmin, hmax = _scale(GLYPH_MIN_H, frame_h), _scale(GLYPH_MAX_H, frame_h)
+    amin = _scale(GLYPH_MIN_AREA, frame_h)
     cands = []
     for i in range(1, n):
         x, y, w, hh, area = (stats[i, 0], stats[i, 1], stats[i, 2],
                              stats[i, 3], stats[i, 4])
-        if not (wmin <= w <= wmax and hmin <= hh <= min(hmax, band_h)
-                and area >= amin):
+        if not (wmin <= w <= wmax and hmin <= hh <= hmax and area >= amin):
             continue
-        if arr is not None:
-            box = np.asarray(arr)[y0 + y:y0 + y + hh, gx0 + x:gx0 + x + w]
-            sel = (lab[y:y + hh, x:x + w] == i)   # the blob's OWN pixels only
-            if box.size and sel.any() and \
-                    float(box[:, :, 0][sel].mean()) > float(box[:, :, 2][sel].mean()):
-                continue                      # cyan marker: blue-dominant, never a glyph
-        cands.append((gx0 + int(x), y0 + int(y), int(w), int(hh)))
+        box = strip[ytrim + y: ytrim + y + hh, gx0 + x: gx0 + x + w]
+        sel = (lab[y:y + hh, x:x + w] == i)   # the blob's OWN pixels only
+        if box.size and sel.any() and \
+                float(box[:, :, 0][sel].mean()) > float(box[:, :, 2][sel].mean()):
+            continue                  # cyan pin: blue-dominant, never a glyph
+        cands.append((gx0 + int(x), ytrim + int(y), int(w), int(hh)))
     if not cands:
         return None
-    cands.sort(key=lambda c: c[0])            # leftmost icon-sized blob = the type icon
-    x, y, w, hh = cands[0]
-    return (x + w // 2, y + hh // 2, w, hh)
+    cands.sort(key=lambda c: c[0])    # leftmost icon-sized blob = the type icon
+    return cands[0]
 
 
 def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
@@ -472,14 +522,22 @@ def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
         if band is None:
             return none
         y0, y1, cy = band
-        g = _locate_glyph(om, y0, y1, arr=arr)
+        rect = _rectify_bar(arr, om, y0, y1)
+        if rect is None:
+            return none
+        strip, xl, shalf, la, lc = rect
+        g = _strip_glyph(strip, arr.shape[0])
         if g is None:
             return none
-        cx, gcy, gw, gh = g
-        half = (max(gw, gh) + 8) // 2
-        cell = arr[gcy - half: gcy + half + 1, cx - half: cx + half + 1]
+        sx, sy, gw, gh = g
+        pad = _scale(5, arr.shape[0])    # bbox margin: outline never touches the cell border
+        cell = strip[max(0, sy - pad): sy + gh + pad,
+                     max(0, sx - pad): sx + gw + pad]
         verdict, score = classify_icon_scored(cell)
         reg = classify_icon_kind(cell, registry)
+        # glyph debug box mapped back to FULL-FRAME coords for the overlay
+        cx = xl + sx + gw // 2
+        gcy = int(round(la * (xl + sx) + lc)) - shalf + sy + gh // 2
         if verdict == STAR:
             action = "park"          # confident star -> veto (catastrophe guard)
         elif reg.get("action") == "dock" and reg.get("score", 0.0) >= KIND_MATCH_MIN:
