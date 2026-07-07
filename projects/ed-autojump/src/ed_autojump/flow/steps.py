@@ -2580,7 +2580,9 @@ def step_orient_escape_vector(ctx: StepContext, *, deadzone_px: float = 48.0,
                               gain_s_per_px: float = 0.0022,
                               min_press: float = 0.12, max_press: float = 0.5,
                               settle_s: float = 0.5, samples: int = 3,
-                              miss_limit: int = 8, max_iters: int = 150) -> bool:
+                              miss_limit: int = 8, max_iters: int = 150,
+                              search_hold_s: float = 0.45,
+                              search_limit: int = 45) -> bool:
     """Center the ESCAPE VECTOR sky marker and ride the charge to
     SupercruiseEntry — the ALL-CV replacement for the refuted star-lock /
     compass-dot escape dance (operator order 2026-07-06). The marker is a
@@ -2594,10 +2596,19 @@ def step_orient_escape_vector(ctx: StepContext, *, deadzone_px: float = 48.0,
     corrections: marker below center -> pitch down, right -> yaw right;
     dominant axis only (the compass-orient lesson: coupled axes fight).
 
+    SEARCH (live fix 2026-07-07, run 002437): the marker is WORLD-SPACE — a
+    ship not FACING it sees nothing (frame-confirmed: CHARGING on screen,
+    marker nowhere in view; the step died at miss_limit while the vector sat
+    behind the ship). While the charge is LIVE and the marker is unseen,
+    pitch UP one `search_hold_s` pulse per miss — the operator's own "turned
+    around until aligned" — up to `search_limit` pulses (a full pitch circle
+    with margin) before declaring the marker lost. `miss_limit` still governs
+    when NO charge is live (no charge = no vector exists to find).
+
     Exits: SupercruiseEntry event / in_supercruise flag -> True. Fail-CLOSED
-    False on: no grabber, `miss_limit` consecutive not-found reads (marker
-    lost), charge dropped without entry, abort, or the max_iters failsafe
-    ceiling (the gates are game signals, never the clock)."""
+    False on: no grabber, marker unfound past the search budget, charge
+    dropped without entry, abort, or the max_iters failsafe ceiling (the
+    gates are game signals, never the clock)."""
     grabber = getattr(ctx, "hud_grabber", None)
     if grabber is None:
         ctx.log("OrientEscapeVector", {"result": "no_grabber"})
@@ -2635,12 +2646,28 @@ def step_orient_escape_vector(ctx: StepContext, *, deadzone_px: float = 48.0,
                 ctx.frame_sink(f"escorient_{t0}_i{i:03d}", frame)
         if not reads:
             misses += 1
-            ctx.log("EscapeVectorIter", {"i": i, "found": False,
-                                         "misses": misses})
-            if misses >= miss_limit:
-                ctx.log("OrientEscapeVector", {"result": "marker_lost",
-                                               "iters": i})
-                return False
+            charging = st is not None and getattr(st, "fsd_charging", False)
+            if charging:
+                # Marker EXISTS (live charge) but is off-view -> SEARCH:
+                # one pitch-up pulse per miss sweeps the sky (operator's own
+                # recovery: turn until the marker comes into view).
+                if misses >= max(1, search_limit):
+                    ctx.log("OrientEscapeVector", {"result": "marker_lost",
+                                                   "iters": i,
+                                                   "searched": misses})
+                    return False
+                if not _press(ctx, "PitchUpButton", hold_s=search_hold_s):
+                    return False
+                ctx.log("EscapeVectorIter", {"i": i, "found": False,
+                                             "misses": misses,
+                                             "action": "search_pitch"})
+            else:
+                if misses >= max(1, miss_limit):
+                    ctx.log("OrientEscapeVector", {"result": "marker_lost",
+                                                   "iters": i})
+                    return False
+                ctx.log("EscapeVectorIter", {"i": i, "found": False,
+                                             "misses": misses})
             ctx.sleeper(settle_s)
             continue
         misses = 0
