@@ -46,7 +46,6 @@ retry_from_if_supercruise = "target_next_route"
 
 steps = [
   # ── Real-space recovery during the smack cooldown ────────────────────────
-  { action = "set_throttle", pct = 0 },                                                       # tap    | 0 kill thrust
   { action = "set_throttle", pct = 75 },                                                      # tap    | 1 full burn through the flip (operator order, v7-preserved)
   # vision | 2 pitch the star OFF-SCREEN by center-brightness CV — no lock,
   # no panel, no compass. Off-screen (not compass-astern) suffices: the
@@ -66,11 +65,13 @@ steps = [
   { action = "orient_escape_vector", required = true },                                       # vision | 6 EXCLUSIVE — ride the vector to SC entry
 
   # ── In supercruise: lock the hop, clear the star, jump ───────────────────
+  { action = "nav_supercruise_star", required = true },
+  { action = "wait_sc_assist_orbiting" },
   { action = "target_next_route", required = true, retry_anchor = true },                     # gated  | 7 hop lock — SC failures return HERE
-  { action = "set_throttle", pct = 100 },                                                     # tap    | 8 SC entry reset the throttle
-  { action = "wait", s = 13.0 },                                                              # wait   | 8.5 fly clear of the star — TRAJECTORY PACING, not a gate
+  { action = "set_throttle", pct = 75 },                                                     # tap    | 8 SC entry reset the throttle
+  { action = "wait", s = 3.0 },                                                              # wait   | 8.5 fly clear of the star — TRAJECTORY PACING, not a gate
   { action = "orient_compass", required = true },                                             # vision | 9 EXCLUSIVE coarse
   { action = "orient_widget_ring", required = true },                                         # vision | 10 fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },                                                # gated  | 11 FSD jump
-  { action = "hold_alignment", required = true },                                             # vision | 12 hold cone until StartJump — event/state-gated, no clock
+  { action = "set_throttle", pct = 100 },
+  { action = "engage_jump_clearance", required = true },                                                # gated  | 11 FSD jump
 ]

@@ -64,10 +64,10 @@ backoff_s = 2.0
 steps = [
   # tap | 0 THROTTLE UP FIRST — ED refuses SC entry at zero throttle (live
   # 2026-07-06, THROTTLE UP hang; operator reorder — see header THROTTLE).
-  { action = "set_throttle", pct = 100 },                   # tap    | 0 SC entry needs live throttle
+  { action = "set_throttle", pct = 0 },                   # tap    | 0 SC entry needs live throttle
   # vision | 1 CLEAR-OF-STAR CV GATE. True (CLOSE/unreadable) -> fall through to
   # the get-around; False (confidently FAR) -> skip_to the direct jump.
-  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 100.0 },  # vision | 1 EXCLUSIVE — row-0 distance read
+  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 10.0 },  # vision | 1 EXCLUSIVE — row-0 distance read
   # gated | 2 CLOSE lane: enter supercruise (throttle already up).
   # escape_vector_abort (OPERATOR WIRE-IN 2026-07-06, run 233422): while
   # waiting for entry, CV-watch the center HUD for ALIGN WITH ESCAPE VECTOR —
@@ -78,6 +78,7 @@ steps = [
   # this scene IS the real-space scene; smack_recovery's own engage EXPECTS
   # the vector and does not set this.
   { action = "engage_supercruise", required = true, escape_vector_abort = true },  # gated | 2 event/state-gated on SupercruiseEntry
+  { action = "set_throttle", pct = 100 },
   # vision | 3 CV-confirmed lock + SC-assist toward the star (row 0, #8 label
   # confirm before the press). Replaces blind nav_panel_target + sc_assist_orbit.
   { action = "nav_supercruise_star", required = true },     # vision | 3 EXCLUSIVE — CV lock+assist get-around
@@ -87,7 +88,9 @@ steps = [
   { action = "wait_sc_assist_orbiting" },                   # wait   | 4 CV — cyan ORBITING prompt
   # ── shared continuation: the FAR lane lands here ──────────────────────────
   { action = "target_next_route", required = true },        # gated  | 5 lock the NEXT SYSTEM (cancels the assist)
+  { action = "set_throttle", pct = 75 },
   { action = "orient_compass", required = true },           # vision | 6 coarse
   { action = "orient_widget_ring", required = true },       # vision | 7 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "set_throttle", pct = 100 },
   { action = "engage_jump_clearance", required = true },    # gated  | 8 FSD jump + obstruction clearance loop
 ]
