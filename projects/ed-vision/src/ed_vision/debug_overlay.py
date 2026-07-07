@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,10 +48,55 @@ Region = Tuple[int, int, int, int]  # (x, y, w, h) in SCREEN pixels
 # Renderer constants from the EDMCOverlay C# source (knowledgebase §4.1).
 VIRTUAL_ORIGIN_X = 20
 VIRTUAL_ORIGIN_Y = 40
+VIRTUAL_WIDTH = 1280         # the actual render canvas (OverlayRenderer.cs)
+VIRTUAL_HEIGHT = 1024
 VIRTUAL_WIDTH_PLUS = 1312    # VIRTUAL_WIDTH 1280 + 32: the Scale() divisor
 VIRTUAL_HEIGHT_PLUS = 1042   # VIRTUAL_HEIGHT 1024 + 18
 
 TRANSFORM_FILENAME = "overlay_transform.json"
+
+
+# ---------------------------------------------------------------------------
+# Loud-once diagnostics (2026-07-07, "no CV debug boxes render live" bug hunt).
+# Every sink call site used to swallow at log.debug level -- below the default
+# handler threshold, invisible in the launch console. That made two very
+# different failures look IDENTICAL from the operator's seat: "this code path
+# never ran at all" vs "it ran and something inside raised". Mirrors the
+# frame-capture loudness rule (diagnostic writers never fail silent). Fires
+# ONCE per (component, name) for the life of the process -- a per-frame reader
+# (sc_hud/row0 can be read many times a second) never spams the console, but
+# the FIRST failure is always visible and never re-hidden.
+# ---------------------------------------------------------------------------
+_warned: Dict[str, set] = {}
+# The check-then-act below races the dispatcher's parallel_tracks daemon
+# thread against the main flight thread (arbiter merge patch, council
+# wf_1fc435ed-d21: 12/12 duplicate warnings under the real race without the
+# lock; AC-5d demands exactly one per name).
+_warned_lock = threading.Lock()
+
+
+def warn_once(component: str, name: str, exc: Exception) -> None:
+    """Log one WARNING-level line for (component, name), ever, this process.
+    Never raises itself -- a broken logger must not break the caller's
+    fail-soft path. Thread-safe: main flight thread + parallel_tracks daemon
+    both reach sink flash paths."""
+    try:
+        with _warned_lock:
+            bucket = _warned.setdefault(component, set())
+            if name in bucket:
+                return
+            bucket.add(name)
+        log.warning("cv debug: %s('%s') failed -- %s: %s",
+                    component, name, type(exc).__name__, exc)
+    except Exception:  # noqa: BLE001 — a logging failure must never propagate
+        pass
+
+
+def _reset_warned_for_tests() -> None:
+    """Test-only: clear the once-per-name dedup so one test's warning doesn't
+    suppress the same (component, name) pair asserted by a later test in the
+    same process."""
+    _warned.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +205,22 @@ class CvDebugSink:
         try:
             self._last_rect[name] = tuple(screen_rect)
             vx, vy, vw, vh = self._transform.to_virtual(tuple(screen_rect))
+            # Boundary check (AC-6, "optimize for robustness at the
+            # boundaries"): a rect entirely outside the 1280x1024 render
+            # canvas gets ZERO on-screen pixels -- EDMCOverlay doesn't clip or
+            # error, it just draws nowhere visible. That is indistinguishable
+            # from "no box at all" to the operator. A mismatch between
+            # cfg.cv.target_resolution and the live game-window resolution is
+            # the classic way to get here (every screen rect maps consistently
+            # off-canvas). Warn once per name; still SEND the message (a
+            # slightly-clipped box is still useful, and off_x/off_y calibration
+            # can legitimately push a box near the edge).
+            if vx + vw <= 0 or vy + vh <= 0 or vx >= VIRTUAL_WIDTH or vy >= VIRTUAL_HEIGHT:
+                warn_once("offcanvas", name, RuntimeError(
+                    f"virtual rect ({vx},{vy},{vw},{vh}) is entirely off the "
+                    f"{VIRTUAL_WIDTH}x{VIRTUAL_HEIGHT} canvas for screen_rect "
+                    f"{tuple(screen_rect)} -- check cfg.cv.target_resolution "
+                    f"matches the live game window"))
             color = _COLORS.get(verdict, _COLORS[None])
             box_id = f"edafk_cvbox_{name}"
             if self._last_size.get(name) not in (None, (vw, vh)):
@@ -176,7 +238,7 @@ class CvDebugSink:
                 "ttl": self._ttl,
             })
         except Exception as e:  # noqa: BLE001 — cosmetic, never hurts a flight
-            log.debug("cv debug box failed (%s)", e)
+            warn_once("box", name, e)
 
     def verdict(self, name: str, verdict: Optional[str],
                 label: Optional[str] = None) -> None:
@@ -192,7 +254,7 @@ class CvDebugSink:
             if rect is not None:
                 self.box(name, rect, verdict=verdict, label=label)
         except Exception as e:  # noqa: BLE001 — cosmetic, never hurts a flight
-            log.debug("cv debug verdict failed (%s)", e)
+            warn_once("verdict", name, e)
 
 
 # ---------------------------------------------------------------------------
@@ -210,3 +272,52 @@ def set_debug_sink(sink: Optional[CvDebugSink]) -> None:
 
 def get_debug_sink() -> Optional[CvDebugSink]:
     return _sink
+
+
+# ---------------------------------------------------------------------------
+# The gate -> registration decision (2026-07-07 fix, AC-2). Extracted to a
+# pure function (same pattern as overlay.py's `_text_message`/`_frame`) so the
+# ON/OFF console line and the actual set_debug_sink() call can be unit-tested
+# as ONE truth table instead of only exercised inline inside cli.py's `run`.
+# The caller (cli.py) does exactly:
+#     sink, msg = resolve_cv_debug_sink(edmc, cfg)
+#     set_debug_sink(sink)
+#     print(msg)
+# so the printed line can never drift from what was actually registered.
+# ---------------------------------------------------------------------------
+
+def resolve_cv_debug_sink(edmc: Any, cfg: Any) -> Tuple[Optional[CvDebugSink], str]:
+    """Decide ON/OFF and build the sink. NEVER raises: any setup failure (bad
+    cfg shape, unreadable calibration dir, etc.) degrades to OFF with the
+    exception folded into the message, same fail-soft posture as everything
+    else in this module. `cfg.paths.calibration_dir` is expanded with
+    os.path.expandvars here (kept out of `cli.py` so this single function is
+    the whole gate)."""
+    import os as _os
+
+    try:
+        cv_debug = bool(getattr(getattr(cfg, "overlay", None), "cv_debug", False))
+    except Exception:  # noqa: BLE001
+        cv_debug = False
+
+    if edmc is None:
+        return None, ("overlay: CV debug boxes OFF (no EDMCOverlay connection "
+                      "-- overlay.enabled=false or EDMC unreachable)")
+    if not cv_debug:
+        return None, ("overlay: CV debug boxes OFF (cv_debug=false -- set "
+                      "[overlay].cv_debug=true or "
+                      "ED_AUTOJUMP_OVERLAY_CV_DEBUG=1 to enable)")
+    try:
+        w, h = tuple(cfg.cv.target_resolution)
+        calib_dir = Path(_os.path.expandvars(cfg.paths.calibration_dir))
+        transform = ScreenToOverlay.load(calib_dir, w, h)
+        source = ("calibrated" if (calib_dir / TRANSFORM_FILENAME).is_file()
+                  else "computed defaults")
+        ttl_s = getattr(cfg.overlay, "cv_debug_ttl_s", 2.0)
+        sink = CvDebugSink(edmc, transform, ttl_s=ttl_s)
+        msg = (f"overlay: CV debug boxes ON (transform={source}, "
+               f"scale=({transform.scale_x:.4f},{transform.scale_y:.4f}), "
+               f"ttl={ttl_s:g}s; tune with `calibrate-overlay`)")
+        return sink, msg
+    except Exception as e:  # noqa: BLE001 — setup failure must never crash a run
+        return None, f"overlay: CV debug boxes OFF (setup failed -- {type(e).__name__}: {e})"

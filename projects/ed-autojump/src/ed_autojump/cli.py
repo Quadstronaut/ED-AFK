@@ -644,16 +644,18 @@ def cmd_run(args) -> int:
     # ed-autojump/.env (local, gitignored); or cv_debug=true in config.local.toml.
     # When on, draws what every named grabber looks at, green hit / red miss.
     # Registered globally so vision call sites find it. Fail-soft: needs EDMC.
-    if edmc is not None and cfg.overlay.cv_debug:
-        import os as _os
-        from ed_vision.debug_overlay import (CvDebugSink, ScreenToOverlay,
-                                           set_debug_sink)
-        _w, _h = tuple(cfg.cv.target_resolution)
-        _transform = ScreenToOverlay.load(
-            Path(_os.path.expandvars(cfg.paths.calibration_dir)), _w, _h)
-        set_debug_sink(CvDebugSink(edmc, _transform,
-                                   ttl_s=cfg.overlay.cv_debug_ttl_s))
-        print("overlay: CV debug boxes ON (tune with `calibrate-overlay`)")
+    #
+    # ALWAYS prints exactly one ON/OFF line (2026-07-07 fix, AC-2). Before this
+    # fix, the OFF path printed NOTHING -- a silent opt-in typo or a missing
+    # EDMC connection was indistinguishable, at the operator's seat, from "on
+    # but nothing to draw yet". The gate + registration decision is ONE pure
+    # function (`resolve_cv_debug_sink`, ed_vision.debug_overlay) so the
+    # printed line can never drift from what set_debug_sink() actually got —
+    # and so the truth table is unit-testable without invoking `run` itself.
+    from ed_vision.debug_overlay import resolve_cv_debug_sink, set_debug_sink
+    _cv_sink, _cv_msg = resolve_cv_debug_sink(edmc, cfg)
+    set_debug_sink(_cv_sink)
+    print(_cv_msg)
 
     # Visited-systems log (default on; --no-visited-log disables). Passive
     # observer: appends each live FSDJump arrival to ~/Documents, never deleted.
