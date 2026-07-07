@@ -35,29 +35,17 @@
 #   wait    passive block on a journal edge — no input sent
 
 steps = [
-  # macro | LOOP-HEAD: SC-assist the NEXT unexplored body (detail page -> #8
-  # SUPERCRUISE ASSIST button). Returns True (engaged) -> run the body below and
-  # loop; False (the `✦` terminator, or an unreadable list) -> skip_to VAULTS the
-  # whole body straight to the exit (target_next_route). One body per call.
   { action = "nav_supercruise_unexplored", skip_to = "target_next_route" },
-  # tap | body: throttle up to close on the body (best-effort; SC-assist manages
-  # the approach, this just ensures forward motion).
-  { action = "set_throttle", pct = 100 },
-  # vision | body: coarse-align toward the body. best-effort — orient_compass, NOT
-  # the traversal jump-align widget ring (D-C); a miss never blocks the tour.
+  { action = "set_throttle", pct = 75 },
   { action = "orient_compass" },
-  # observe | body: read the SC-assist HUD prompt and LOG the ScHudState. Purely
-  # observational — returns True on every path, never gates the loop.
   { action = "confirm_sc_assist_active" },
-  # wait | body: block until this body's AutoScan seq advances (event gate, no
-  # wall-clock). best-effort — a missed scan exits to the next body, never hangs.
+  { action = "confirm_orbiting" },
+  { action = "wait", s = 3.0 },
   { action = "wait_body_scanned" },
-  # tap | BACK-EDGE: throttle to 0 (hold) and LOOP BACK to pick the next
-  # unexplored body. loop_max caps the tour at 64 bodies (fail-closed budget: a
-  # non-terminating loop logs LoopBudgetExceeded and exits to target_next_route).
-  { action = "set_throttle", pct = 0, loop_to = "nav_supercruise_unexplored", loop_max = 64 },
-  # gated | EXIT: lock the next SYSTEM hop (the skip_to landing on the terminator).
-  # best-effort here (D-D); TRAVERSAL's own required target_next_route is the real
-  # gate for the jump.
+  { action = "set_throttle", pct = 0, loop_to = "nav_supercruise_unexplored", loop_max = 128 },
   { action = "target_next_route" },
+  { action = "orient_compass", required = true },
+  { action = "orient_widget_ring", required = true },
+  { action = "set_throttle", pct = 100 },
+  { action = "engage_jump_clearance", required = true },
 ]

@@ -45,33 +45,20 @@ backoff_s = 2.0
 retry_from_if_supercruise = "target_next_route"
 
 steps = [
-  # ── Real-space recovery during the smack cooldown ────────────────────────
-  { action = "set_throttle", pct = 75 },                                                      # tap    | 1 full burn through the flip (operator order, v7-preserved)
-  # vision | 2 pitch the star OFF-SCREEN by center-brightness CV — no lock,
-  # no panel, no compass. Off-screen (not compass-astern) suffices: the
-  # escape-vector orient below completes the turn onto the vector.
-  { action = "pitch_star_off", required = true },                                             # vision | 2 EXCLUSIVE — star off-screen
-  { action = "wait_cooldown_clear", required = true },                                        # wait   | 3 smack cooldown — FsdCooldown flag-gated, no timer
-  # until_charging: success = a LIVE CHARGE, not entry — the charge is what
-  # spawns the escape-vector marker. ED refuses the press while deep in the
-  # exclusion zone — re-press every 15s (max 3); 240s is the wedged-FSD
-  # watchdog, never a success gate. A re-press is only sent when no charge
-  # ever started in its window (re-pressing a live charge would CANCEL it).
-  { action = "engage_supercruise", required = true, until_charging = true, presses = 3, between_press_s = 15.0, max_charge_s = 240.0 },  # gated | 4 press until a charge is LIVE
-  { action = "set_throttle", pct = 100 },                                                     # tap    | 5 full throttle rides the vector out
-  # vision | 6 THE ESCAPE: center the cyan ESCAPE VECTOR sky marker and hold
-  # it to SupercruiseEntry. Fail-closed: marker lost / charge dropped ->
-  # False -> the retry ladder (real-space -> step 0; in-SC -> hop lock).
-  { action = "orient_escape_vector", required = true },                                       # vision | 6 EXCLUSIVE — ride the vector to SC entry
-
-  # ── In supercruise: lock the hop, clear the star, jump ───────────────────
+  { action = "set_throttle", pct = 75 },
+  { action = "pitch_star_off", required = true },
+  { action = "wait_cooldown_clear", required = true },
+  { action = "engage_supercruise", required = true, until_charging = true, presses = 3, between_press_s = 15.0, max_charge_s = 240.0 },
+  { action = "set_throttle", pct = 100 },
+  { action = "orient_escape_vector", required = true },
   { action = "nav_supercruise_star", required = true },
   { action = "wait_sc_assist_orbiting" },
-  { action = "target_next_route", required = true, retry_anchor = true },                     # gated  | 7 hop lock — SC failures return HERE
-  { action = "set_throttle", pct = 75 },                                                     # tap    | 8 SC entry reset the throttle
-  { action = "wait", s = 3.0 },                                                              # wait   | 8.5 fly clear of the star — TRAJECTORY PACING, not a gate
-  { action = "orient_compass", required = true },                                             # vision | 9 EXCLUSIVE coarse
-  { action = "orient_widget_ring", required = true },                                         # vision | 10 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "confirm_orbiting" },
+  { action = "target_next_route", required = true, retry_anchor = true },
+  { action = "set_throttle", pct = 75 },
+  { action = "wait", s = 3.0 },
+  { action = "orient_compass", required = true },
+  { action = "orient_widget_ring", required = true },
   { action = "set_throttle", pct = 100 },
-  { action = "engage_jump_clearance", required = true },                                                # gated  | 11 FSD jump
+  { action = "engage_jump_clearance", required = true },
 ]

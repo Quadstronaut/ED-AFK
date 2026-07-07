@@ -41,59 +41,12 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  # 4.1 SC-assist the STATION row (name-match, CV-confirmed #8 button-label) —
-  # BUILT (nav_supercruise_target, steps.py). SC-assist DROPS at a station
-  # (a game outcome of the SAME button/action nav_supercruise_star uses for
-  # an orbitable body — not a code branch). Required: a wrong/missing target
-  # here must never reach the approach.
-  { action = "nav_supercruise_target", required = true },     # vision | 1 EXCLUSIVE — name-matched SC-assist toward the station
-  # 4.2 Wait for the actual drop (SupercruiseExit), event-gated with a state
-  # fallback (already dropped / not in supercruise on entry). Required: the
-  # rest of the flow assumes normal space at the station.
-  { action = "dock_await_exit", required = true },            # wait   | 2 SupercruiseExit -> normal space at the station
-  # 4.3 Station name is RESOLVED (not blocked): Status.Destination.Name via
-  # ctx.dock_target_name_supplier, already CONSUMED by 4.1's name-match (D1
-  # confirms the flip-to-station at route-complete). No separate step.
-  # 4.4 Boost DROPPED (operator 2026-07-04: "just drop the boosting for now" —
-  # boosts aren't important; no log signal exists to guard one anyway, see
-  # ed-docking-mechanics / the 2026-07-04 journal sweep). Throttle 50 alone
-  # closes the gap.
-  # 4.5 Throttle 50% toward the station (SC-assist dropped the ship pointed
-  # at it). This is the closing thrust for 4.7's read-distance loop below —
-  # NOT required (a bare throttle tap).
-  { action = "set_throttle", pct = 50 },                       # tap    | 4 close in at 50%
-  # 4.6 "nav-panel target the station" is SUBSUMED by 4.1 (nav_supercruise_target
-  # already name-matched + walked + opened the station's detail page, which
-  # targets it as a side effect — the same way the proven request_docking /
-  # target_via_navpanel macros target-by-selecting). FLAGGED, not a separate
-  # step: re-running a second nav-panel target walk here would be redundant
-  # input on an already-correct lock. If the operator's authored flow intends
-  # an INDEPENDENT re-target at this point (e.g. because 4.1's target does not
-  # survive the SC-assist drop), that is a BLOCKED-ON-KYLE this rebuild flags
-  # rather than guesses.
-  # 4.7 READ-DISTANCE loop until < 7.5km — NEW dock_close_to_range, reads the
-  # RIGHT-SIDE target panel (ed_vision.target_panel_distance), NEVER the
-  # NoFireZone broadcast. State fallback: already < 7.5km on entry -> instant
-  # pass. Fail-closed: an unread distance is NEVER "in range"; the bounded
-  # poll ceiling is a FAIL backstop only, never the success signal. Ram-guard:
-  # throttle zeroed on every exit. This is the retry_from anchor above.
-  { action = "dock_close_to_range", required = true },        # vision | 5 EXCLUSIVE-ish — read-distance loop, <7.5km gate
-  # 4.8/4.9 Request docking — the operator's EXACT LITERAL tail (implement as
-  # written): E -> wait 0.5s -> E -> wait 0.5s -> D -> space -> throttle 0,
-  # i.e. CycleNextPanel x2 (Navigation->Contacts) -> UI_Right (onto REQUEST
-  # DOCKING) -> UI_Select (press) -> SetSpeedZero. Panel ambiguity RESOLVED by
-  # operator 2026-07-03 (LIVE): the tail requests fine from the closed-panel
-  # state 4.1 leaves behind, and the ship STAYS on the nav panel afterwards —
-  # so on DockingGranted the step re-zeros throttle (REQUIRED, idempotent) and
-  # presses FocusLeftPanel ('1') to close the panel; autodock flies from there.
-  # DockingDenied Distance -> retryable fail (re-approach via retry_from);
-  # other denial -> fail, retries exhaust to abort-to-human. Denial/watchdog
-  # exits also close the panel so a retry re-enters the verified start state.
-  { action = "dock_request", required = true },                # macro  | 6 EXCLUSIVE — literal request tail + grant/denial gate
-  # Wait for the Advanced Docking Computer to land on the pad. Gate on the
-  # Docked event / status.docked (state fallback: already docked on entry).
-  { action = "dock_await_docked", required = true },           # wait   | 7 ADC -> pad -> Docked
-  # 9. Station services after Docked — RETAINED (operator 2026-07-03: "retain").
-  # Best-effort (not required): a service-menu miss never fails the dock.
-  { action = "station_services_macro" },                       # macro  | 8 EXCLUSIVE — refuel/repair/rearm/reset
+  { action = "nav_supercruise_target", required = true },
+  { action = "dock_await_exit", required = true },
+  { action = "set_throttle", pct = 100 },
+  { action = "dock_close_to_range", required = true },
+  { action = "set_throttle", pct = 0 },
+  { action = "dock_request", required = true },
+  { action = "dock_await_docked", required = true },
+  { action = "station_services_macro" },
 ]
