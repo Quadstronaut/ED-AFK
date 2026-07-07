@@ -1,16 +1,23 @@
 """CV debug overlay — transform math, sink semantics, registry. No real I/O."""
 
 import json
+import logging
+
+import pytest
 
 from ed_vision import debug_overlay
 from ed_vision.debug_overlay import (
     TRANSFORM_FILENAME,
+    VIRTUAL_HEIGHT,
     VIRTUAL_HEIGHT_PLUS,
+    VIRTUAL_WIDTH,
     VIRTUAL_WIDTH_PLUS,
     CvDebugSink,
     ScreenToOverlay,
     get_debug_sink,
+    resolve_cv_debug_sink,
     set_debug_sink,
+    warn_once,
 )
 
 
@@ -154,3 +161,176 @@ def test_registry_set_get():
     finally:
         set_debug_sink(None)
     assert get_debug_sink() is None
+
+
+# ---------------------------------------------------------------------------
+# Loud-once diagnostics (2026-07-07 fix, AC-5d): the blanket swallow in box()/
+# verdict() used to log at DEBUG level -- invisible in the launch console and
+# indistinguishable from "this code path never ran". It must now warn exactly
+# once per name.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clear_warn_dedup():
+    """Every test starts with a clean once-per-name ledger so one test's
+    warning can't suppress the same (component, name) pair in a later test."""
+    debug_overlay._reset_warned_for_tests()
+    yield
+    debug_overlay._reset_warned_for_tests()
+
+
+def test_box_swallow_warns_exactly_once_per_name(caplog):
+    # An on-canvas rect (identity transform, well inside the inset margin) so
+    # the ONLY warning in play is the writer's raised exception -- isolates
+    # the box()-swallow path from the separate off-canvas guard below.
+    on_canvas = (100, 100, 50, 50)
+    with caplog.at_level(logging.WARNING, logger="ed_vision.debug_overlay"):
+        s = CvDebugSink(_RaisingWriter(), _IDENT)
+        s.box("x", on_canvas)
+        s.box("x", on_canvas)             # same name again -> no repeat warning
+        s.box("y", on_canvas)             # different name -> warns once too
+    warnings = [r for r in caplog.records
+                if r.levelno == logging.WARNING and "box(" in r.message]
+    assert sum("'x'" in r.message for r in warnings) == 1
+    assert sum("'y'" in r.message for r in warnings) == 1
+
+
+def test_verdict_swallow_warns_once(caplog):
+    class _BadSink(CvDebugSink):
+        def box(self, *a, **kw):
+            raise RuntimeError("kaboom")
+
+    with caplog.at_level(logging.WARNING, logger="ed_vision.debug_overlay"):
+        s = _BadSink(_FakeWriter(), _IDENT)
+        s._last_rect["z"] = (100, 100, 50, 50)
+        s.verdict("z", "hit")
+        s.verdict("z", "hit")
+    warnings = [r for r in caplog.records
+                if r.levelno == logging.WARNING and "'z'" in r.message]
+    assert len(warnings) == 1
+
+
+def test_warn_once_never_raises_on_broken_logging(monkeypatch):
+    monkeypatch.setattr(debug_overlay.log, "warning",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("x")))
+    warn_once("box", "never-raises", RuntimeError("boom"))  # must not propagate
+
+
+# ---------------------------------------------------------------------------
+# Off-canvas boundary guard (AC-6, "optimize for robustness at the
+# boundaries"): a virtual rect entirely outside the 1280x1024 render canvas
+# draws NOTHING, with no error anywhere -- the classic way in is a mismatch
+# between cfg.cv.target_resolution and the live game-window resolution
+# (every screen rect maps consistently off-canvas). Must warn once, loudly.
+# ---------------------------------------------------------------------------
+
+def test_box_warns_once_when_virtual_rect_off_canvas(caplog):
+    # scale chosen so a normal-looking screen rect lands far outside the canvas
+    t = ScreenToOverlay(scale_x=100.0, scale_y=100.0)
+    with caplog.at_level(logging.WARNING, logger="ed_vision.debug_overlay"):
+        s = CvDebugSink(_FakeWriter(), t)
+        s.box("row0", (100, 100, 10, 10))
+        s.box("row0", (100, 100, 10, 10))       # same name -> warns once only
+    warnings = [r for r in caplog.records
+                if r.levelno == logging.WARNING and "offcanvas" in r.message]
+    assert len(warnings) == 1
+    # the message still SENDS (a slightly-off box can still be partly useful,
+    # and this is a diagnostic, not a drop) -- the wire path is unaffected.
+    w = _FakeWriter()
+    CvDebugSink(w, t).box("row0", (100, 100, 10, 10))
+    assert len(_rects(w)) == 1
+
+
+def test_box_on_canvas_never_warns(caplog):
+    t = ScreenToOverlay.for_window(1920, 1080)
+    with caplog.at_level(logging.WARNING, logger="ed_vision.debug_overlay"):
+        CvDebugSink(_FakeWriter(), t).box("compass", (700, 900, 400, 100))
+    assert not any("offcanvas" in r.message for r in caplog.records)
+
+
+def test_resolution_honesty_2560x1440_representative_rect_stays_on_canvas():
+    """AC-6: a non-1080p capture (2560x1440) with the MATCHING transform keeps
+    a representative rect on the 1280x1024 canvas -- the math is inherently
+    self-normalizing to the window it was built from."""
+    t = ScreenToOverlay.for_window(2560, 1440)
+    rect = (int(0.30 * 2560), int(0.80 * 1440), int(0.40 * 2560), int(0.12 * 1440))
+    vx, vy, vw, vh = t.to_virtual(rect)
+    assert vx < VIRTUAL_WIDTH and vy < VIRTUAL_HEIGHT
+    assert vx + vw > 0 and vy + vh > 0
+
+
+def test_resolution_mismatch_warns_loudly(caplog):
+    """AC-6 the other half: capture is REALLY 2560x1440 but the transform was
+    built for 1920x1080 (a stale/wrong cfg.cv.target_resolution) -- a rect
+    valid on the real screen lands off the canvas and must warn."""
+    wrong_t = ScreenToOverlay.for_window(1920, 1080)
+    mismatched_rect = (2000, 1300, 400, 100)   # valid on a real 2560x1440 screen
+    with caplog.at_level(logging.WARNING, logger="ed_vision.debug_overlay"):
+        CvDebugSink(_FakeWriter(), wrong_t).box("row0", mismatched_rect)
+    assert any("offcanvas" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# resolve_cv_debug_sink — the gate->registration truth table (AC-2, AC-5a).
+# ---------------------------------------------------------------------------
+
+class _FakeOverlayCfg:
+    def __init__(self, cv_debug):
+        self.cv_debug = cv_debug
+        self.cv_debug_ttl_s = 2.0
+
+
+class _FakeCvCfg:
+    target_resolution = (1920, 1080)
+
+
+class _FakePathsCfg:
+    def __init__(self, calibration_dir="does-not-exist-xyz"):
+        self.calibration_dir = calibration_dir
+
+
+class _FakeCfg:
+    def __init__(self, cv_debug, calibration_dir="does-not-exist-xyz"):
+        self.overlay = _FakeOverlayCfg(cv_debug)
+        self.cv = _FakeCvCfg()
+        self.paths = _FakePathsCfg(calibration_dir)
+
+
+class _FakeEdmc:
+    pass
+
+
+def test_resolve_on_when_edmc_present_and_cv_debug_true():
+    sink, msg = resolve_cv_debug_sink(_FakeEdmc(), _FakeCfg(True))
+    assert isinstance(sink, CvDebugSink)
+    assert "ON" in msg and "OFF" not in msg
+
+
+def test_resolve_off_when_cv_debug_false():
+    sink, msg = resolve_cv_debug_sink(_FakeEdmc(), _FakeCfg(False))
+    assert sink is None
+    assert "OFF" in msg and "cv_debug" in msg
+
+
+def test_resolve_off_when_edmc_none():
+    sink, msg = resolve_cv_debug_sink(None, _FakeCfg(True))
+    assert sink is None
+    assert "OFF" in msg and "EDMCOverlay connection" in msg
+
+
+def test_resolve_never_raises_on_malformed_cfg():
+    class Broken:
+        overlay = _FakeOverlayCfg(True)
+        # no .cv, no .paths
+    sink, msg = resolve_cv_debug_sink(_FakeEdmc(), Broken())
+    assert sink is None and "OFF" in msg
+
+
+def test_resolve_transform_source_reflects_calibration_file(tmp_path):
+    # no calibration file -> "computed defaults"
+    sink, msg = resolve_cv_debug_sink(_FakeEdmc(), _FakeCfg(True, str(tmp_path)))
+    assert "computed defaults" in msg
+    # write one -> "calibrated"
+    ScreenToOverlay(scale_x=0.5, scale_y=0.5).save(tmp_path)
+    sink, msg = resolve_cv_debug_sink(_FakeEdmc(), _FakeCfg(True, str(tmp_path)))
+    assert "calibrated" in msg

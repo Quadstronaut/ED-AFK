@@ -128,5 +128,13 @@ def _flash(rect: Optional[tuple], hit: Optional[bool]) -> None:
             sink.box("escape_vector", rect, "hit", label="ESCAPE VECTOR")
         else:
             sink.verdict("escape_vector", "miss", label="no marker")
-    except Exception:  # noqa: BLE001 — overlay is decoration, never the read
-        pass
+    except Exception as e:  # noqa: BLE001 — overlay is decoration, never the read
+        # Loud once (2026-07-07 fix): box()/verdict() themselves already never
+        # raise, so a silent `pass` here used to be indistinguishable from
+        # "escape_vector never got read at all" -- guards only the code before
+        # the sink call (get_debug_sink() import/lookup).
+        try:
+            from .debug_overlay import warn_once
+            warn_once("escape_vector_flash", "escape_vector", e)
+        except Exception:  # noqa: BLE001
+            pass

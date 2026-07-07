@@ -168,8 +168,18 @@ def read_sc_hud(
             sink.box("sc_hud", rect,
                      "hit" if state is not ScHudState.NONE else None,
                      label=state.value)
-    except Exception:  # noqa: BLE001 — overlay is decoration, never the read
-        pass
+    except Exception as e:  # noqa: BLE001 — overlay is decoration, never the read
+        # Loud once (2026-07-07 fix): this guards CODE BEFORE sink.box() runs
+        # (e.g. a malformed `frame` failing np.asarray(...).shape) -- box()
+        # itself already never raises, so a silent `pass` here used to be
+        # indistinguishable from "sc_hud never got read at all". A second,
+        # independently-guarded try: a broken debug_overlay import must not
+        # turn a diagnostic into a real failure.
+        try:
+            from .debug_overlay import warn_once
+            warn_once("sc_hud_flash", "sc_hud", e)
+        except Exception:  # noqa: BLE001
+            pass
     return ScHudRead(state, text, state is not ScHudState.NONE)
 
 

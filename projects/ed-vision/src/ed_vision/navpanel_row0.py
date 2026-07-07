@@ -244,8 +244,15 @@ def read_row0_selected(frame: Any) -> Row0Read:
             if sink is not None:
                 sink.box("row0", rect, "hit" if state == "bright" else "miss",
                          label=f"row0 {state} {frac:.2f}")
-        except Exception:  # noqa: BLE001 — overlay is decoration, never the read
-            pass
+        except Exception as e:  # noqa: BLE001 — overlay is decoration, never the read
+            # Loud once (2026-07-07 fix): box() itself already never raises, so
+            # a silent `pass` here used to be indistinguishable from "row0
+            # never got read at all" -- guards only the code BEFORE sink.box().
+            try:
+                from .debug_overlay import warn_once
+                warn_once("row0_flash", "row0", e)
+            except Exception:  # noqa: BLE001
+                pass
         return Row0Read(state, int(div), round(frac, 4), thumb, rect, int(row_y))
     except Exception:  # noqa: BLE001 — perception fail-soft; callers fail closed
         return _UNREADABLE
