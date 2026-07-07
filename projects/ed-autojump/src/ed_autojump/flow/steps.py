@@ -2523,6 +2523,151 @@ def step_pips_engines(ctx: StepContext, *, presses: int = 4) -> bool:
 
 # pips: restored 2026-06-18 after the 2026-06-08 rip (operator: pips back; placement
 # reference in pips.md). NOT input_exclusive -- plain arrow taps, heat watchdog live.
+def step_pitch_star_off(ctx: StepContext, *, bright_thresh: int = 125,
+                        clear_frac: float = 0.05, pitch_hold_s: float = 0.7,
+                        settle_s: float = 1.4, max_iters: int = 20) -> bool:
+    """Pitch the smacked star OFF-SCREEN by CV brightness — the ALL-CV
+    replacement for the deleted nav_panel_target star-lock + pitch_compass
+    behind-gate (operator order 2026-07-06: "NO MORE OLD BLIND BULLSHIT ...
+    WIRE ALL CV"; the blind row-walk burned rows 0-4 at ~9s each hunting a
+    star name while the ship sat in the gravity well, run 235430).
+
+    Mechanism operator-validated live 2026-05-24 (75e6eb5 sun_avoid): the
+    center-screen bright fraction reads 0.678 nose-on-star vs 0.005 clear;
+    pitch-up pulses clear it in ~6 iterations. No target lock, no panel, no
+    compass — pitch-star-first satisfied by pixels. The follow-on
+    orient_escape_vector completes the turn onto the escape vector, so
+    off-screen (not compass-verified-astern) is sufficient here.
+
+    Center crop = x 30-70%, y 31-69% (the validated sun-probe region).
+    Fail-CLOSED: no hud_grabber wired, or the star will not clear within
+    max_iters -> False (the retry ladder owns it). Never a blind fallback."""
+    grabber = getattr(ctx, "hud_grabber", None)
+    if grabber is None:
+        ctx.log("PitchStarOff", {"result": "no_grabber"})
+        return False
+    import numpy as np
+    t0 = int(ctx.clock())
+    for i in range(max(1, max_iters)):
+        if ctx.should_abort():
+            ctx.log("PitchStarOff", {"result": "abort", "iters": i})
+            return False
+        try:
+            frame = grabber()
+            arr = np.asarray(frame)
+            h, w = arr.shape[:2]
+            crop = arr[int(0.31 * h):int(0.69 * h), int(0.30 * w):int(0.70 * w)]
+            frac = float((crop.max(axis=2) if crop.ndim == 3 else crop)
+                         .astype(np.int32).__gt__(bright_thresh).mean())
+            if ctx.frame_sink is not None and frame is not None:
+                ctx.frame_sink(f"pitchoff_{t0}_i{i:02d}", frame)
+        except Exception:  # noqa: BLE001 — unreadable frame -> fail closed
+            ctx.log("PitchStarOff", {"result": "read_error", "iters": i})
+            return False
+        ctx.log("PitchStarOffIter", {"i": i, "bright_frac": round(frac, 4)})
+        if frac < clear_frac:
+            ctx.log("PitchStarOff", {"result": "clear", "iters": i,
+                                     "bright_frac": round(frac, 4)})
+            return True
+        if not _press(ctx, "PitchUpButton", hold_s=pitch_hold_s):
+            return False
+        ctx.sleeper(settle_s)               # rotational momentum settle
+    ctx.log("PitchStarOff", {"result": "never_cleared", "iters": max_iters})
+    return False
+
+
+def step_orient_escape_vector(ctx: StepContext, *, deadzone_px: float = 48.0,
+                              gain_s_per_px: float = 0.0022,
+                              min_press: float = 0.12, max_press: float = 0.5,
+                              settle_s: float = 0.5, samples: int = 3,
+                              miss_limit: int = 8, max_iters: int = 150) -> bool:
+    """Center the ESCAPE VECTOR sky marker and ride the charge to
+    SupercruiseEntry — the ALL-CV replacement for the refuted star-lock /
+    compass-dot escape dance (operator order 2026-07-06). The marker is a
+    WORLD-SPACE cyan ring (ed_vision.escape_vector_marker, validated on the
+    operator's own flown recovery: found in exactly the 23 live-charge frames
+    of 168, zero false positives; aligned == marker at screen center at his
+    SupercruiseEntry).
+
+    Runs with a LIVE charge (engage_supercruise until_charging precedes it)
+    and throttle 100. Steering matches the operator's live-called
+    corrections: marker below center -> pitch down, right -> yaw right;
+    dominant axis only (the compass-orient lesson: coupled axes fight).
+
+    Exits: SupercruiseEntry event / in_supercruise flag -> True. Fail-CLOSED
+    False on: no grabber, `miss_limit` consecutive not-found reads (marker
+    lost), charge dropped without entry, abort, or the max_iters failsafe
+    ceiling (the gates are game signals, never the clock)."""
+    grabber = getattr(ctx, "hud_grabber", None)
+    if grabber is None:
+        ctx.log("OrientEscapeVector", {"result": "no_grabber"})
+        return False
+    from ed_vision.escape_vector_marker import read_escape_vector_marker
+    t0 = int(ctx.clock())
+    misses = 0
+    charge_seen = False
+    for i in range(max(1, max_iters)):
+        if ctx.should_abort():
+            ctx.log("OrientEscapeVector", {"result": "abort", "iters": i})
+            return False
+        # Entry gates FIRST (event + state — event-gates-need-state-check).
+        if ctx.event_waiter is not None and ctx.event_waiter("SupercruiseEntry", 0.2):
+            ctx.log("OrientEscapeVector", {"result": "entry", "iters": i})
+            return True
+        st = ctx.status_supplier()
+        if st is not None:
+            if getattr(st, "in_supercruise", False):
+                ctx.log("OrientEscapeVector", {"result": "entry_flag", "iters": i})
+                return True
+            if getattr(st, "fsd_charging", False):
+                charge_seen = True
+            elif charge_seen:
+                ctx.log("OrientEscapeVector", {"result": "charge_dropped",
+                                               "iters": i})
+                return False
+        reads = []
+        for si in range(max(1, samples)):
+            frame = grabber()
+            r = read_escape_vector_marker(frame)
+            if r.found:
+                reads.append(r)
+            if si == 0 and frame is not None and ctx.frame_sink is not None:
+                ctx.frame_sink(f"escorient_{t0}_i{i:03d}", frame)
+        if not reads:
+            misses += 1
+            ctx.log("EscapeVectorIter", {"i": i, "found": False,
+                                         "misses": misses})
+            if misses >= miss_limit:
+                ctx.log("OrientEscapeVector", {"result": "marker_lost",
+                                               "iters": i})
+                return False
+            ctx.sleeper(settle_s)
+            continue
+        misses = 0
+        reads.sort(key=lambda r_: abs(r_.dx) + abs(r_.dy))
+        mid = reads[len(reads) // 2]
+        dx, dy = mid.dx, mid.dy
+        action = None
+        hold = None
+        if abs(dx) > deadzone_px or abs(dy) > deadzone_px:
+            if abs(dx) >= abs(dy):
+                action = "YawRightButton" if dx > 0 else "YawLeftButton"
+                mag = abs(dx)
+            else:
+                action = "PitchDownButton" if dy > 0 else "PitchUpButton"
+                mag = abs(dy)
+            hold = max(min_press, min(max_press, gain_s_per_px * mag))
+            if not _press(ctx, action, hold_s=hold):
+                return False
+        ctx.log("EscapeVectorIter", {"i": i, "found": True,
+                                     "dx": round(dx, 1), "dy": round(dy, 1),
+                                     "action": action,
+                                     "hold": round(hold, 3) if hold else None})
+        ctx.sleeper(settle_s)
+    ctx.log("OrientEscapeVector", {"result": "max_iters", "iters": max_iters})
+    return False
+
+
 register_step("reset_power_distribution", step_reset_power_distribution)
 register_step("pips_engines", step_pips_engines)
 register_step("confirm_orbiting", step_confirm_orbiting)
@@ -2540,6 +2685,9 @@ register_step("star_distance_gate", step_star_distance_gate,
 register_step("wait_sc_assist_orbiting", step_wait_sc_assist_orbiting)
 register_step("sc_assist_orbit", step_sc_assist_orbit, input_exclusive=True)
 register_step("nav_panel_target", step_nav_panel_target, input_exclusive=True)
+register_step("pitch_star_off", step_pitch_star_off, input_exclusive=True)
+register_step("orient_escape_vector", step_orient_escape_vector,
+              input_exclusive=True)
 register_step("nav_supercruise_star", step_nav_supercruise_star, input_exclusive=True)
 register_step("nav_target_star", step_nav_target_star, input_exclusive=True)
 register_step("nav_supercruise_unexplored", step_nav_supercruise_unexplored,

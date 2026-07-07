@@ -541,7 +541,8 @@ def classify_startup(runner: Any) -> Optional[str]:
     # only the still-burning cooldown flag.
     if (not getattr(st, "in_supercruise", False)
             and not getattr(st, "docked", False)
-            and fsd_cooldown_blocked(st)):
+            and (fsd_cooldown_blocked(st)              # raw Flags bit 18
+                 or getattr(st, "fsd_cooldown", False))):  # parsed bool field
         if runner.record is not None:
             runner.record("BootCooldownSmackRoute",
                           {"system": runner._current_system})

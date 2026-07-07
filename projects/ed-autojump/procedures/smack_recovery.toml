@@ -1,81 +1,76 @@
 # Reflex: emergency drop INSIDE the star's exclusion zone (SupercruiseExit,
-# BodyType:Star).
+# BodyType:Star) — and the boot-smack overrides (BootCooldownSmackRoute /
+# EscapeVectorBootOverride) dispatch HERE too.
 #
-# v7 (operator-dictated, 2026-06-07): throttle 0, honk rides along in
-# parallel (in case the arrival honk missed), all pips to engines, lock the
-# star (nav panel row 0), THROTTLE 100, pitch it 180 astern (hollow dot,
-# centered), wait the smack cooldown out (flag-gated), then the ESCAPE
-# VECTOR dance the smack charge demands: deselect (star is perfectly
-# behind, T clears), press supercruise until a charge is LIVE — at that
-# moment the game spawns a never-before-seen escape-vector target on the
-# compass, like a next-system hop — orient_compass centers that clear
-# circular target, hold_alignment rides it to SupercruiseEntry. Then lock
-# the hop, throttle 100 again (SC entry resets it), 13s clear of the star,
-# orient, jump.
+# v8 ALL-CV (OPERATOR ORDER 2026-07-06: "NO MORE OLD BLIND BULLSHIT ...
+# WIRE ALL CV"). The v7 star-lock escape is DEAD: its nav_panel_target blind
+# row-walk burned rows 0-4 at ~9s each hunting the star by name while the
+# ship sat in the gravity well (run 235430), and its "escape vector on the
+# compass" premise was REFUTED live 2026-07-06 — the escape vector is a
+# WORLD-SPACE cyan sky marker, not a compass element (operator-flown
+# recovery, 168-frame capture; fixtures in tests/fixtures/smack/).
 #
-# Retry split (operator): "if fail in real space go to 0, if fail in
-# supercruise go to 6" — retry_from hits the FIRST set_throttle (step 0);
-# the hop lock carries retry_anchor = true, so required failures at or
-# after it return THERE instead.
+# The v8 flow IS the operator's own flown recovery:
+#   throttle 0 -> 75% burn through the flip (v7 operator order preserved) ->
+#   PITCH THE STAR OFF-SCREEN by CV brightness (sun_avoid mechanism,
+#   live-validated 2026-05-24: 0.678 nose-on-star vs 0.005 clear) ->
+#   wait the smack cooldown out (flag-gated) -> press supercruise until a
+#   charge is LIVE -> throttle 100 -> CENTER THE ESCAPE-VECTOR SKY MARKER
+#   (ed_vision.escape_vector_marker: validated on his frames — found in
+#   exactly the 23 live-charge frames of 168, zero false positives) and ride
+#   it to SupercruiseEntry. Then the in-SC tail: lock the hop, throttle 100,
+#   13s clear, orient, jump.
+#
+# Real space cannot ram a star (ed-fsd-masslock-realspace fact 2), so the
+# 75% burn before the pitch is safe — it is the operator's "speed up, turned
+# around" from his own recovery.
 #
 # step kinds (tag at start of each step comment):
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
 #   wait    passive block on journal event or clock — no input sent
 #   hold    key down → event → key up; used in parallel honk track
-#   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
-#   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
-parallel_tracks = ["honk"]   # operator 0.5: re-honk in case the earlier one missed; an already-honked system just times the hold out in parallel
+#   vision  closed-loop CV read + pitch/yaw — EXCLUSIVE, owns input + screen
+parallel_tracks = ["honk"]   # operator 0.5: re-honk in case the earlier one missed
 
 [on_required_fail]
 retry_from = "set_throttle"   # first occurrence = step 0 — real-space restart
 max_retries = 3
 backoff_s = 2.0
-# State-aware retry (operator-dictated, 2026-06-07: "fail in supercruise -> go
-# to target_next_route"). The 14:24-14:29Z burn: orient_compass (step 8,
-# PRE-anchor) failed AFTER the SC charge had completed mid-step; retry_from sent
-# it to step 0 and passes 2-4 re-ran the real-space ladder while in SC —
-# target_ahead deselected and the in-SC engage guard refused, so every orient
-# found nothing (all-zero found=false), burning all 3 retries to abort. When a
-# pre-anchor required step fails with the ship already in supercruise, resume at
-# the hop lock instead. NOTE: target_next_route also carries retry_anchor, so a
-# fail AT OR AFTER it already resumes there via precedence (1); this key only
-# governs the PRE-anchor-in-SC case.
+# State-aware retry (operator-dictated 2026-06-07: "fail in supercruise -> go
+# to target_next_route"): a PRE-anchor required failure with the ship already
+# in supercruise resumes at the hop lock instead of re-running the real-space
+# ladder in SC (the 14:24Z triple-burn). target_next_route also carries
+# retry_anchor, so at-or-after failures already resume there.
 retry_from_if_supercruise = "target_next_route"
 
 steps = [
   # ── Real-space recovery during the smack cooldown ────────────────────────
   { action = "set_throttle", pct = 0 },                                                       # tap    | 0 kill thrust
-  { action = "nav_panel_target", required = true },                                           # macro  | 1 EXCLUSIVE — star = row 0; compass-verified lock
-  { action = "set_throttle", pct = 75 },                                                     # tap    | 2 full burn through the flip (operator order)
-  # timeout_s/max_iters are FAILSAFE ceilings (the gate is the compass read,
-  # never the clock); center_frac 0.35 = "hollow dot and center" with ~0.07
-  # read noise headroom (2026-06-06 run 5).
-  # behind_confirm_reads/behind_fill_max (2026-06-08 false-pass refix): the
-  # star is ALWAYS in front + BRIGHT at a smack, so a single hollow+centered
-  # read is glare noise, not proof of a 180. Require 3 CONSECUTIVE decisively-
-  # hollow (front_fill <= 0.30, below the 0.35 band floor) behind-gate beats
-  # before certifying astern — positive rotation evidence, never a fail-open.
-  { action = "pitch_compass", until = "behind", required = true, center_frac = 0.35, timeout_s = 75.0, max_iters = 40, behind_confirm_reads = 3, behind_fill_max = 0.30 },  # vision | 3 pitch 180 — star astern
-  { action = "wait_cooldown_clear", required = true },                                        # wait   | 4 smack cooldown — FsdCooldown flag-gated, no timer
-  { action = "target_ahead" },                                                                # tap    | 4.5 T — star astern, nothing ahead -> deselect
+  { action = "set_throttle", pct = 75 },                                                      # tap    | 1 full burn through the flip (operator order, v7-preserved)
+  # vision | 2 pitch the star OFF-SCREEN by center-brightness CV — no lock,
+  # no panel, no compass. Off-screen (not compass-astern) suffices: the
+  # escape-vector orient below completes the turn onto the vector.
+  { action = "pitch_star_off", required = true },                                             # vision | 2 EXCLUSIVE — star off-screen
+  { action = "wait_cooldown_clear", required = true },                                        # wait   | 3 smack cooldown — FsdCooldown flag-gated, no timer
   # until_charging: success = a LIVE CHARGE, not entry — the charge is what
-  # spawns the escape vector. ED refuses the press while still deep in the
+  # spawns the escape-vector marker. ED refuses the press while deep in the
   # exclusion zone — re-press every 15s (max 3); 240s is the wedged-FSD
   # watchdog, never a success gate. A re-press is only sent when no charge
   # ever started in its window (re-pressing a live charge would CANCEL it).
-  { action = "engage_supercruise", required = true, until_charging = true, presses = 3, between_press_s = 15.0, max_charge_s = 240.0 },  # gated  | 5 press until a charge is LIVE
-  { action = "set_throttle", pct = 100 },
-  { action = "target_next_route", required = true, retry_anchor = true },
-  { action = "orient_compass", required = true },                                             # vision | 5.5 center the spawned escape-vector dot
-  { action = "hold_alignment", until_event = "SupercruiseEntry", required = true },           # vision | 5.6 hold the vector to SC entry
+  { action = "engage_supercruise", required = true, until_charging = true, presses = 3, between_press_s = 15.0, max_charge_s = 240.0 },  # gated | 4 press until a charge is LIVE
+  { action = "set_throttle", pct = 100 },                                                     # tap    | 5 full throttle rides the vector out
+  # vision | 6 THE ESCAPE: center the cyan ESCAPE VECTOR sky marker and hold
+  # it to SupercruiseEntry. Fail-closed: marker lost / charge dropped ->
+  # False -> the retry ladder (real-space -> step 0; in-SC -> hop lock).
+  { action = "orient_escape_vector", required = true },                                       # vision | 6 EXCLUSIVE — ride the vector to SC entry
 
   # ── In supercruise: lock the hop, clear the star, jump ───────────────────
-  { action = "target_next_route", required = true, retry_anchor = true },                     # gated  | 6 hop lock — SC failures return HERE
-  { action = "set_throttle", pct = 100 },                                                     # tap    | 7 SC entry reset the throttle
-  { action = "wait", s = 13.0 },                                                              # wait   | 7.5 fly clear of the star — TRAJECTORY PACING, not a gate
-  { action = "orient_compass", required = true },                                             # vision | 8 EXCLUSIVE coarse
-  { action = "orient_widget_ring", required = true },                                         # vision | 9 fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump", required = true },                                                # gated  | 10 FSD jump
-  { action = "hold_alignment", required = true },                                             # vision | 11 hold cone until StartJump — event/state-gated, no clock
+  { action = "target_next_route", required = true, retry_anchor = true },                     # gated  | 7 hop lock — SC failures return HERE
+  { action = "set_throttle", pct = 100 },                                                     # tap    | 8 SC entry reset the throttle
+  { action = "wait", s = 13.0 },                                                              # wait   | 8.5 fly clear of the star — TRAJECTORY PACING, not a gate
+  { action = "orient_compass", required = true },                                             # vision | 9 EXCLUSIVE coarse
+  { action = "orient_widget_ring", required = true },                                         # vision | 10 fine (no-op unless [vision].widget_ring_alignment)
+  { action = "engage_jump", required = true },                                                # gated  | 11 FSD jump
+  { action = "hold_alignment", required = true },                                             # vision | 12 hold cone until StartJump — event/state-gated, no clock
 ]
