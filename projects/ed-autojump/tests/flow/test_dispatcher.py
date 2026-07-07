@@ -42,13 +42,38 @@ def test_fsdjump_runs_arrival():
 
 
 def test_supercruise_exit_at_star_runs_smack_and_records_drop_time():
+    """OPERATOR WIRE-IN 2026-07-07: a live Star-drop with the FSD on COOLDOWN
+    in real space IS a smack — dispatch immediately (the real post-smack
+    state; the old color-CV stub gate abstained forever)."""
     sender = FakeSender()
     procs = {"smack_recovery": Procedure(name="smack_recovery", steps=(Step("target_ahead"),))}
     t = [500.0]
-    r = _runner(procs, sender, clock=lambda: t[0])
+    r = FlowRunner(
+        procedures=procs, sender=sender, clock=lambda: t[0],
+        sleeper=lambda s: None,
+        status_supplier=lambda: SimpleNamespace(
+            docked=False, in_supercruise=False, fsd_charging=False,
+            fsd_cooldown=True, fsd_mass_locked=False, overheating=False),
+    )
     _dispatch(r, _ev("SupercruiseExit", body_type="Star"))
     assert sender.actions() == ["SelectTarget"]
     assert r.event_time("drop") == 500.0
+
+
+def test_supercruise_exit_at_star_without_cooldown_abstains():
+    """Real space but NO cooldown = not a fresh smack — the loud abstain
+    stands (never blind-recover)."""
+    sender = FakeSender()
+    procs = {"smack_recovery": Procedure(name="smack_recovery", steps=(Step("target_ahead"),))}
+    r = FlowRunner(
+        procedures=procs, sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None,
+        status_supplier=lambda: SimpleNamespace(
+            docked=False, in_supercruise=False, fsd_charging=False,
+            fsd_cooldown=False, fsd_mass_locked=False, overheating=False),
+    )
+    _dispatch(r, _ev("SupercruiseExit", body_type="Star"))
+    assert sender.actions() == []
 
 
 def test_supercruise_exit_not_star_is_ignored():
