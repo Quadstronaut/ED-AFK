@@ -342,11 +342,20 @@ $script:DurationPresets = @(
 # no-op (Soon(TM)). Only Jump runs the bot today.
 $script:MainItems = @(
     @{ Key = 'jump';     Label = 'Jump';     Tag = 'ready';    Live = $true },
+    # Scenes (OPERATOR 2026-07-07): drive ONE named procedure with the full
+    # live wiring, then exit -- the cli --scene RC mode, now menu-reachable.
+    @{ Key = 'scenes';   Label = 'Scenes';   Tag = 'one-shot'; Live = $true },
     @{ Key = 'combat';   Label = 'Combat';   Tag = ("Soon" + [char]0x2122); Live = $false },
-    @{ Key = 'explore';  Label = 'Explore';  Tag = ("Soon" + [char]0x2122); Live = $false },
     @{ Key = 'trade';    Label = 'Trade';    Tag = ("Soon" + [char]0x2122); Live = $false },
     @{ Key = 'settings'; Label = 'Settings'; Tag = '';         Live = $true },
     @{ Key = 'quit';     Label = 'Quit';     Tag = '';         Live = $true }
+)
+
+# Scene picker rows (Scenes menu). Order = frequency of live use. Names must
+# match the procedure TOMLs in projects\ed-autojump\procedures\.
+$script:SceneNames = @(
+    'startup', 'sc_resume', 'arrival', 'traversal', 'smack_recovery',
+    'exploration', 'dock', 'dock_resume', 'route_complete_park', 'honk'
 )
 
 # Settings rows. Only toggle/envtoggle/cycle/action/back are navigable;
@@ -442,6 +451,9 @@ function Get-CliArgs([hashtable]$s) {
     if ([bool]$s.Monitor) { $a += "--no-engage-keys" } else { $a += "--engage-keys" }
     if ([bool]$s.Record) { $a += "--record" }
     if ([bool]$s.LogVisited) { $a += "--visited-log" } else { $a += "--no-visited-log" }
+    # Scenes menu (operator 2026-07-07): one-shot named procedure via the cli
+    # --scene RC mode. All other flags (keys, record, visited) apply as-is.
+    if ($s.Scene) { $a += @("--scene", $s.Scene) }
     return , $a
 }
 
@@ -577,12 +589,66 @@ function Build-MainLines([int]$sel) {
     return , $L
 }
 
-function Invoke-MainMenu {
-    # Returns 'jump' | 'settings' | 'quit'. Soon(TM) rows are navigable no-ops.
+function Invoke-SceneMenu {
+    # Scene picker: returns a procedure name, or $null on back/quit.
     if (-not (Test-Interactive)) {
-        Write-Host "`n=== ED-AFK ===   1) Jump   2) Settings   3) Quit"
+        Write-Host "`n=== SCENES ==="
+        for ($i = 0; $i -lt $script:SceneNames.Count; $i++) {
+            Write-Host ("  {0}) {1}" -f ($i + 1), $script:SceneNames[$i])
+        }
+        $a = Read-Host "choose (blank = back)"
+        $n = 0
+        if ([int]::TryParse($a, [ref]$n) -and $n -ge 1 -and $n -le $script:SceneNames.Count) {
+            return $script:SceneNames[$n - 1]
+        }
+        return $null
+    }
+    Clear-Host
+    $W = [Math]::Min(60, [Console]::BufferWidth - 1)
+    $rows = @($script:SceneNames) + @('Back')
+    $count = $rows.Count
+    $sel = 0
+    $build = {
+        param($cur)
+        $L = New-Object System.Collections.Generic.List[object]
+        $add = { param($t, $seld, $dim) $L.Add([pscustomobject]@{ Text = $t; Selected = $seld; Dim = $dim }) }
+        & $add "" $false $false
+        & $add "    S C E N E S   (one-shot, full live wiring)" $false $false
+        & $add "    -------------------------------------------" $false $false
+        & $add "" $false $false
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            & $add ("    {0}" -f $rows[$i]) ($i -eq $cur) $false
+        }
+        & $add "" $false $false
+        & $add "    Up/Down move | Enter run | Esc back" $false $true
+        & $add "" $false $false
+        return , $L
+    }
+    $height = (& $build $sel).Count
+    1..$height | ForEach-Object { Write-Host "" }
+    $top = [Console]::CursorTop - $height
+    while ($true) {
+        Draw-Lines (& $build $sel) $top $W
+        $key = [Console]::ReadKey($true)
+        switch ($key.Key) {
+            'UpArrow'   { $sel = ($sel - 1 + $count) % $count }
+            'DownArrow' { $sel = ($sel + 1) % $count }
+            'Q'         { return $null }
+            'Escape'    { return $null }
+            { $_ -eq 'Enter' -or $_ -eq 'Spacebar' } {
+                if ($sel -eq $count - 1) { return $null }   # Back
+                return $rows[$sel]
+            }
+        }
+    }
+}
+
+function Invoke-MainMenu {
+    # Returns 'jump' | 'scenes' | 'settings' | 'quit'. Soon(TM) rows are navigable no-ops.
+    if (-not (Test-Interactive)) {
+        Write-Host "`n=== ED-AFK ===   1) Jump   2) Scenes   3) Settings   4) Quit"
         $a = Read-Host "choose"
-        switch ($a) { '2' { return 'settings' } '3' { return 'quit' } default { return 'jump' } }
+        switch ($a) { '2' { return 'scenes' } '3' { return 'settings' } '4' { return 'quit' } default { return 'jump' } }
     }
     Clear-Host
     $W = [Math]::Min(60, [Console]::BufferWidth - 1)
@@ -602,6 +668,7 @@ function Invoke-MainMenu {
             { $_ -eq 'Enter' -or $_ -eq 'Spacebar' } {
                 $it = $script:MainItems[$sel]
                 if ($it.Key -eq 'jump')     { return 'jump' }
+                if ($it.Key -eq 'scenes')   { return 'scenes' }
                 if ($it.Key -eq 'settings') { return 'settings' }
                 if ($it.Key -eq 'quit')     { return 'quit' }
                 # Soon(TM): no-op, fall through and keep drawing.
@@ -782,6 +849,10 @@ if ($Yes) {
         $action = Invoke-MainMenu
         switch ($action) {
             'jump'     { $launch = $true }
+            'scenes'   {
+                $scene = Invoke-SceneMenu
+                if ($scene) { $s.Scene = $scene; $launch = $true }
+            }
             'settings' { Invoke-SettingsMenu $s $visionOn; $visionOn = Test-VisionEnabled $configPath }
             'quit'     { Write-Host "`n[launch] quit."; exit 0 }
             default    { }   # Soon(TM) no-op
