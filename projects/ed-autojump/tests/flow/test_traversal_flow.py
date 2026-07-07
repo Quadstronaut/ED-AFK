@@ -22,15 +22,15 @@ from tests.flow import FakeSender
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
 
-# The operator-verbatim action order (MASTER-SPEC "Traversal").
+# The operator-verbatim action order (OPERATOR LAYOUT 2026-07-07, 70c248e).
 EXPECTED_ACTIONS = [
-    "wait",                  # 0  operator pacing (5s)
-    "target_next_route",     # 1  lock next hop — RETRY ANCHOR via retry_from
-    "set_throttle",          # 2  full burn
-    "wait",                  # 3  operator pacing (3s)
-    "orient_compass",        # 4  coarse align
-    "orient_widget_ring",    # 5  fine align
-    "engage_jump_clearance", # 6  TERMINAL jump + clearance loop
+    "wait_sc_assist_orbiting",  # 0  CV orbit settle from the prior scene
+    "wait",                     # 1  operator pacing (3s)
+    "target_next_route",        # 2  lock next hop — RETRY ANCHOR via retry_from
+    "set_throttle",             # 3  full burn
+    "orient_compass",           # 4  coarse align
+    "orient_widget_ring",       # 5  fine align
+    "engage_jump_clearance",    # 6  TERMINAL jump + clearance loop
 ]
 
 
@@ -64,30 +64,31 @@ def test_required_flags_match_the_contract():
         "orient_widget_ring",
         "engage_jump_clearance",
     }
-    # both waits and the throttle tolerate failure (must NOT gate the lane).
+    # the orbit settle, the pacing wait and the throttle tolerate failure
+    # (must NOT gate the lane).
     non_required = [s.action for s in proc.steps if not s.required]
-    assert non_required == ["wait", "set_throttle", "wait"]
+    assert non_required == ["wait_sc_assist_orbiting", "wait", "set_throttle"]
 
 
 # ---- AC-4: operator literals -----------------------------------------------
 
 def test_operator_literal_params_preserved():
-    """AC-4 (INV-3): the 5s/3s waits and throttle=100 are byte-faithful to the
-    operator's authored values."""
+    """AC-4 (INV-3): the 3s pacing wait and throttle=100 are byte-faithful to
+    the operator's 2026-07-07 authored values."""
     proc = _traversal()
-    assert proc.steps[0].action == "wait" and proc.steps[0].params["s"] == 5.0
-    assert proc.steps[3].action == "wait" and proc.steps[3].params["s"] == 3.0
-    assert proc.steps[2].action == "set_throttle" and proc.steps[2].params["pct"] == 100
+    assert proc.steps[1].action == "wait" and proc.steps[1].params["s"] == 3.0
+    assert proc.steps[3].action == "set_throttle" and proc.steps[3].params["pct"] == 100
 
 
 # ---- AC-5: no extra waits / no hold_alignment / no honk --------------------
 
-def test_exactly_two_waits_no_tail_no_parallel():
-    """AC-5 (INV-1): two waits only; engage_jump_clearance is terminal (no
-    hold_alignment after it); no parallel honk track."""
+def test_exactly_one_wait_no_tail_no_parallel():
+    """AC-5 (INV-1): one pacing wait (operator 2026-07-07 layout);
+    engage_jump_clearance is terminal (no hold_alignment after it); no
+    parallel honk track."""
     proc = _traversal()
     waits = [s for s in proc.steps if s.action == "wait"]
-    assert len(waits) == 2
+    assert len(waits) == 1
     # engage_jump_clearance is the last step -> nothing (no hold_alignment) after.
     assert proc.steps[-1].action == "engage_jump_clearance"
     assert "hold_alignment" not in {s.action for s in proc.steps}
@@ -98,13 +99,13 @@ def test_exactly_two_waits_no_tail_no_parallel():
 # ---- AC-6: retry policy ----------------------------------------------------
 
 def test_retry_policy_anchors_on_target_next_route():
-    """AC-6 (INV-5): the retry lane resumes at target_next_route (index 1),
+    """AC-6 (INV-5): the retry lane resumes at target_next_route (index 2),
     3 retries, 2.0s backoff."""
     proc = _traversal()
     assert proc.on_required_fail.retry_from == "target_next_route"
     assert proc.on_required_fail.max_retries == 3
     assert proc.on_required_fail.backoff_s == 2.0
-    assert proc.index_of_action("target_next_route") == 1
+    assert proc.index_of_action("target_next_route") == 2
 
 
 # ---- AC-7: no retry_anchor / no SC override --------------------------------
@@ -197,13 +198,13 @@ def _scene_run(*, orient_fail_mode):
 
 def test_scene_orient_fail_once_retries_at_target_next_route():
     """AC-10 (INV-5): a single orient_compass miss records a ProcedureRetry that
-    resumes at target_next_route (index 1) — proving the retry lane resolves on a
+    resumes at target_next_route (index 2) — proving the retry lane resolves on a
     real interpreter run — and the procedure then completes."""
     result, records = _scene_run(orient_fail_mode="once")
     retries = [p for k, p in records if k == "ProcedureRetry"]
     assert len(retries) == 1
     assert retries[0]["resume_at"] == "target_next_route"
-    assert retries[0]["resume_index"] == 1
+    assert retries[0]["resume_index"] == 2
     # one miss, then the lane recovers and finishes the jump.
     assert result.completed is True
     assert result.aborted is False

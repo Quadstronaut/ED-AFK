@@ -31,22 +31,27 @@ def _smack():
 
 
 def test_v8_step_order():
+    """OPERATOR LAYOUT 2026-07-07 (70c248e): zero-throttle opener dropped;
+    star assist + orbit confirms in the SC tail; engage_jump_clearance
+    terminal (no engage_jump/hold_alignment pair)."""
     actions = [s.action for s in _smack().steps]
     assert actions == [
-        "set_throttle",           # 0  throttle 0
-        "set_throttle",           # 1  75% burn through the flip (operator order)
-        "pitch_star_off",         # 2  CV brightness — star off-screen, no lock
-        "wait_cooldown_clear",    # 3  FsdCooldown flag gate
-        "engage_supercruise",     # 4  until_charging: live charge spawns the marker
-        "set_throttle",           # 5  100 — ride the vector out
-        "orient_escape_vector",   # 6  CV sky marker -> center -> SC entry
-        "target_next_route",      # 7  hop lock — SC-segment retry anchor
-        "set_throttle",           # 8  100 again (SC entry resets throttle)
-        "wait",                   # 8.5 13s clear of the star
-        "orient_compass",         # 9
-        "orient_widget_ring",     # 10
-        "engage_jump",            # 11
-        "hold_alignment",         # 12
+        "set_throttle",            # 0  75% burn through the flip
+        "pitch_star_off",          # 1  CV brightness — star off-screen, no lock
+        "wait_cooldown_clear",     # 2  FsdCooldown flag gate
+        "engage_supercruise",      # 3  until_charging: live charge spawns the marker
+        "set_throttle",            # 4  100 — ride the vector out
+        "orient_escape_vector",    # 5  CV sky marker -> center -> SC entry
+        "nav_supercruise_star",    # 6  star assist (operator: settle at the star)
+        "wait_sc_assist_orbiting", # 7
+        "confirm_orbiting",        # 8
+        "target_next_route",       # 9  hop lock — SC-segment retry anchor
+        "set_throttle",            # 10 75% orient
+        "wait",                    # 11 3s pacing
+        "orient_compass",          # 12
+        "orient_widget_ring",      # 13
+        "set_throttle",            # 14 100 jump
+        "engage_jump_clearance",   # 15 terminal
     ]
 
 
@@ -110,13 +115,16 @@ def test_pitch_star_off_before_cooldown_gate():
     assert pitch_i < actions.index("engage_supercruise")
 
 
-def test_first_throttle_is_zero_then_burn_before_the_pitch():
+def test_throttle_staging_matches_operator_layout():
+    """OPERATOR LAYOUT 2026-07-07: 75 burn through the flip -> 100 for the
+    vector ride -> 75 for the orient -> 100 for the jump (the zero-throttle
+    opener was removed by the operator)."""
     proc = _smack()
     throttles = [s.params["pct"] for s in proc.steps if s.action == "set_throttle"]
-    assert throttles == [0, 75, 100, 100]
+    assert throttles == [75, 100, 75, 100]
     # the 75 burn lands BEFORE the pitch (operator: burn through the flip)
     actions = [s.action for s in proc.steps]
-    assert actions.index("pitch_star_off") > 1
+    assert actions.index("set_throttle") < actions.index("pitch_star_off")
 
 
 # ---- state-aware retry: the toml carries the SC override ----------------------

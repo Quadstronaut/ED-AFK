@@ -224,36 +224,43 @@ def _shape(name):
 
 
 def test_startup_rewired_shape():
-    """Operator LIVE reorder 2026-07-06 (session 000806): ED refuses SC entry
-    at zero throttle (THROTTLE UP hang), so set_throttle(100) now leads the
-    scene, before the gate; the old shared-lane burn step is gone (the jump
-    leg re-asserts throttle itself)."""
+    """OPERATOR LAYOUT 2026-07-07 (his own toml reorg, 70c248e): throttle 0 ->
+    gate (10 Ls) -> throttle 100 -> SC entry (escape-vector watch) -> star
+    assist -> orbit wait -> pacing wait -> hop lock -> 75% orient -> 100%
+    jump."""
     proc, actions = _shape("startup")
     assert actions == [
-        "set_throttle", "star_distance_gate", "engage_supercruise",
-        "nav_supercruise_star", "wait_sc_assist_orbiting", "target_next_route",
-        "orient_compass", "orient_widget_ring", "engage_jump_clearance",
+        "set_throttle", "star_distance_gate", "set_throttle",
+        "engage_supercruise", "nav_supercruise_star", "wait_sc_assist_orbiting",
+        "wait", "target_next_route", "set_throttle", "wait",
+        "orient_compass", "orient_widget_ring", "set_throttle",
+        "engage_jump_clearance",
     ]
-    # The blind flow is DEAD (#18/#27/#28): no nav_panel_target, no
-    # sc_assist_orbit, no bare wait, no engage_jump/hold_alignment tail.
-    for gone in ("nav_panel_target", "sc_assist_orbit", "wait",
+    # The blind flow stays DEAD (#18/#27/#28). Bare pacing waits are the
+    # operator's own 2026-07-07 additions ("some of these things gate too
+    # quickly") and are allowed.
+    for gone in ("nav_panel_target", "sc_assist_orbit",
                  "engage_jump", "hold_alignment", "target_ahead"):
         assert gone not in actions
     gate = proc.steps[1]
     assert gate.skip_to == "target_next_route"      # FAR lane vault
+    assert gate.params["threshold_ls"] == 10.0      # operator retuned from 100
+    # Boot-smack override watch rides SC entry (operator wire-in, run 233422).
+    assert proc.steps[3].params.get("escape_vector_abort") is True
     assert proc.parallel_tracks == ("honk",)
     # LIVE FIX 2026-07-06 (run 010444 starsmack): retries re-run the
-    # clear-of-star GATE — the old target_next_route anchor let a CLOSE-lane
-    # fail retry into a full burn with the nose still on the star.
+    # clear-of-star GATE — no retry may bypass it into the burn.
     assert proc.on_required_fail.retry_from == "star_distance_gate"
 
 
 def test_sc_resume_rewired_shape():
+    """OPERATOR LAYOUT 2026-07-07: gate first (already in SC — no SC entry),
+    star assist, orbit wait, hop lock, 75% orient, 100% jump."""
     proc, actions = _shape("sc_resume")
     assert actions == [
         "star_distance_gate", "nav_supercruise_star", "wait_sc_assist_orbiting",
         "target_next_route", "set_throttle", "orient_compass",
-        "orient_widget_ring", "engage_jump_clearance",
+        "orient_widget_ring", "set_throttle", "engage_jump_clearance",
     ]
     for gone in ("nav_panel_target", "sc_assist_orbit", "wait",
                  "engage_jump", "hold_alignment", "engage_supercruise"):
@@ -266,17 +273,17 @@ def test_sc_resume_rewired_shape():
 
 
 def test_gate_throttle_order_per_scene():
-    """The 2026-06-08 star-ram law, LIVE-REVISED 2026-07-06: ED refuses SC
-    entry at zero throttle (run 000806 hung at the THROTTLE UP prompt), so in
-    STARTUP the operator moved set_throttle(100) ahead of the gate — the gate
-    still precedes SC entry, and there is exactly ONE throttle step (the old
-    shared-lane burn is gone). sc_resume starts ALREADY in supercruise (no SC
-    entry), so the original law holds there: no throttle before the gate."""
-    _, actions = _shape("startup")
-    assert actions[0] == "set_throttle"            # SC entry needs live throttle
-    assert actions[1] == "star_distance_gate"      # gate still precedes SC entry
-    assert actions.index("star_distance_gate") < actions.index("engage_supercruise")
-    assert actions.count("set_throttle") == 1
+    """The star-ram law under the operator's 2026-07-07 layout: STARTUP reads
+    the gate at ZERO throttle (no drift toward a maybe-near star during the
+    read); throttle hits 100 only AFTER the gate and BEFORE SC entry (ED
+    refuses entry at zero throttle, run 000806). sc_resume starts already in
+    SC: gate first, no throttle before it."""
+    proc, actions = _shape("startup")
+    assert actions[0] == "set_throttle" and proc.steps[0].params["pct"] == 0
+    assert actions[1] == "star_distance_gate"
+    hundred_i = next(i for i, s in enumerate(proc.steps)
+                     if s.action == "set_throttle" and s.params["pct"] == 100)
+    assert 1 < hundred_i < actions.index("engage_supercruise")
     _, actions = _shape("sc_resume")
     assert actions[0] == "star_distance_gate"
     assert actions.index("star_distance_gate") < actions.index("set_throttle")

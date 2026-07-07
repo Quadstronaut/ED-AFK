@@ -71,19 +71,20 @@ def test_arrival_is_exactly_throttle_scoop_star():
 
 
 def test_exploration_loads_and_is_a_bounded_loop():
-    """exploration.toml: the loop-head skip_to exits to target_next_route, the
-    set_throttle back-edge loops to nav_supercruise_unexplored, and there is NO
-    jump step (no engage_jump* / orient_widget_ring) — a jump here would recreate
-    the double-jump."""
+    """exploration.toml (OPERATOR LAYOUT 2026-07-07): the loop-head skip_to
+    exits to target_next_route, the set_throttle back-edge loops to
+    nav_supercruise_unexplored, and the operator's own jump tail
+    (orient -> widget -> throttle 100 -> engage_jump_clearance) is TERMINAL —
+    the tour jumps out itself now (supersedes the no-jump-in-exploration
+    contract; the orchestrator's exploration->traversal chain is redundant
+    but harmless: traversal re-locks and the clearance loop fails closed)."""
     exp = load_procedures(PROC_DIR)["exploration"]
     head = next(s for s in exp.steps if s.action == "nav_supercruise_unexplored")
     assert head.skip_to == "target_next_route"
     back = next(s for s in exp.steps if s.loop_to is not None)
     assert back.action == "set_throttle"
     assert back.loop_to == "nav_supercruise_unexplored"
-    actions = {s.action for s in exp.steps}
-    assert "engage_jump" not in actions
-    assert "engage_jump_clearance" not in actions
-    assert "orient_widget_ring" not in actions
-    # validates clean against the ed_autojump registry (the two new steps land here)
+    assert exp.steps[-1].action == "engage_jump_clearance"
+    assert exp.steps[-1].required is True
+    # validates clean against the ed_autojump registry
     assert validate_procedure(exp, known_actions=STEP_REGISTRY.keys()) == []
