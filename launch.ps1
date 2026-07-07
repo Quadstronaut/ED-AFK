@@ -345,11 +345,20 @@ $script:MainItems = @(
     # Scenes (OPERATOR 2026-07-07): drive ONE named procedure with the full
     # live wiring, then exit -- the cli --scene RC mode, now menu-reachable.
     @{ Key = 'scenes';   Label = 'Scenes';   Tag = 'one-shot'; Live = $true },
+    # Explore (OPERATOR 2026-07-07: "enable/disable the exploration program"):
+    # a persistent TOGGLE of the body-tour flag, NOT a launcher. Enter flips
+    # ED_AUTOJUMP_EXPLORATION_BODY_TOUR_ENABLED in .env (config env-override
+    # -> cfg.exploration.body_tour_enabled -> runner._body_tour_enabled ->
+    # the arrival branch runs the exploration scene on every onward hop).
+    # Tag is rendered LIVE from the effective value in Build-MainLines.
+    @{ Key = 'explore';  Label = 'Explore';  Tag = '';         Live = $true },
     @{ Key = 'combat';   Label = 'Combat';   Tag = ("Soon" + [char]0x2122); Live = $false },
     @{ Key = 'trade';    Label = 'Trade';    Tag = ("Soon" + [char]0x2122); Live = $false },
     @{ Key = 'settings'; Label = 'Settings'; Tag = '';         Live = $true },
     @{ Key = 'quit';     Label = 'Quit';     Tag = '';         Live = $true }
 )
+
+$script:ExploreEnvKey = 'ED_AUTOJUMP_EXPLORATION_BODY_TOUR_ENABLED'
 
 # Scene picker rows (Scenes menu). Order = frequency of live use. Names must
 # match the procedure TOMLs in projects\ed-autojump\procedures\.
@@ -580,7 +589,12 @@ function Build-MainLines([int]$sel) {
         if ($it.Key -eq 'settings') { & $add "" $false $false }   # spacer before Settings
         $isSel = ($i -eq $sel)
         $marker = if ($isSel) { '> ' } else { '  ' }
-        $text = "    {0}{1}{2}" -f $marker, $it.Label.PadRight(12), $it.Tag
+        $tag = $it.Tag
+        if ($it.Key -eq 'explore') {
+            # LIVE toggle state (real env var > .env > off), same rule as VISION.
+            $tag = if (Get-CvDebugEnv $ProjectRoot $script:ExploreEnvKey) { '[ON]' } else { '[off]' }
+        }
+        $text = "    {0}{1}{2}" -f $marker, $it.Label.PadRight(12), $tag
         & $add $text $isSel (-not $it.Live)
     }
     & $add "" $false $false
@@ -669,6 +683,12 @@ function Invoke-MainMenu {
                 $it = $script:MainItems[$sel]
                 if ($it.Key -eq 'jump')     { return 'jump' }
                 if ($it.Key -eq 'scenes')   { return 'scenes' }
+                if ($it.Key -eq 'explore') {
+                    # Toggle the exploration program (persist to .env), keep drawing.
+                    $cur = Get-CvDebugEnv $ProjectRoot $script:ExploreEnvKey
+                    Set-DotEnvKey (Join-Path $ProjectRoot '.env') $script:ExploreEnvKey $(if ($cur) { '0' } else { '1' })
+                    continue
+                }
                 if ($it.Key -eq 'settings') { return 'settings' }
                 if ($it.Key -eq 'quit')     { return 'quit' }
                 # Soon(TM): no-op, fall through and keep drawing.
