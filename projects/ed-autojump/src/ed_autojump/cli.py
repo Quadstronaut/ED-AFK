@@ -79,6 +79,13 @@ def _parser() -> argparse.ArgumentParser:
         help="how many seconds to tail the journal before exiting (0 = exit immediately, useful for dry-run)",
     )
     sub_run.add_argument(
+        # OPERATOR RC MODE (2026-07-07): run EXACTLY ONE named procedure with
+        # the full live wiring and exit — the remote-control session drives
+        # scenes one at a time on the operator's phone command.
+        "--scene", default=None,
+        help="drive ONE named procedure (e.g. smack_recovery) then exit — no classifier, no event loop",
+    )
+    sub_run.add_argument(
         # OPERATOR ORDER 2026-07-06: recording (and with it CV frame capture)
         # is DEFAULT ON ALWAYS until further notice — testing blind is over.
         "--record", dest="record", action="store_true", default=True,
@@ -729,7 +736,7 @@ def cmd_run(args) -> int:
         print("=" * 64)
 
     try:
-        if args.duration <= 0:
+        if args.duration <= 0 and not getattr(args, "scene", None):
             return 0
         # Resolve + start hotkey listener now that we know we'll be running.
         backend = resolve_backend()
@@ -754,6 +761,21 @@ def cmd_run(args) -> int:
             if not focus_ed_window():
                 print("[run] WARN: could not focus EliteDangerous64.exe -- "
                       "keys may go to the wrong window")
+        # OPERATOR RC MODE (2026-07-07): --scene <name> runs EXACTLY ONE named
+        # procedure with the FULL live wiring (keys, CV grabbers, recorder,
+        # overlay, frame sink) and exits — no classifier, no event routing.
+        # The remote-control session drives scenes one at a time on the
+        # operator's phone command. Unknown name -> loud fail, ZERO keys sent.
+        if getattr(args, "scene", None):
+            name = args.scene
+            if name not in runner.procedures:
+                print(f"[scene] UNKNOWN procedure {name!r}; available: "
+                      f"{sorted(runner.procedures)}")
+                return 2
+            print(f"[scene] driving {name!r} (one-shot, operator RC)")
+            runner._run(name)
+            print(f"[scene] {name!r} returned; exiting")
+            return 0
         runner.run_live(duration_s=args.duration)
         return 0
     except KeyboardInterrupt:
