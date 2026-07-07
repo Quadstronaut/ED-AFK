@@ -33,21 +33,8 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  { action = "set_throttle", pct = 0 },             # tap    | 1 in case hyperspace auto-dethrottle is off
-  # Scoop pit stop — BEST-EFFORT, identical params to arrival step 2. Skip/fail
-  # never blocks the SC-assist below. (Topping the tank at the parked star is
-  # just as welcome at route end as mid-route.)
-  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.99, full_epsilon = 0.2 },  # gated  | 2 pit stop
-  # CV-confirmed SC-assist toward the arrival star (row 0, blind-fire with a
-  # #8 button-label CONFIRM before pressing — replaces the old blind
-  # sc_assist_orbit macro AND the separate nav_panel_target lock; this ONE
-  # action locks + engages). Required: a wrong/unconfirmed target must never
-  # reach the parked end state; a required fail retries from here.
-  { action = "nav_supercruise_star", required = true },   # vision | 3 EXCLUSIVE — CV-confirmed SC-assist lock+engage
-  # Non-required ORBITING DESTINATION HUD confirm (D4). Returns False when the
-  # ed-vision hud_sc_indicators detector is not yet wired (D3 dependency not
-  # landed). required=false: a False is non-blocking — route_complete_park stays
-  # best-effort until fixtures are captured and the detector lands. When the
-  # grabber IS wired, a True logs RouteCompleteOrbitConfirmed (observability).
-  { action = "confirm_orbiting" },                   # vision | 4 non-required — D4 orbit confirm (D3-dependent)
+  { action = "set_throttle", pct = 0 },
+  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.99, full_epsilon = 0.2 },
+  { action = "nav_supercruise_star", required = true },
+  { action = "confirm_orbiting" },
 ]

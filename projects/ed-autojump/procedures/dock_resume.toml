@@ -32,19 +32,13 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  # AUTO LAUNCH off the pad (S,S,Space). Gate on Undocked / status.docked
-  # going False. Required: the rest of the flow assumes the ship is in space.
-  { action = "auto_launch", required = true },                # macro  | 1 EXCLUSIVE — auto launch -> Undocked
-  # Fly STRAIGHT at top speed away from the station until the mass lock
-  # releases (operator 2026-07-03). No orient step — straight out.
-  { action = "set_throttle", pct = 100 },                     # tap    | 2 burn straight out
-  # Wait out the station mass lock (FsdMassLocked flag clearing) — >10km per
-  # the game's own radius; this is the log-driven distance gate, no timer.
-  { action = "wait_masslock_clear", required = true },        # wait   | 3 station mass lock — flag-gated
-  # Normal route flow: lock the next system, clear, orient, jump.
-  { action = "target_next_route", required = true },          # gated  | 4 lock the NEXT SYSTEM in route
-  { action = "set_throttle", pct = 100 },                     # tap    | 5 burn
-  { action = "orient_compass", required = true },             # vision | 6a coarse align to the hop
-  { action = "orient_widget_ring", required = true },         # vision | 6b fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump_clearance", required = true },      # gated  | 7 FSD jump + clearance loop (replaces wait@5 + engage_jump@7 + hold_alignment@8)
+  { action = "auto_launch", required = true },
+  { action = "set_throttle", pct = 100 },
+  { action = "wait_masslock_clear", required = true },
+  { action = "target_next_route", required = true },
+  { action = "set_throttle", pct = 75 },
+  { action = "orient_compass", required = true },
+  { action = "orient_widget_ring", required = true },
+  { action = "set_throttle", pct = 100 },
+  { action = "engage_jump_clearance", required = true },
 ]

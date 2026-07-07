@@ -22,6 +22,6 @@
 #   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 parallel = true
 steps = [
-  { action = "ensure_analysis_mode", required = true },                                # gated | 0 honk only fires in ANALYSIS mode — and PrimaryFire outside it is weapons
-  { action = "hold_until_event", bind = "PrimaryFire", event = "FSSDiscoveryScan" },   # hold  | 1 the honk itself — fire-group trigger, ~5s charge
+  { action = "ensure_analysis_mode", required = true },
+  { action = "hold_until_event", bind = "PrimaryFire", event = "FSSDiscoveryScan" },
 ]

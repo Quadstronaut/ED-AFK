@@ -44,19 +44,13 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  # vision | 0 CLEAR-OF-STAR CV GATE. True (CLOSE/unreadable) -> get-around
-  # below; False (confidently FAR) -> skip_to the fast resume.
-  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 100.0 },  # vision | 0 EXCLUSIVE — row-0 distance read
-  # vision | 1 CLOSE lane (already in SC): CV-confirmed lock + SC-assist toward
-  # the star. Replaces blind nav_panel_target + sc_assist_orbit.
-  { action = "nav_supercruise_star", required = true },     # vision | 1 EXCLUSIVE — CV lock+assist get-around
-  # wait | 2 CV orbit-acquire (cyan ORBITING prompt, bounded poll, best-effort).
-  # Replaces the blind wait 13s.
-  { action = "wait_sc_assist_orbiting" },                   # wait   | 2 CV — cyan ORBITING prompt
-  # ── fast resume: the FAR lane lands here ──────────────────────────────────
-  { action = "target_next_route", required = true },        # gated  | 3 lock next hop (also cancels the assist)
-  { action = "set_throttle", pct = 100 },                   # tap    | 4 full burn
-  { action = "orient_compass", required = true },           # vision | 5 coarse
-  { action = "orient_widget_ring", required = true },       # vision | 6 fine (no-op unless [vision].widget_ring_alignment)
-  { action = "engage_jump_clearance", required = true },    # gated  | 7 FSD jump + obstruction clearance loop
+  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 10.0 },
+  { action = "nav_supercruise_star", required = true },
+  { action = "wait_sc_assist_orbiting" },
+  { action = "target_next_route", required = true },
+  { action = "set_throttle", pct = 75 },
+  { action = "orient_compass", required = true },
+  { action = "orient_widget_ring", required = true },
+  { action = "set_throttle", pct = 100 },
+  { action = "engage_jump_clearance", required = true },
 ]

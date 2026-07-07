@@ -31,39 +31,16 @@
 #   B4 Exploration->Traversal entry throttle/SC state (C2/C6-owned).
 
 [on_required_fail]
-# A required fail re-runs the target-next -> orient ladder — the same anchor
-# dock_resume / arrival use for the jump leg. retry_from resolves to the FIRST
-# (and only) target_next_route, index 1. No retry_anchor and no
-# retry_from_if_supercruise: traversal is a single steady-state lane with one
-# retry target (the operator waits ride along on a retry by design — see idx 3).
 retry_from = "target_next_route"
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  # wait | 0 operator pacing BEFORE locking the hop. NOT a gate (wall-clock).
-  # Sits before the retry anchor (index 1), so a jump-leg fail never re-runs it.
-  { action = "wait", s = 5.0 },
-  # gated | 1 lock the NEXT SYSTEM in the route. RETRY ANCHOR via retry_from
-  # (the FIRST target_next_route = index 1). Required: no hop, no jump.
-  { action = "target_next_route", required = true },
-  # tap | 2 full burn. NON-required — a missing throttle bind is tolerated
-  # (ED auto-dethrottles on arrival; never gate the lane on it). pct mirrors
-  # dock_resume.toml byte-for-byte.
-  { action = "set_throttle", pct = 100 },
-  # wait | 3 operator pacing AFTER the burn, BEFORE orient. NOT a gate. This is
-  # at/after the retry anchor's resume point, so it re-runs on a jump-leg retry
-  # (intended: settle the burn again before re-orienting).
+  { action = "wait_sc_assist_orbiting" },
   { action = "wait", s = 3.0 },
-  # vision | 4 coarse compass align to the hop. Required: fails CLOSED with no
-  # vision wired (no compass_reader -> the step returns False -> retry/abort,
-  # never a blind jump).
+  { action = "target_next_route", required = true },
+  { action = "set_throttle", pct = 100 },
   { action = "orient_compass", required = true },
-  # vision | 5 fine widget-ring align. Required, but a no-op TRUE when the
-  # widget_ring flag is off (degrade-on-miss is the step's own concern).
   { action = "orient_widget_ring", required = true },
-  # gated | 6 TERMINAL — FSD jump + clearance loop (input_exclusive). NO step
-  # after it: the interpreter's witchspace pause holds the (non-existent) next
-  # step gated on FSDJump, so no hold_alignment tail is needed (design I8).
   { action = "engage_jump_clearance", required = true },
 ]
