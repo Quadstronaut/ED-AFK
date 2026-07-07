@@ -1,4 +1,5 @@
-"""step_engage_jump_clearance charge-aware poll loop (LIVE FIX 2026-07-06).
+"""step_engage_jump_clearance charge-aware poll loop (LIVE FIX 2026-07-06)
+and the D3 obstructed-edge SC-assist ORBIT get-around (2026-07-07 council).
 
 Run 004703 sabotage, pinned: the ~15s hyperspace spool shows NEITHER commit
 signal (witchspace / fsd_jump bit 30), so the original 12-poll x 0.8s window
@@ -11,6 +12,13 @@ its own live charge. fsd_charging is the took-signal now:
   charge outlives the ceiling      -> False (outer retry re-orients; NEVER
                                      pitch off a live charge)
 
+D3 (2026-07-07): the C4 move edge no longer pitches-and-forward-burns (which
+could ram a jump target hidden BEHIND the star). It engages an SC-assist
+ORBIT get-around (executor.navpanel.engage_supercruise_assist: FocusLeftPanel
+-> UI_Select -> UI_Right -> UI_Select -> FocusLeftPanel) to change angular
+position instead, and NEVER presses SetSpeed100 at that edge. THROTTLE
+FAIL-CLOSED: not in supercruise -> bail with no throttle at all.
+
 Pure-Python — no game, no CV. The rig advances its FSD phase on each SLEEP
 (one sleep per poll), because the step reads status twice per poll (commit
 check + charge check) and a per-call script would desync.
@@ -22,12 +30,17 @@ from ed_core.flow.context import StepContext
 from ed_autojump.flow.steps import STEP_REGISTRY
 from tests.flow import FakeSender
 
+# The orbit get-around's exact key sequence (engage_supercruise_assist).
+GETAROUND = ["FocusLeftPanel", "UI_Select", "UI_Right", "UI_Select", "FocusLeftPanel"]
+
 
 class _FsdRig:
     """FSD phase scripted per POLL: 'idle' / 'charging' / 'jump'.
 
     The sleeper is the poll clock — each ctx.sleeper() call advances one
-    phase slot; the final phase holds forever."""
+    phase slot; the final phase holds forever. in_supercruise=True always:
+    engage_jump_clearance only ever runs while flying (the ONE structural
+    precondition the D3 SC-assist orbit get-around needs)."""
 
     def __init__(self, phases):
         self.phases = list(phases)
@@ -39,7 +52,8 @@ class _FsdRig:
     def status(self):
         phase = self.phases[min(self.polls, len(self.phases) - 1)]
         return SimpleNamespace(
-            docked=False, fsd_charging=(phase == "charging"),
+            docked=False, in_supercruise=True,
+            fsd_charging=(phase == "charging"),
             fsd_cooldown=False, fsd_mass_locked=False, overheating=False,
             fsd_jump=(phase == "jump"),
         )
@@ -68,8 +82,10 @@ def test_healthy_charge_longer_than_old_window_commits():
 
 
 def test_no_charge_is_the_obstructed_edge():
-    """Press refused (no charge ever) -> C4 move (pitch + burn) then
-    re-press; ceiling after max_clear_attempts -> False."""
+    """Press refused (no charge ever) -> C4 move (D3: SC-assist orbit
+    get-around, NOT a pitch+burn) then re-press; ceiling after
+    max_clear_attempts -> False. NO SetSpeed100 beyond the two C1 jump
+    presses -- the get-around itself never throttles."""
     sender = FakeSender()
     logs = []
     ctx = _ctx(sender, ["idle"], logs=logs)
@@ -77,35 +93,100 @@ def test_no_charge_is_the_obstructed_edge():
         ctx, max_jump_polls=3, max_clear_attempts=2) is False
     acts = sender.actions()
     assert acts.count("Hyperspace") == 2            # re-pressed once per attempt
-    assert acts.count("PitchDownButton") == 2       # moved after each refusal
+    assert acts.count("UI_Right") == 2              # orbit get-around ran after each refusal
+    assert acts.count("SetSpeed100") == 2            # ONLY the two C1 jump presses
+    assert "PitchDownButton" not in acts             # D3: never pitches
     assert ("EngageJumpClearanceAborted",
             {"reason": "obstruction_ceiling", "attempts": 2}) in logs
 
 
-def test_charge_stuck_fails_without_pitch():
+def test_charge_stuck_fails_without_getaround():
     """ALIGN hold / wedged FSD: charge outlives the ceiling -> False with
-    reason charge_stuck and NO directional press — never pitch off a live
+    reason charge_stuck and NO get-around press — never move off a live
     charge (the outer retry re-orients instead)."""
     sender = FakeSender()
     logs = []
     ctx = _ctx(sender, ["idle"] + ["charging"] * 500, logs=logs)
     assert STEP_REGISTRY["engage_jump_clearance"](
         ctx, max_charge_polls=10) is False
+    assert "UI_Right" not in sender.actions()
     assert "PitchDownButton" not in sender.actions()
     assert sender.actions().count("Hyperspace") == 1
+    assert sender.actions().count("SetSpeed100") == 1
     assert any(k == "EngageJumpClearanceAborted"
                and p.get("reason") == "charge_stuck" for k, p in logs)
 
 
 def test_charge_dropped_goes_to_move_edge():
-    """Charge seen then dropped without commit -> grace poll -> C4 move."""
+    """Charge seen then dropped without commit -> grace poll -> C4 move
+    (D3: SC-assist orbit get-around)."""
     sender = FakeSender()
     logs = []
     ctx = _ctx(sender, ["idle"] + ["charging"] * 4 + ["idle"] * 500, logs=logs)
     assert STEP_REGISTRY["engage_jump_clearance"](
         ctx, max_clear_attempts=1) is False
-    assert "PitchDownButton" in sender.actions()
+    assert "UI_Right" in sender.actions()
+    assert "PitchDownButton" not in sender.actions()
+    assert sender.actions().count("SetSpeed100") == 1   # only the C1 jump press
     assert any(k == "EngageJumpClearanceChargeDropped" for k, _ in logs)
+
+
+def test_getaround_not_in_supercruise_bails_with_no_throttle():
+    """D3 THROTTLE FAIL-CLOSED: if the get-around cannot even run (not in
+    supercruise), BAIL immediately -- NOT ONE throttle/orbit press, routing
+    the required-fail straight to never-strand rather than ramming forward
+    blind."""
+    sender = FakeSender()
+    logs = []
+    ctx = _ctx(sender, ["idle"], logs=logs)
+    ctx.status_supplier = lambda: SimpleNamespace(
+        docked=False, in_supercruise=False, fsd_charging=False,
+        fsd_cooldown=False, fsd_mass_locked=False, overheating=False,
+        fsd_jump=False)
+    assert STEP_REGISTRY["engage_jump_clearance"](
+        ctx, max_jump_polls=2, max_clear_attempts=3) is False
+    acts = sender.actions()
+    assert "UI_Right" not in acts and "UI_Select" not in acts
+    assert acts.count("SetSpeed100") == 1        # only the single C1 attempt
+    assert acts.count("Hyperspace") == 1         # bailed before any retry
+    assert any(k == "EngageJumpClearanceAborted"
+               and p.get("reason") == "getaround_unavailable"
+               for k, p in logs)
+
+
+def test_getaround_dropped_mid_macro_aborts(monkeypatch):
+    """A mid-macro emergency drop (out of supercruise) during the get-around
+    means the smack dispatch owns the scene -- abort, do not retry blind."""
+    # step_engage_jump_clearance imports FROM ed_autojump.executor.navpanel
+    # (its `from ..executor.navpanel import ...`), which itself re-exports
+    # ed_core's implementation via `from ed_core.executor.navpanel import *`
+    # -- a NAME-BINDING COPY at ed_autojump.executor.navpanel's own import
+    # time, not a live alias. Patch THAT module (the one the step actually
+    # resolves at call time), not ed_core's.
+    import ed_autojump.executor.navpanel as navpanel
+    sender = FakeSender()
+    logs = []
+    ctx = _ctx(sender, ["idle"], logs=logs)
+    dropped = {"v": False}
+    real_status = ctx.status_supplier
+
+    def _status():
+        if dropped["v"]:
+            return SimpleNamespace(
+                docked=False, in_supercruise=False, fsd_charging=False,
+                fsd_cooldown=False, fsd_mass_locked=False, overheating=False,
+                fsd_jump=False)
+        return real_status()
+    ctx.status_supplier = _status
+
+    def _fake_engage(sender_, **kw):
+        dropped["v"] = True          # the macro "ran" and the ship dropped mid-press
+
+    monkeypatch.setattr(navpanel, "engage_supercruise_assist", _fake_engage)
+    assert STEP_REGISTRY["engage_jump_clearance"](
+        ctx, max_jump_polls=2, max_clear_attempts=3) is False
+    assert any(k == "EngageJumpClearanceAborted"
+               and p.get("reason") == "getaround_dropped" for k, p in logs)
 
 
 def test_commit_during_grace_poll_still_wins():

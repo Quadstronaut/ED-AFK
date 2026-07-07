@@ -305,6 +305,73 @@ def test_selected_destination_icon_never_raises_on_garbage():
         assert ni.selected_destination_icon(bad)["action"] == "abstain"
 
 
+# ---------------------------------------------------------------------------
+# selected_row_kind_confirmed (D1/B2, 2026-07-07) -- the RAW registry-kind
+# read step_nav_supercruise_star vetoes on: action=="dock" with a non-empty
+# kind is a POSITIVE, confident POI/station glyph; anything else (a park kind
+# like star/system/planet, or no confident match at all -- including on the
+# UNEXPLORED reticle or the pinned debug-box false-negative frame) means
+# ASSIST. Unlike selected_destination_icon, a STAR verdict is NOT forced to
+# "park" here -- the caller treats every non-dock outcome identically.
+# ---------------------------------------------------------------------------
+
+def test_selected_row_kind_confirmed_star_row_is_not_positive_poi():
+    """A real selected-row STAR reads as NOT a positive POI (action != 'dock'
+    with a kind) -- step_nav_supercruise_star's ASSIST path."""
+    frame = cv2.imread(str(FIX / "l32-8_arrival_row0_cyanpin_1080.png"))
+    assert frame is not None
+    v = ni.selected_row_kind_confirmed(frame)
+    assert not (v["action"] == "dock" and v["kind"])
+
+
+def test_selected_row_kind_confirmed_debugbox_falsenegative_frame_is_not_positive_poi():
+    """The pinned B1 false-negative frame (debug-box-obscured STAR) also reads
+    as NOT a positive POI -- the step assists row 0 either way."""
+    frame = cv2.imread(str(FIX / "navstar_row0_2004_r0.png"))
+    assert frame is not None
+    v = ni.selected_row_kind_confirmed(frame)
+    assert not (v["action"] == "dock" and v["kind"])
+
+
+def test_selected_row_kind_confirmed_unexplored_reticle_is_not_positive_poi():
+    """UNEXPLORED reticle (honk unresolved) selected at row 0 -- NOT a star,
+    but also not a positive registry dock-kind match -> ASSIST, never refuse."""
+    frame = cv2.imread(str(FIX / "navstar_row0_1994_r0.png"))
+    assert frame is not None
+    v = ni.selected_row_kind_confirmed(frame)
+    assert not (v["action"] == "dock" and v["kind"])
+
+
+def test_selected_row_kind_confirmed_no_highlight_abstains():
+    dark = np.full((1080, 1920, 3), 8, dtype=np.uint8)
+    v = ni.selected_row_kind_confirmed(dark)
+    assert v == {"action": "park", "kind": "", "score": 0.0}
+
+
+def test_selected_row_kind_confirmed_never_raises_on_garbage():
+    for bad in (np.zeros((5,), np.uint8), np.zeros((10, 10), np.uint8),
+                np.zeros((2, 2, 3), np.uint8)):
+        v = ni.selected_row_kind_confirmed(bad)
+        assert v["action"] == "park" and v["kind"] == ""
+
+
+# ---------------------------------------------------------------------------
+# _debug_box_green (2026-07-07 B1 false-negative fix)
+# ---------------------------------------------------------------------------
+
+def test_debug_box_green_flags_the_hit_box_color_not_orange():
+    """The CV-debug 'hit' box color (BGR (68,204,0), i.e. #ff00cc44) reads
+    green-dominant; a real orange bar/text pixel never does (orange is always
+    red-dominant, so the two tests are mutually exclusive by construction)."""
+    swatch = np.zeros((4, 4, 3), dtype=np.uint8)
+    swatch[:, :] = (68, 204, 0)          # BGR hit-box green
+    assert ni._debug_box_green(swatch).all()
+    orange = np.zeros((4, 4, 3), dtype=np.uint8)
+    orange[:, :] = (10, 90, 230)          # BGR ED-orange
+    assert not ni._debug_box_green(orange).any()
+    assert not ni._orange(swatch).any()
+
+
 @pytest.mark.parametrize("bad", ["../evil.png", "sub/dir.png", "a\\b.png"])
 def test_registry_rejects_path_traversal_template(tmp_path, bad):
     """Council security lens: a template name with a path separator / .. is

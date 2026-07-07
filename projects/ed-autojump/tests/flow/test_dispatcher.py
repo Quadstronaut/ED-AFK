@@ -60,9 +60,12 @@ def test_supercruise_exit_at_star_runs_smack_and_records_drop_time():
     assert r.event_time("drop") == 500.0
 
 
-def test_supercruise_exit_at_star_without_cooldown_abstains():
-    """Real space but NO cooldown = not a fresh smack — the loud abstain
-    stands (never blind-recover)."""
+def test_supercruise_exit_at_star_without_cooldown_still_recovers():
+    """D2/C2 ALWAYS-RECOVER (2026-07-07 council, REPEALS INV1/INV2): a
+    real-space Star drop dispatches smack_recovery UNCONDITIONALLY -- no
+    cooldown gate, no CV grabber requirement. The old abstain here was
+    exactly the class of live-witnessed stranding incident (2026-07-06
+    010444, 2026-07-07) the council closed."""
     sender = FakeSender()
     procs = {"smack_recovery": Procedure(name="smack_recovery", steps=(Step("target_ahead"),))}
     r = FlowRunner(
@@ -73,14 +76,29 @@ def test_supercruise_exit_at_star_without_cooldown_abstains():
             fsd_cooldown=False, fsd_mass_locked=False, overheating=False),
     )
     _dispatch(r, _ev("SupercruiseExit", body_type="Star"))
-    assert sender.actions() == []
+    assert sender.actions() == ["SelectTarget"]
+    assert r._smack_kind == "star"
 
 
-def test_supercruise_exit_not_star_is_ignored():
+def test_supercruise_exit_at_planet_always_recovers():
+    """D2/C2: a Planet drop is EQUALLY a smack candidate (BUG C / INV5 —
+    widened Star-OR-Planet) and dispatches smack_recovery unconditionally,
+    grabber unwired and all, with kind='planet'."""
     sender = FakeSender()
     procs = {"smack_recovery": Procedure(name="smack_recovery", steps=(Step("target_ahead"),))}
     r = _runner(procs, sender, clock=lambda: 0.0)
     _dispatch(r, _ev("SupercruiseExit", body_type="Planet"))
+    assert sender.actions() == ["SelectTarget"]
+    assert r._smack_kind == "planet"
+
+
+def test_supercruise_exit_at_station_is_never_a_smack():
+    """INV6 (kept): Station body_type is never a smack, regardless of
+    cooldown/grabber state -- early return, no recovery dispatch."""
+    sender = FakeSender()
+    procs = {"smack_recovery": Procedure(name="smack_recovery", steps=(Step("target_ahead"),))}
+    r = _runner(procs, sender, clock=lambda: 0.0)
+    _dispatch(r, _ev("SupercruiseExit", body_type="Station"))
     assert sender.actions() == []
 
 
@@ -504,26 +522,78 @@ def test_overlay_threads_into_context_and_jump_event():
     assert ("arrival", "target_next_route", 1, 1) in ov.steps  # per-step status
 
 
-def test_aborted_procedure_notifies_loudly(capsys):
-    """G1: when run_procedure aborts (a required step exhausts its retries),
-    _run must NOTIFY — print + persistent overlay STATUS slot — never silently
-    swallow the result. ABORTED = human eyes required; notification-only, no
-    auto-restart. The step here fails because SelectTarget is unbound."""
+def test_aborted_procedure_queues_redispatch_loudly(capsys):
+    """NEVER-STRAND (workstream A, 2026-07-07 council -- supersedes the old
+    terminal-[ABORTED]-idle contract): when run_procedure aborts (a required
+    step exhausts its retries) and it is NEITHER an operator-abort NOR a
+    preempt, _run must NOTIFY LOUDLY (print + overlay event+status) AND queue
+    a re-dispatch (`_needs_redispatch=True` + a RedispatchQueued record) —
+    never the old terminal '[ABORTED] ... manual intervention needed' idle,
+    which let a ship sit stranded forever. The step here fails because
+    SelectTarget is unbound."""
     sender = FakeSender(unbound={"SelectTarget"})
     ov = _FakeOverlay()
+    records = []
     procs = {"arrival": Procedure(
         name="arrival",
         steps=(Step("target_ahead", required=True),))}
     r = FlowRunner(
         procedures=procs, sender=sender, clock=lambda: 0.0,
-        sleeper=lambda s: None, status_supplier=lambda: None, overlay=ov)
+        sleeper=lambda s: None, status_supplier=lambda: None, overlay=ov,
+        record=lambda n, p: records.append((n, p)))
+    r._run("arrival")
+    out = capsys.readouterr().out
+    assert "[STRAND-GUARD]" in out
+    assert "arrival" in out
+    assert "[ABORTED]" not in out                          # NOT the old terminal message
+    assert r._needs_redispatch is True
+    assert any(n == "RedispatchQueued" and p["procedure"] == "arrival"
+               for n, p in records)
+    # LOUD on BOTH overlay slots (event -- transient; status -- persistent,
+    # since the strand condition should stay visible until it resolves).
+    assert any("[STRAND-GUARD]" in t for t in ov.status_lines)
+    assert any("[STRAND-GUARD]" in t for t in ov.events)
+
+
+def test_operator_abort_required_fail_still_terminal(capsys):
+    """Operator-abort (panic/stop_requested) still stops exactly as before —
+    NEVER-STRAND must not swallow a genuine operator stop into a re-dispatch
+    loop. stop_requested=True makes ctx.should_abort() true at the FIRST
+    step, so the procedure aborts via the operator_abort path in
+    interpreter.py, not a required-step exhaustion -- but the disambiguation
+    in _run must still route it to the terminal [ABORTED] branch, not
+    never-strand."""
+    sender = FakeSender()
+    ov = _FakeOverlay()
+    records = []
+    procs = {"arrival": Procedure(
+        name="arrival", steps=(Step("target_ahead", required=True),))}
+    r = FlowRunner(
+        procedures=procs, sender=sender, clock=lambda: 0.0,
+        sleeper=lambda s: None, status_supplier=lambda: None, overlay=ov,
+        record=lambda n, p: records.append((n, p)))
+    r.stop_requested = True
     r._run("arrival")
     out = capsys.readouterr().out
     assert "[ABORTED]" in out
-    assert "arrival" in out
-    # persistent STATUS slot (keepalive), NOT the transient event() line
-    assert any("[ABORTED]" in t for t in ov.status_lines)
-    assert all("[ABORTED]" not in t for t in ov.events)   # not event()
+    assert "[STRAND-GUARD]" not in out
+    assert r._needs_redispatch is False
+    assert not any(n == "RedispatchQueued" for n, _ in records)
+
+
+def test_completed_procedure_resets_redispatch_ladder():
+    """A COMPLETED procedure resets both the queued flag and the attempt
+    counter -- a later, unrelated strand must not inherit a stale backoff."""
+    sender = FakeSender()
+    procs = {"arrival": Procedure(
+        name="arrival", steps=(Step("target_next_route"),))}
+    r = FlowRunner(procedures=procs, sender=sender, clock=lambda: 0.0,
+                  sleeper=lambda s: None, status_supplier=lambda: None)
+    r._needs_redispatch = True             # simulate a stale prior-cycle flag
+    r._redispatch_attempts = 3
+    r._run("arrival")
+    assert r._needs_redispatch is False
+    assert r._redispatch_attempts == 0
 
 
 def test_make_context_widget_ring_defaults_off():
@@ -702,6 +772,22 @@ def test_smack_mid_startup_preempts_remaining_steps():
     r, sender, _ = _preempt_harness("startup", second_step=Step("target_ahead"))
     r._run("startup")
     assert "SelectTarget" not in sender.actions()
+
+
+def test_smack_mid_traversal_preempts_remaining_steps():
+    """D2/C4 (2026-07-07 council): 'traversal' joins _PREEMPT_ON_SMACK -- a
+    star/planet drop DURING the steady-state A->B hop must preempt it exactly
+    like arrival/startup/dock/sc_resume, closing the live dead-end where
+    traversal's EngageJumpClearanceObscured abort left a stale drop stranded
+    with no handoff to smack_recovery. The queued SupercruiseExit dispatches
+    smack_recovery right after (run_live wiring, already proven for the
+    other four procedures)."""
+    r, sender, records = _preempt_harness(
+        "traversal", second_step=Step("target_ahead"))
+    r._run("traversal")
+    assert "SelectTarget" not in sender.actions(), \
+        "traversal kept running after the scene was smacked away"
+    assert any(n == "Preempted" for n, _ in records)
 
 
 def test_smack_mid_smack_recovery_does_not_preempt():

@@ -285,12 +285,18 @@ def classify_smack(vector_token: str) -> Optional[str]:
     This is the ONLY place the color-to-body mapping is encoded (INV3):
       'blue'   -> 'star'    (blue escape vector  => star-smack)
       'purple' -> 'planet'  (purple escape vector => planet-smack)
-      'none'   -> None      (no vector => deliberate drop, NOT a smack)
+      'none'   -> None      (no vector evidence)
       anything else -> None (unknown token => fail-closed abstain, INV9)
 
     Total and fail-closed: every possible input returns a value (never raises).
-    A None return means 'do not recover' — the caller must NOT dispatch
-    smack_recovery when this returns None.
+
+    STEER-ONLY (D2/C2, 2026-07-07 never-strand council — REPEALS the prior
+    'None means do not recover' contract): the caller (boot_routes.
+    _route_sc_exit) now ALWAYS dispatches smack_recovery for a real-space
+    Star/Planet drop regardless of this function's return. A None here only
+    means "no CV-confirmed body-kind refinement" — the caller's `_smack_kind`
+    stays whatever the journal's own body_type already set it to. This
+    function is no longer a recovery gate of any kind.
     """
     if vector_token == "blue":
         return "star"
