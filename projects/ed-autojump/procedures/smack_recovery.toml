@@ -56,7 +56,7 @@ steps = [
   { action = "confirm_orbiting" },
   { action = "target_next_route", required = true, retry_anchor = true },
   { action = "set_throttle", pct = 75 },
-  { action = "wait", s = 3.0 },
+  { action = "wait", s = 5.0 },
   { action = "orient_compass", required = true },
   { action = "orient_widget_ring", required = true },
   { action = "set_throttle", pct = 100 },
