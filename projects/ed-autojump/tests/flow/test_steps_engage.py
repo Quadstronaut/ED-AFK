@@ -51,13 +51,23 @@ def test_target_next_route_confirms_safe_class():
 
 
 @pytest.mark.parametrize("cls", ["N", "DA", "H", "W"])
-def test_target_next_route_refuses_danger_class(cls):
-    """WIRED danger filter: a route leg at a danger-class star fails the
-    step (required in every procedure -> the flow aborts, never jumps)."""
+def test_target_next_route_confirms_danger_class(cls):
+    """DANGER-STAR (E, 2026-07-07 never-strand council -- REPEALS the prior
+    refuse-on-dangerous behavior): a route leg at a danger-class star (N =
+    neutron, DA = white dwarf, H = black hole, W = Wolf-Rayet) still
+    CONFIRMS -- a confirmed hop is a confirmed hop regardless of class. The
+    live jump is never gated on it; a normal hyperspace arrival drops the
+    ship at a safe distance from the arrival star automatically."""
     sender = FakeSender()
     ctx = _target_ctx(sender, cls)
-    assert STEP_REGISTRY["target_next_route"](ctx) is False
-    assert sender.actions() == ["TargetNextRouteSystem"]  # pressed once, then refused
+    logs = []
+    ctx.record = lambda n, p: logs.append((n, p))
+    assert STEP_REGISTRY["target_next_route"](ctx) is True
+    assert sender.actions() == ["TargetNextRouteSystem"]
+    assert any(n == "TargetConfirmed" and p.get("via") == "event" for n, p in logs)
+    assert not any(n == "TargetDangerRefused" for n, _ in logs)
+    assert any(n == "TargetDangerNoted" and p.get("star_class") == cls
+               for n, p in logs)
 
 
 def _already_targeted_ctx(sender, *, dest_system=42, star_class="K", route=None):
@@ -98,11 +108,18 @@ def test_target_next_route_passes_when_already_targeted():
 
 
 @pytest.mark.parametrize("cls", ["N", "DA", "H", "W"])
-def test_target_next_route_refuses_danger_already_targeted(cls):
-    """Danger filter must also cover the state-confirmed path."""
+def test_target_next_route_confirms_danger_already_targeted(cls):
+    """DANGER-STAR (E): the state-confirmed path (status+navroute) ALSO
+    confirms regardless of class -- no refusal on any of the three confirm
+    paths."""
     sender = FakeSender()
     ctx, _ = _already_targeted_ctx(sender, star_class=cls)
-    assert STEP_REGISTRY["target_next_route"](ctx) is False
+    logs = []
+    ctx.record = lambda n, p: logs.append((n, p))
+    assert STEP_REGISTRY["target_next_route"](ctx) is True
+    assert any(n == "TargetConfirmed" and p.get("via") == "status+navroute"
+               for n, p in logs)
+    assert not any(n == "TargetDangerRefused" for n, _ in logs)
 
 
 def test_target_next_route_fails_closed_when_destination_off_route():
@@ -190,11 +207,17 @@ def test_target_next_route_confirms_off_route_via_fsdtarget_state():
 
 
 @pytest.mark.parametrize("cls", ["N", "DA", "H", "W"])
-def test_target_next_route_danger_filter_covers_fsdtarget_state_path(cls):
-    """Danger filter must also cover the stale-file fallback path."""
+def test_target_next_route_confirms_danger_via_stale_fsdtarget_path(cls):
+    """DANGER-STAR (E): the stale-file fallback path (status+fsdtarget) ALSO
+    confirms regardless of class -- all three confirm paths never refuse."""
     sender = FakeSender()
     ctx, _ = _stale_navroute_ctx(sender, star_class=cls)
-    assert STEP_REGISTRY["target_next_route"](ctx) is False
+    logs = []
+    ctx.record = lambda n, p: logs.append((n, p))
+    assert STEP_REGISTRY["target_next_route"](ctx) is True
+    assert any(n == "TargetConfirmed" and p.get("via") == "status+fsdtarget"
+               for n, p in logs)
+    assert not any(n == "TargetDangerRefused" for n, _ in logs)
 
 
 def test_target_next_route_fsdtarget_state_path_requires_body0():

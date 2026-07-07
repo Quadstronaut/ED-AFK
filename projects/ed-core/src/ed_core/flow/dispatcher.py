@@ -34,7 +34,13 @@ from ed_core.fsd_util import scoop_max_rate_t_s as _scoop_max_rate_t_s
 # toward the station, so a star smack (SupercruiseExit Body=Star) mid-approach
 # yanks that scene away and must hand off to smack_recovery instead of grinding
 # the dock retry loop against normal-space glare.
-_PREEMPT_ON_SMACK = frozenset({"arrival", "startup", "dock", "sc_resume"})
+# "traversal" JOINED 2026-07-07 (D2/C4, never-strand council): the steady-state
+# A->B hop flies a live supercruise scene toward the next jump exactly like
+# arrival/startup/dock/sc_resume, so a star/planet drop mid-traversal must
+# preempt it the same way — closing the live dead-end where traversal's
+# EngageJumpClearanceObscured abort left a stale drop stranded with no
+# handoff to smack_recovery.
+_PREEMPT_ON_SMACK = frozenset({"arrival", "startup", "dock", "sc_resume", "traversal"})
 
 # Route-complete correlation join window. NavRouteClear fires in witchspace
 # ~10s before the destination FSDJump; this is the max gap (in JOURNAL
@@ -43,6 +49,13 @@ _PREEMPT_ON_SMACK = frozenset({"arrival", "startup", "dock", "sc_resume"})
 # manual re-plot minutes earlier). This is a CORRELATION window between two
 # journal events — NOT a wall-clock success/failure gate (house rule).
 _CLEAR_JOIN_WINDOW_S = 60.0
+
+# NEVER-STRAND re-dispatch bounded backoff (workstream A, 2026-07-07 council).
+# Monotonic: base * 2**(attempts-1), capped. Module-level tuning constants
+# (not a config surface -- no operator knob exists or is needed; this is an
+# internal safety-net cadence, same tier as _CLEAR_JOIN_WINDOW_S above).
+_REDISPATCH_BACKOFF_BASE_S = 2.0
+_REDISPATCH_BACKOFF_CAP_S = 30.0
 
 
 class _TailHub:
@@ -141,6 +154,21 @@ class FlowRunner:
         visited_logger: Optional[Any] = None,
         scoop_rate_fn: Optional[Callable[[str], Optional[float]]] = None,
         dest_is_named_station_fn: Optional[Callable[[Any], bool]] = None,
+        # Escape-vector CV frame grabber (D2/C3, never-strand council 2026-07-07):
+        # a FULL-frame BGR grab, wired exactly like navpanel_icon_grabber. Read by
+        # boot_routes._route_sc_exit to STEER (never gate) the smack body-kind
+        # (_smack_kind). None (default/unwired) -> the steer is skipped; recovery
+        # ALWAYS dispatches regardless (C2 repeal of INV1/INV2 -- see _route_sc_exit).
+        escape_vector_grabber: Optional[Callable[[], Any]] = None,
+        # Never-strand re-dispatch driver (workstream A, 2026-07-07 council).
+        # (runner) -> None domain hook, invoked by run_live's _maybe_redispatch
+        # when a required-fail abort queued a redispatch and the bounded-backoff
+        # window elapsed. Wired by the CLI host at construction time (same pattern
+        # as every other domain-injected callable here — no core->domain import).
+        # None (unwired -- unit tests / no domain activate()) degrades never-strand
+        # to a LOUD bounded idle: the backoff/attempt mechanics still run and are
+        # testable via an injected fake driver, but nothing actually re-dispatches.
+        redispatch_driver: Optional[Callable[["FlowRunner"], None]] = None,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -212,7 +240,11 @@ class FlowRunner:
         # _route_sc_exit abstains until the operator calibrates the CV (INV2).
         # Exposed as a runner attribute so boot_routes._route_sc_exit can read
         # it without importing a domain module into the core engine.
-        self._escape_vector_grabber = None
+        # WIRED 2026-07-07 (D2/C3): now a constructor param (was hardcoded
+        # None) -- cli.py composes a full-frame BGR grab exactly like the
+        # navpanel grabbers, NOT gated on WinRT OCR (escape-vector CV is
+        # pixel/color, not text).
+        self._escape_vector_grabber = escape_vector_grabber
         # Injected nav-panel ICON frame grabber (Optional[Callable[[], Any]]).
         # Wired exactly like _escape_vector_grabber: a FULL-frame BGR grab with
         # the nav panel OPEN and the locked destination highlighted, read by
@@ -251,6 +283,24 @@ class FlowRunner:
         # (boot-smack state). Latched by ctx.escape_vector_notify; consumed by
         # boot_routes' startup override, which hands off to smack_recovery.
         self._escape_vector_seen: bool = False
+        # NEVER-STRAND re-dispatch (workstream A, 2026-07-07 council). A
+        # required-step exhaustion that is NEITHER an operator-abort NOR a
+        # preempt (see _run's three-way disambiguation) queues a re-dispatch
+        # here instead of idling forever ([ABORTED] used to be terminal).
+        # run_live's own loop iteration drives the actual re-dispatch call
+        # (never nested recursion inside _run) — see _maybe_redispatch.
+        self._needs_redispatch: bool = False
+        # Attempt counter for the monotonic bounded backoff (base * 2**(n-1),
+        # capped). Reset to 0 ONLY on a COMPLETED procedure (a clean run) —
+        # NOT on every queue, so a still-unresolved strand keeps backing off
+        # across repeated attempts instead of hot-looping at the base delay.
+        self._redispatch_attempts: int = 0
+        # Monotonic clock() deadline for the NEXT redispatch attempt. 0.0
+        # (the __init__ default) is <= any real clock() reading, so a FRESH
+        # strand's first attempt fires on run_live's very next idle check —
+        # no added delay beyond the poll cadence (no-idling law, L2).
+        self._redispatch_next_t: float = 0.0
+        self._redispatch_driver = redispatch_driver
         # Single tail consumer + fan-out (see _TailHub). None without a tail.
         self._hub: Optional[_TailHub] = (
             _TailHub(tail, on_event=self._on_tail_event) if tail is not None else None)
@@ -608,6 +658,14 @@ class FlowRunner:
                     target=self._run_track, args=(track, track_ctx), daemon=True
                 ).start()
             result = run_procedure(proc, ctx)
+            # THREE-WAY DISAMBIGUATION (workstream A, 2026-07-07 council) on a
+            # required-step exhaustion (result.aborted). Order is LOAD-BEARING:
+            # preempt is checked FIRST (a preempt can coincide with a stale
+            # _should_abort read on a slower thread), then operator-abort,
+            # and ONLY THEN does an abort mean "never-strand, queue a
+            # re-dispatch" — the prior behavior (a terminal [ABORTED] idle)
+            # is what let a ship sit stranded at a star forever (interpreter.py
+            # required-fail -> here -> run_live only polls, nothing re-fires).
             if result.aborted and self._preempt is not None:
                 # PREEMPTED, not aborted (2026-06-07 14:24:09Z: arrival's
                 # star-smack preempt printed "[ABORTED] ... manual intervention
@@ -627,12 +685,12 @@ class FlowRunner:
                         self.overlay.event(msg)
                     except Exception:  # noqa: BLE001
                         pass
-            elif result.aborted:
-                # ABORTED = human eyes required (notification-only: NO
-                # auto-restart, NO retry). Name the failing step when there is
-                # one, but guard the operator-abort case where the last step
-                # may not be the failer (or there are no steps at all) so the
-                # message stays sensible either way.
+            elif result.aborted and self._should_abort():
+                # TERMINAL OPERATOR STOP (panic / stop_requested): unchanged
+                # from before — human eyes required, NO auto-restart, NO
+                # retry, NO re-dispatch. Name the failing step when there is
+                # one, but guard the case where the last step may not be the
+                # failer (or there are no steps at all).
                 msg = f"[ABORTED] {name} -- manual intervention needed"
                 if result.steps:
                     msg += f" (failed at {result.steps[-1].action})"
@@ -645,6 +703,41 @@ class FlowRunner:
                         self.overlay.status(msg)
                     except Exception:  # noqa: BLE001
                         pass
+            elif result.aborted:
+                # NEVER-STRAND (workstream A): a required-fail exhaustion that
+                # is NEITHER a preempt NOR an operator-abort. Queue a
+                # re-dispatch from LIVE state instead of the old terminal
+                # [ABORTED] idle — run_live's own loop iteration drives the
+                # actual re-dispatch call under bounded backoff (never nested
+                # recursion inside _run; see _maybe_redispatch). LOUD: this is
+                # exactly the class of incident (a ship idling silently at a
+                # star, e.g. nav_supercruise_star refuse / engage_jump_clearance
+                # obscured / target_next_route watchdog / engage_supercruise
+                # no-charge / dock deny / smack_recovery internal fail) that
+                # used to strand silently.
+                self._needs_redispatch = True
+                msg = f"[STRAND-GUARD] {name} exhausted retries -- queuing re-dispatch from live state"
+                if result.steps:
+                    msg += f" (failed at {result.steps[-1].action})"
+                print(msg, flush=True)
+                if self.overlay is not None:
+                    try:
+                        self.overlay.event(msg)
+                        self.overlay.status(msg)   # persistent: stays visible
+                    except Exception:  # noqa: BLE001
+                        pass
+                if self.record is not None:
+                    self.record("RedispatchQueued",
+                                {"procedure": name,
+                                 "failed_at": (result.steps[-1].action
+                                              if result.steps else None),
+                                 "retries": result.retries})
+            else:
+                # COMPLETED cleanly: reset the backoff ladder so a LATER,
+                # unrelated strand starts its own attempt count from zero
+                # rather than inheriting a prior incident's climbed backoff.
+                self._redispatch_attempts = 0
+                self._needs_redispatch = False
         finally:
             self._running_proc = None
             if self._preempt is not None and self.record is not None:
@@ -1008,6 +1101,101 @@ class FlowRunner:
     def request_stop(self) -> None:
         self.stop_requested = True
 
+    # ---- never-strand re-dispatch (workstream A, 2026-07-07 council) ------
+    def _maybe_redispatch(self) -> None:
+        """Fire the queued re-dispatch when its bounded-backoff window has
+        elapsed. Called from run_live's OWN loop iteration (never nested
+        inside _run — see _run's three-way disambiguation, which only SETS
+        `_needs_redispatch`). A no-op when nothing is queued or the window
+        hasn't elapsed yet — between attempts this is a single clock()
+        comparison, so run_live's idle branch stays a plain poll+sleep with
+        NO sender.press and NO busy-spin (the never-strand law forbids a
+        tight input/CPU loop as much as it forbids idling).
+
+        On fire, in this exact order (spec-mandated):
+          (i)   increment `_redispatch_attempts`
+          (ii)  advance `_redispatch_next_t` by the bounded-backoff window
+                computed from the NEW attempt count
+          (iii) LOUD-announce (console + overlay + record)
+          (iv)  clear `_needs_redispatch`
+          (v)   call the domain driver (runner._redispatch_driver), if wired
+
+        Ordering matters: (ii) must happen BEFORE (v) so a driver call that
+        itself re-aborts (still stranded) re-queues `_needs_redispatch`
+        WITHOUT touching the just-advanced deadline — the backoff keeps
+        climbing across repeated unresolved attempts instead of one queue
+        fighting the next attempt's timer.
+
+        UNWIRED (`_redispatch_driver is None` — unit tests / no domain
+        `activate()`): degrades to a LOUD bounded idle. The backoff/attempt
+        mechanics above still run (and are unit-testable via an injected fake
+        driver in ed-core alone) — only the actual re-dispatch call is a
+        no-op."""
+        if not self._needs_redispatch:
+            return
+        if self.clock() < self._redispatch_next_t:
+            return
+        self._redispatch_attempts += 1
+        # OVERFLOW-SAFE (council blocker fix 2026-07-07, boundaries lens): the
+        # exponent is CLAMPED. `_redispatch_attempts` resets only on a COMPLETED
+        # run or a new journal event — NEITHER fires during a genuine unending
+        # strand (ship idles, emits nothing, recovery keeps failing), so the
+        # counter climbs unbounded. Without the clamp, ~attempt 1025 evaluates
+        # 2**~1024 -> float OverflowError -> caught by run_live's CrashParked
+        # handler -> panic + stop = the EXACT strand this guard exists to
+        # prevent, inside one overnight session. Clamped, the backoff simply
+        # pins at the cap and re-dispatches there FOREVER = infinite loud
+        # bounded idle (operator ceiling contract: never a terminal stop).
+        _exp = min(self._redispatch_attempts - 1, 20)   # 2**20 * base >> cap
+        backoff = min(_REDISPATCH_BACKOFF_CAP_S,
+                      _REDISPATCH_BACKOFF_BASE_S * (2 ** _exp))
+        self._redispatch_next_t = self.clock() + backoff
+        msg = (f"[STRAND-GUARD] re-dispatching from live state "
+               f"(attempt {self._redispatch_attempts}, next backoff {backoff:.1f}s)")
+        print(msg, flush=True)
+        if self.overlay is not None:
+            try:
+                self.overlay.event(msg)
+                self.overlay.status(msg)
+            except Exception:  # noqa: BLE001 — overlay is fail-soft
+                pass
+        if self.record is not None:
+            self.record("RedispatchAttempt",
+                        {"attempt": self._redispatch_attempts, "backoff_s": backoff})
+        self._needs_redispatch = False
+        driver = self._redispatch_driver
+        if driver is None:
+            # UNWIRED: LOUD bounded idle (still testable — see docstring).
+            msg2 = ("[STRAND-GUARD] no redispatch driver wired -- idling "
+                    "(bounded backoff, no input/CPU spin)")
+            print(msg2, flush=True)
+            if self.record is not None:
+                self.record("RedispatchDriverUnwired", {})
+            return
+        try:
+            driver(self)
+        except Exception as exc:  # noqa: BLE001 — never crash the live loop
+            # RE-ARM (council blocker fix 2026-07-07, failure-recovery lens):
+            # `_needs_redispatch` was cleared above (iv) BEFORE this call. If the
+            # driver itself raises (a transient fault OUTSIDE the dispatched
+            # procedure's own _run, which would otherwise re-queue via the
+            # three-way branch), re-set the flag so the NEXT backoff window
+            # retries. Otherwise ONE driver hiccup leaves never-strand
+            # permanently silent = idle-forever, the very failure this guard
+            # exists to eliminate. Loud, logged, never crash-parked, never
+            # silently disabled.
+            self._needs_redispatch = True
+            emsg = (f"[STRAND-GUARD] redispatch driver raised: "
+                    f"{type(exc).__name__}: {exc} -- re-armed, retrying next window")
+            print(emsg, flush=True)
+            if self.record is not None:
+                self.record("RedispatchDriverError", {"error": repr(exc)})
+            if self.overlay is not None:
+                try:
+                    self.overlay.status(emsg)
+                except Exception:  # noqa: BLE001
+                    pass
+
     def run_live(self, *, duration_s: float, poll_interval_s: float = 0.5) -> None:
         if self.tail is None or self._hub is None:
             raise RuntimeError("run_live requires a journal tail")
@@ -1032,10 +1220,23 @@ class FlowRunner:
                 if not events:
                     self._caught_up = True
                     run_classifiers(self)
+                    # NEVER-STRAND (workstream A): fire a queued re-dispatch
+                    # once its backoff window elapses. A no-op (single clock
+                    # comparison) when nothing is queued -- the idle branch
+                    # stays a plain poll+sleep, no busy-spin.
+                    self._maybe_redispatch()
                     self.sleeper(poll_interval_s)
                     continue
                 for ev in events:
                     if self._caught_up:
+                        # A NEW journal event is evidence the strand (if any)
+                        # moved: reset the backoff ladder so a later, separate
+                        # incident starts its own attempt count from zero
+                        # rather than inheriting a resolved one's climbed
+                        # backoff. Does NOT touch `_needs_redispatch` itself —
+                        # the route below re-dispatches its own procedure,
+                        # whose _run() completion/abort governs that flag.
+                        self._redispatch_attempts = 0
                         if (self._visited_logger is not None
                                 and getattr(ev, "event", None) == "FSDJump"):
                             # Passive side-effect: record the live arrival, then

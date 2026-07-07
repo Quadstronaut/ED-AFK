@@ -91,13 +91,53 @@ def _orange(cell: Any) -> Any:
     return (r > 120) & ((r - b) > 55) & ((r - g) > 15)
 
 
-def _enclosed_dark(orange_mask: Any) -> Any:
+def _debug_box_green(cell: Any) -> Any:
+    """True where a pixel is GREEN-dominant — the CV-debug-overlay 'hit' box
+    color (#ff00cc44, i.e. BGR (68,204,0)), never a real nav-panel pixel (the
+    panel is dark/neutral background, orange highlight bar, or orange/white
+    text — all RED-dominant or neutral, never green-dominant).
+
+    FALSE-NEGATIVE ROOT CAUSE (2026-07-07, navstar_row0_2004_r0.png — the
+    pinned live refusal frame): frame capture is DEFAULT ON, so a live grab
+    can catch the debug overlay's OWN 'hit' box (drawn a beat earlier by a
+    prior CV read of the SAME row) still on screen. That box's thin green
+    border edges fail `_orange()` exactly like a real dark glyph pixel, so an
+    undifferentiated dark/glyph-candidate mask lets the box's edges BRIDGE
+    the row's thin top/bottom divider line (or the cell's own border) into
+    the star glyph's own dark hole — merging border + glyph into one
+    oversized/border-touching blob that fails the icon-size filter or the
+    'fully enclosed' test and hides the true candidate entirely (measured:
+    the merged LOCATION-stage blob was ~w=296 h=39, the full scan span).
+
+    Excluding green-dominant pixels from every dark/glyph-candidate mask
+    (both the LOCATION stage in `_strip_glyph` and the CLASSIFY stage in
+    `_glyph_mask` below — the bridge can recur in either) breaks that bridge
+    without touching any real pixel: orange (bar/text) is always
+    red-dominant (`_orange()` requires r>120 and r-g>15, so real orange can
+    never read green-dominant here), and a 'miss'-verdict debug box is
+    RED-dominant (#ffcc2222) and already reads as ORANGE, not dark — only
+    the 'hit' box's green needs this guard."""
+    b = cell[:, :, 0].astype("int32")
+    g = cell[:, :, 1].astype("int32")
+    r = cell[:, :, 2].astype("int32")
+    return (g > r) & (g > b)
+
+
+def _enclosed_dark(dark_candidate: Any) -> Any:
     """Selected-row star = the dark component(s) enclosed by the orange bar, i.e.
-    not touching the cell border (the dark rows above/below the bar do touch it)."""
+    not touching the cell border (the dark rows above/below the bar do touch it).
+
+    `dark_candidate` is the glyph-candidate boolean mask -- NOT-orange AND
+    NOT a stray green CV-debug 'hit' box pixel (see `_debug_box_green`). The
+    green exclusion matters HERE too, not just in `_strip_glyph`'s location
+    stage: this function re-derives the enclosed shape from the CELL'S OWN
+    colors independent of the location bbox, so a debug box redrawn over the
+    glyph would otherwise re-bridge the star's dark hole to the cell border
+    at THIS stage exactly as it did at location time (2026-07-07 fix)."""
     import cv2
     import numpy as np
 
-    inv = (~orange_mask).astype(np.uint8)
+    inv = dark_candidate.astype(np.uint8)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(inv, connectivity=8)
     h, w = inv.shape
     keep = np.zeros_like(inv, dtype=bool)
@@ -109,10 +149,14 @@ def _enclosed_dark(orange_mask: Any) -> Any:
 
 
 def _glyph_mask(cell: Any) -> Any:
-    """Binary glyph shape, polarity-invariant (orange-on-dark OR dark-on-orange)."""
+    """Binary glyph shape, polarity-invariant (orange-on-dark OR dark-on-orange).
+
+    On the SELECTED (dark-hole) branch, GREEN-dominant pixels (a stray
+    CV-debug 'hit' box redrawn over this row) are excluded from the
+    dark-candidate test before the enclosure check — see `_debug_box_green`."""
     o = _orange(cell)
     if float(o.mean()) > SELECTED_ORANGE_FRAC:
-        return _enclosed_dark(o)
+        return _enclosed_dark((~o) & (~_debug_box_green(cell)))
     return o
 
 
@@ -365,6 +409,18 @@ TILT_PAD = 16               # y allowance above/below the global band for the ri
 _BAR_COL_FRAC = 0.60        # column orange (within padded window) -> bar member
 _CLEAN_COL_FRAC = 0.85      # near-full columns anchor the center-line fit
 _MIN_CLEAN_COLS = 20        # fewer clean columns than this -> no trustworthy fit
+# Classify-crop margin around the LOCATED glyph bbox (2026-07-07 false-negative
+# fix, navstar_row0_2004_r0.png). A stray CV-debug 'hit' box redrawn over the
+# row is excluded from the dark-candidate mask (_debug_box_green) at BOTH the
+# location stage (_strip_glyph) and the classify stage (_glyph_mask), but that
+# exclusion can shave a sliver off the located bbox wherever the box's edge
+# crossed the true glyph. A too-tight crop (formerly 5px) then finds the
+# glyph's own (correct, green-corrected) shape touching the crop border,
+# which `_enclosed_dark` conservatively discards as "not enclosed" — the
+# measured failure mode. 10px clears it on the pinned frame (flips NONE/0.0 ->
+# STAR 0.74) with ZERO change on the 9 previously-validated real frames
+# (their glyphs already had clearance headroom past 5px).
+GLYPH_CLASSIFY_PAD = 10
 
 
 def _selected_band(om: Any) -> Optional[tuple]:
@@ -460,17 +516,22 @@ def _strip_glyph(strip: Any, frame_h: int) -> Optional[tuple]:
     pin is icon-sized and fails the orange test exactly like a glyph (live
     2026-07-06 runs 063740/085221: on the arrival row it sits right after the
     system name and was the only qualifying blob once tilt truncated the
-    scan). A heavily wash-dimmed bar can still hide its glyph from the orange
-    test — that reads NONE and callers fail closed/abstain."""
+    scan). GREEN-dominant pixels (a stray CV-debug 'hit' box redrawn on this
+    row) are ALSO excluded from the dark/candidate mask — see
+    `_debug_box_green` (2026-07-07 false-negative fix). A heavily wash-dimmed
+    bar can still hide its glyph from the orange test — that reads NONE and
+    callers fail closed/abstain."""
     import cv2
     import numpy as np
 
     som = _orange(strip).astype(np.float32)
+    not_debug_box = ~_debug_box_green(strip)
     gx0, ytrim = _scale(4, frame_h), 2
     gx1 = min(_scale(GLYPH_SCAN_SPAN, frame_h), strip.shape[1])
     if gx1 - gx0 < 8 or strip.shape[0] <= 2 * ytrim:
         return None
-    dark = (som[ytrim:-ytrim, gx0:gx1] < 0.5).astype(np.uint8)
+    dark = ((som[ytrim:-ytrim, gx0:gx1] < 0.5)
+            & not_debug_box[ytrim:-ytrim, gx0:gx1]).astype(np.uint8)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
     wmin, wmax = _scale(GLYPH_MIN_W, frame_h), _scale(GLYPH_MAX_W, frame_h)
     hmin, hmax = _scale(GLYPH_MIN_H, frame_h), _scale(GLYPH_MAX_H, frame_h)
@@ -493,6 +554,48 @@ def _strip_glyph(strip: Any, frame_h: int) -> Optional[tuple]:
     return cands[0]
 
 
+def _locate_selected_cell(frame: Any) -> Optional[dict]:
+    """Dynamic localization of the SELECTED row's glyph cell — the SHARED
+    band-find + rectify + strip-glyph pipeline used by both
+    `selected_destination_icon` (STAR-veto dock/park) and
+    `selected_row_kind_confirmed` (raw registry-kind, no STAR override; see
+    D1/B2 in the never-strand council spec).
+
+    Returns {"cell","cx","cy","gcy","gw","gh"} — cell is the classify-ready
+    BGR crop (GLYPH_CLASSIFY_PAD margin around the located glyph bbox); cx/
+    cy/gcy/gw/gh are FULL-FRAME coords for the overlay/caller. None when the
+    band / bar / glyph cannot be located. PURE; never raises (any error ->
+    None, same fail-closed contract as every reader in this module)."""
+    import numpy as np
+
+    arr = np.asarray(frame)
+    if arr.ndim != 3 or arr.shape[2] < 3 or arr.shape[0] < 64:
+        return None
+    om = _orange(arr).astype(np.float32)
+    band = _selected_band(om)
+    if band is None:
+        return None
+    y0, y1, cy = band
+    rect = _rectify_bar(arr, om, y0, y1)
+    if rect is None:
+        return None
+    strip, xl, shalf, la, lc = rect
+    g = _strip_glyph(strip, arr.shape[0])
+    if g is None:
+        return None
+    sx, sy, gw, gh = g
+    # GLYPH_CLASSIFY_PAD (not the old 5px): see the constant's docstring —
+    # a too-tight crop can find the (green-corrected) glyph touching the crop
+    # border and get discarded as "not enclosed" (2026-07-07 false-negative).
+    pad = _scale(GLYPH_CLASSIFY_PAD, arr.shape[0])
+    cell = strip[max(0, sy - pad): sy + gh + pad,
+                 max(0, sx - pad): sx + gw + pad]
+    cx = xl + sx + gw // 2
+    gcy = int(round(la * (xl + sx) + lc)) - shalf + sy + gh // 2
+    return {"cell": cell, "cx": int(cx), "cy": int(cy), "gcy": int(gcy),
+            "gw": int(gw), "gh": int(gh)}
+
+
 def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
     """DOCK-vs-PARK verdict for the SELECTED (locked-destination) nav-list row,
     via dynamic localization (no fixed row/icon coordinate). The route-complete
@@ -512,32 +615,12 @@ def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
     none = {"action": "abstain", "verdict": NONE, "kind": "", "score": 0.0,
             "glyph": None, "cy": -1}
     try:
-        import numpy as np
-
-        arr = np.asarray(frame)
-        if arr.ndim != 3 or arr.shape[2] < 3 or arr.shape[0] < 64:
+        loc = _locate_selected_cell(frame)
+        if loc is None:
             return none
-        om = _orange(arr).astype(np.float32)
-        band = _selected_band(om)
-        if band is None:
-            return none
-        y0, y1, cy = band
-        rect = _rectify_bar(arr, om, y0, y1)
-        if rect is None:
-            return none
-        strip, xl, shalf, la, lc = rect
-        g = _strip_glyph(strip, arr.shape[0])
-        if g is None:
-            return none
-        sx, sy, gw, gh = g
-        pad = _scale(5, arr.shape[0])    # bbox margin: outline never touches the cell border
-        cell = strip[max(0, sy - pad): sy + gh + pad,
-                     max(0, sx - pad): sx + gw + pad]
+        cell = loc["cell"]
         verdict, score = classify_icon_scored(cell)
         reg = classify_icon_kind(cell, registry)
-        # glyph debug box mapped back to FULL-FRAME coords for the overlay
-        cx = xl + sx + gw // 2
-        gcy = int(round(la * (xl + sx) + lc)) - shalf + sy + gh // 2
         if verdict == STAR:
             action = "park"          # confident star -> veto (catastrophe guard)
         elif reg.get("action") == "dock" and reg.get("score", 0.0) >= KIND_MATCH_MIN:
@@ -548,7 +631,37 @@ def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
             return none              # NONE / unreadable glyph -> abstain (name fallback)
         return {"action": action, "verdict": verdict, "kind": reg.get("kind", ""),
                 "score": round(float(score), 4),
-                "glyph": (int(cx), int(gcy), int(gw), int(gh)), "cy": int(cy)}
+                "glyph": (loc["cx"], loc["gcy"], loc["gw"], loc["gh"]),
+                "cy": loc["cy"]}
+    except Exception:               # noqa: BLE001 — pure fn, fail to abstain
+        return none
+
+
+def selected_row_kind_confirmed(frame: Any, registry: Any = None) -> dict:
+    """RAW registry-kind verdict for the SELECTED nav-list row's glyph — the
+    SAME dynamic localizer as `selected_destination_icon`, but WITHOUT that
+    function's STAR-veto override. Returns classify_icon_kind's own
+    {"action","kind","score"} straight from the located cell.
+
+    D1/B2 (never-strand council spec, 2026-07-07): step_nav_supercruise_star
+    treats row 0 as the arrival star by GAME TRUTH and assists it unless this
+    reads a POSITIVE, confident dock-kind glyph (action=="dock" with a
+    non-empty kind — the ONLY registry outcome a real station/POI template
+    produces; the abstain-as-park shape, park kinds like star/system/planet,
+    and an unlocatable row/glyph all read as "not a positive POI", the
+    correct ASSIST signal). Unlike `selected_destination_icon`, this does NOT
+    force action="park" on a STAR verdict -- the caller doesn't need that
+    veto (it already treats every non-dock outcome, STAR included, as
+    ASSIST), and forcing it here would just be dead weight.
+
+    Returns {"action":"park","kind":"","score":0.0} (abstain shape) when the
+    row/glyph cannot be located at all. PURE; never raises."""
+    none = {"action": "park", "kind": "", "score": 0.0}
+    try:
+        loc = _locate_selected_cell(frame)
+        if loc is None:
+            return none
+        return classify_icon_kind(loc["cell"], registry)
     except Exception:               # noqa: BLE001 — pure fn, fail to abstain
         return none
 

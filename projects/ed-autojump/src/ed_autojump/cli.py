@@ -465,6 +465,11 @@ def cmd_run(args) -> int:
     # SC-assist HUD prompt reads (#17): confirm_orbiting / confirm_sc_assist_active
     # / wait_sc_assist_orbiting. None -> each step's own fail-soft fallback.
     hud_grabber = None
+    # Escape-vector smack-kind steer (D2/C3, 2026-07-07 never-strand council):
+    # a bare full-frame grab, read by boot_routes._route_sc_exit to REFINE
+    # (never gate) _smack_kind. None -> the steer is skipped; recovery still
+    # ALWAYS dispatches regardless (see _route_sc_exit's always-recover body).
+    escape_vector_grabber = None
     if args.engage_keys:
         from ed_vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
@@ -491,6 +496,13 @@ def cmd_run(args) -> int:
         from ed_vision.capture import build_navpanel_icon_grabber
         from ed_vision import ocr_winrt as _ocr
         _navpanel_icon_full_frame = build_navpanel_icon_grabber(cfg)
+        # Escape-vector smack-kind steer: the SAME bare full-frame grab (pixel/
+        # color CV, never text) -- NOT gated on WinRT OCR availability, unlike
+        # every OCR-dependent consumer below. Reuses the ONE ScreenGrabber
+        # instance rather than standing up a redundant second one.
+        if _navpanel_icon_full_frame is not None:
+            escape_vector_grabber = _navpanel_icon_full_frame
+            print("vision: smack escape-vector detector ON (full-frame grab)")
         if _navpanel_icon_full_frame is not None and _ocr.available():
             navpanel_icon_grabber = _navpanel_icon_full_frame
             print("vision: route-complete icon classifier ON "
@@ -589,6 +601,13 @@ def cmd_run(args) -> int:
     # procedure directory into the core registry before FlowRunner is built.
     from ed_autojump import activate as _activate_autojump
     _activate_autojump()
+
+    # NEVER-STRAND re-dispatch driver (workstream A, 2026-07-07 council): the
+    # domain hook, wired per-instance at FlowRunner construction below (the
+    # SAME pattern as escape_vector_grabber/navpanel_icon_grabber -- activate()
+    # above only touches the module-level registries and has no runner
+    # instance to attach a per-runner callable to).
+    from .flow import boot_routes as _br
 
     # Activate domain plugins (e.g. ed_explore registers body_tour).
     # Uses Python entry_points so ed_autojump never imports a sibling domain
@@ -701,12 +720,14 @@ def cmd_run(args) -> int:
         navpanel_frame_grabber=navpanel_cv_grabber,
         hud_grabber=hud_grabber,
         dock_distance_km_supplier=dock_distance_km_supplier,
+        escape_vector_grabber=escape_vector_grabber,
         visited_logger=visited_logger,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),
         frame_sink=frame_sink,
         tail=JournalTail(journal_dir),
         panic_switch=panic,
+        redispatch_driver=_br.redispatch_from_live_state,
     )
 
     # Startup route check. The jump loop only engages when a route is plotted;

@@ -69,10 +69,20 @@ def step_target_next_route(
          locked hop is off-file and path 2 can never conclude. The FSDTarget
          the reroute fired carries the class; backlog replay restores it
          across bot restarts.
-    Dangerous class -> False on either path and the procedure's required-
-    fail policy takes over — FAIL CLOSED, the ship never jumps at it.
-    Unknown class (off-route Destination, no NavRoute) also fails closed
-    via the watchdog. `watchdog_s` is the operator-sanctioned stuck-state
+    DANGER-STAR (E, 2026-07-07 never-strand council — REPEALS the prior
+    refuse-on-dangerous behavior): a confirmed hop CONFIRMS (returns True)
+    on any of the three paths REGARDLESS of star class. A confirmed lock is
+    a confirmed lock — neutron/white-dwarf/black-hole/Wolf-Rayet included;
+    the live jump is never gated on it (a normal hyperspace arrival already
+    drops the ship at a safe distance from the arrival star automatically,
+    per game mechanics — this step only locks the NEXT hop, it never flies
+    the ship into anything). `fsd.danger.is_dangerous` stays imported and
+    correct for observability (a dangerous class is NOTED, never refused —
+    see TargetDangerNoted); the route-PLANNER's own danger filter (a
+    planning-time concern, not this live-target path) is unaffected and out
+    of scope here. Unknown class (off-route Destination, no NavRoute) still
+    fails closed via the watchdog — that is a "can't confirm at all" case,
+    not a danger refusal. `watchdog_s` is the operator-sanctioned stuck-state
     class (no route plotted / press lost). Without journal wiring (unit
     tests) the press alone is the step."""
     seq0, _ = ctx.fsd_target_supplier()
@@ -116,8 +126,9 @@ def step_target_next_route(
         if seq > seq0 and target is not None:
             sc = getattr(target, "star_class", "") or ""
             if sc and is_dangerous(sc):
-                ctx.log("TargetDangerRefused", {"star_class": sc})
-                return False
+                # DANGER-STAR (E): NOTED, never refused -- a confirmed hop
+                # confirms regardless of star class (see docstring).
+                ctx.log("TargetDangerNoted", {"star_class": sc})
             ctx.log("TargetConfirmed", {"star_class": sc, "via": "event"})
             return True
         # Already-locked path: no event will ever come. Status.Destination
@@ -132,8 +143,8 @@ def step_target_next_route(
                 if getattr(wp, "system_address", None) == dest_addr:
                     sc = getattr(wp, "star_class", "") or ""
                     if sc and is_dangerous(sc):
-                        ctx.log("TargetDangerRefused", {"star_class": sc})
-                        return False
+                        # DANGER-STAR (E): NOTED, never refused.
+                        ctx.log("TargetDangerNoted", {"star_class": sc})
                     ctx.log("TargetConfirmed",
                             {"star_class": sc, "via": "status+navroute"})
                     return True
@@ -155,8 +166,8 @@ def step_target_next_route(
                 sc = getattr(target, "star_class", "") or ""
                 if sc:
                     if is_dangerous(sc):
-                        ctx.log("TargetDangerRefused", {"star_class": sc})
-                        return False
+                        # DANGER-STAR (E): NOTED, never refused.
+                        ctx.log("TargetDangerNoted", {"star_class": sc})
                     ctx.log("TargetConfirmed",
                             {"star_class": sc, "via": "status+fsdtarget"})
                     return True
@@ -196,9 +207,7 @@ def step_engage_jump_clearance(
     max_jump_polls: int = 12,
     max_charge_polls: int = 75,  # LIVE FIX 2026-07-06 — 75*0.8s = the 60s operator watchdog class
     max_clear_attempts: int = 3,
-    pitch_dir: str = "down",
-    pitch_hold_s: float = 0.0,   # 0.0 -> ship-size table (same as dock_blind_maneuver)
-    clear_burn_s: float = 7.0,
+    clear_burn_s: float = 7.0,   # post-orbit-engage settle pacing (D3: was the straight-burn duration)
     retry_throttle_pct: int = 100,  # noqa: ARG001 — SetSpeed100 hardcoded per spec; kept for TOML knob
 ) -> bool:
     """Hyperspace-jump clearance loop (council-ratified, 2026-06-16).
@@ -232,26 +241,26 @@ def step_engage_jump_clearance(
           On confirmation -> return True immediately; no further input is sent.
           The interpreter's in_witchspace pause enforces no-input through the
           tunnel, so hold_alignment is NOT needed after this step.
-      C4  OBSTRUCTED EDGE: no charge after max_jump_polls (or a dropped
-          charge) -> MOVE: pitch away from the body, HARDCODE SetSpeed100
-          (NOT step_set_throttle per spec boundaries), fly clear_burn_s,
-          then RETRY from C1.
-      C5  Pitch duration uses the same ship-size table as step_dock_blind_maneuver
-          (pitch_s_for_ship). pitch_hold_s > 0 overrides the table.
+      C4  OBSTRUCTED EDGE (D3 FIX, 2026-07-07 never-strand council): no charge
+          after max_jump_polls (or a dropped charge) -> MOVE via SC-assist
+          ORBIT get-around (reuses executor.navpanel.engage_supercruise_assist
+          — the SAME primitive step_sc_assist_orbit/nav_supercruise_star use),
+          changing ANGULAR POSITION around the obstructing body so the
+          occluded target clears, then RETRY from C1. THROTTLE FAIL-CLOSED:
+          this edge NEVER issues SetSpeed100 toward/into the body — the OLD
+          pitch-away-then-forward-burn could ram a jump target hidden BEHIND
+          the star (memory obscured-jump-ram). If the get-around cannot even
+          run (not in supercruise — the ONE structural precondition an
+          SC-assist orbit needs; a bind is missing; cockpit focus is stuck),
+          BAIL: return False WITH NO THROTTLE AT ALL, routing to never-strand
+          (workstream A) rather than ramming forward blind.
       C6  CEILING ABORT: max_clear_attempts move+retry cycles; ceiling with no
           StartJump -> log EngageJumpClearanceAborted{reason:'obstruction_ceiling'}
           and return False. Ceiling is a FAIL backstop, never a success path.
       AC8 ABORT GRAFT: after the inner poll loop exits, an explicit should_abort()
-          check BEFORE any directional press guarantees no PitchButton is ever
-          sent after the operator requests a stop (safety-critical).
+          check BEFORE any directional press guarantees no orbit-engage press is
+          ever sent after the operator requests a stop (safety-critical).
     """
-    # --- pitch_dir whitelist (fail-closed on unknown) ---
-    pitch_button = {"down": "PitchDownButton", "up": "PitchUpButton"}.get(pitch_dir)
-    if pitch_button is None:
-        ctx.log("EngageJumpClearanceBadParam",
-                {"param": "pitch_dir", "value": pitch_dir})
-        return False
-
     # --- Observability grafts: clamp and log non-integer / sub-1 inputs ---
     effective_polls = max(1, int(max_jump_polls))
     if effective_polls != max_jump_polls:
@@ -265,16 +274,6 @@ def step_engage_jump_clearance(
     if charge_ceiling != max_charge_polls:
         ctx.log("EngageJumpClearanceClamp",
                 {"max_charge_polls": max_charge_polls, "clamped": charge_ceiling})
-
-    # --- Pitch duration from ship-size table (mirrors step_dock_blind_maneuver) ---
-    from ed_core.ship_sizes import pitch_s_for_ship, size_for_ship
-    ship = ctx.ship_supplier()
-    if pitch_hold_s > 0:
-        pitch_s = float(pitch_hold_s)
-    else:
-        pitch_s = pitch_s_for_ship(ship)
-        if ship is None or size_for_ship(ship) is None:
-            ctx.log("ShipSizeUnknown", {"ship": ship, "default_pitch_s": pitch_s})
 
     # --- Helper: dual hyperspace-committed signal (C3) ---
     def _is_hyperspace_committed() -> bool:
@@ -367,29 +366,62 @@ def step_engage_jump_clearance(
         ctx.log("EngageJumpClearanceObscured",
                 {"attempt": attempt, "polls": effective_polls})
 
-        # --- Abort checkpoint 2: post-poll, pre-pitch ---
+        # --- Abort checkpoint 2: post-poll, pre-getaround ---
         if ctx.should_abort():
             ctx.log("EngageJumpClearanceAborted",
                     {"reason": "abort", "attempt": attempt})
             return False
 
-        # --- C4 MOVE: pitch away from the obstructing body ---
+        # --- C4 MOVE (D3 FIX): SC-assist ORBIT get-around, THROTTLE FAIL-
+        # CLOSED. The old pitch-away-then-forward-burn could ram a jump
+        # target hidden BEHIND the star (memory obscured-jump-ram); an SC-
+        # assist orbit changes ANGULAR POSITION instead of driving straight
+        # ahead, so the occluded target clears without ever pointing the
+        # ship's nose (and its SetSpeed100) at whatever is blocking it.
+        #
+        # The ONE structural precondition an SC-assist orbit needs is
+        # supercruise itself (the mechanic doesn't exist in normal space).
+        # No status / not in supercruise -> the get-around CANNOT run at
+        # all: BAIL immediately, NO throttle press of any kind. This is a
+        # required step, so the bail routes to never-strand (workstream A)
+        # instead of ramming forward on a guess.
+        st = ctx.status_supplier()
+        if st is None or not getattr(st, "in_supercruise", False):
+            ctx.log("EngageJumpClearanceAborted",
+                    {"reason": "getaround_unavailable", "attempt": attempt,
+                     "cause": "not_in_supercruise"})
+            return False
+        if not _ensure_cockpit_focus(ctx):
+            ctx.log("EngageJumpClearanceAborted",
+                    {"reason": "getaround_unavailable", "attempt": attempt,
+                     "cause": "focus_stuck"})
+            return False
         ctx.log("EngageJumpClearanceMove",
-                {"pitch_dir": pitch_dir, "pitch_hold_s": pitch_s,
-                 "burn_s": clear_burn_s})
-        if not _press(ctx, pitch_button, hold_s=pitch_s):
+                {"method": "sc_assist_orbit", "attempt": attempt})
+        try:
+            from ..executor.navpanel import engage_supercruise_assist
+            engage_supercruise_assist(ctx.sender, sleeper=ctx.sleeper)
+        except KeyError:
+            ctx.log("BindMissing", {"step": "engage_jump_clearance_getaround"})
             return False
 
-        # --- Abort checkpoint 3: post-pitch, pre-burn ---
+        # --- Abort checkpoint 3: post-getaround, pre-settle ---
         if ctx.should_abort():
             ctx.log("EngageJumpClearanceAborted",
                     {"reason": "abort", "attempt": attempt})
             return False
 
-        # --- C4 MOVE: SetSpeed100 hardcoded (NOT step_set_throttle — spec boundary) ---
-        if not _press(ctx, "SetSpeed100"):
+        # A mid-macro emergency drop means the get-around definitely did NOT
+        # take -- the smack dispatch owns the scene now, not this retry loop.
+        st = ctx.status_supplier()
+        if st is not None and not getattr(st, "in_supercruise", False):
+            ctx.log("EngageJumpClearanceAborted",
+                    {"reason": "getaround_dropped", "attempt": attempt})
             return False
-        # Trajectory-pacing burn — NOT a gate (same class as dock_blind_maneuver.burn_s)
+
+        # Settle pacing — NOT a gate (same class as dock_blind_maneuver.burn_s):
+        # give the orbit a beat to actually change angular position before the
+        # next attempt's own bounded poll (C1/C2) takes back over.
         ctx.sleeper(clear_burn_s)
 
     # =====================================================================
@@ -2095,21 +2127,31 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
                               label_retry_s: float = 0.5,
                               row_reads: int = 3,
                               row_retry_s: float = 0.5) -> bool:
-    """SC-assist the ARRIVAL STAR (nav-panel row 0) — with a CV STAR-ROW
-    confirm AND a CV label-confirm. Replaces the blind sc_assist_orbit.
+    """SC-assist the ARRIVAL STAR (nav-panel row 0) — with a CV POSITIVE-POI
+    veto AND a CV label-confirm. Replaces the blind sc_assist_orbit.
 
-    ROW CONFIRM (LIVE FIX 2026-07-06, run 010444 starsmack): "row 0 is always
-    the arrival star" is REFUTED — parked AT the star, a nav beacon / signal
-    row can sort first; its detail page ALSO shows SUPERCRUISE ASSIST, so the
-    label check alone happily assists at a POI sitting inside the star's drop
-    zone (operator-witnessed: "caught onto a random signal"). Before touching
-    the row, classify its column-0 icon with the trained star oracle
-    (navpanel_icons.detect_row_icon, measured thresholds, fail-closed): not a
-    confirmed STAR -> refuse, press nothing. Like the label below, the row is
-    re-read IN PLACE up to `row_reads` times (`row_retry_s` apart) within the
-    ONE panel open before refusing (operator directive 2026-07-06 after the
-    run-085221 loop: "we do shit once" — a transient bad frame must never
-    cost a procedure retry and another panel-open cycle).
+    ROW CONFIRM, ASSIST-BY-DEFAULT (D1/B2, 2026-07-07 never-strand council —
+    supersedes the 2026-07-06 run-010444 STAR-required gate): row 0 IS the
+    arrival star by GAME TRUTH (L3, known position wins). CV here VETOES the
+    assist ONLY when it POSITIVELY identifies row 0 as a station/beacon/POI
+    glyph (a confident registry dock-kind match — navpanel_icons.
+    selected_row_kind_confirmed, fail-closed): STAR / a bare NON_STAR that
+    isn't a confident POI / NONE / unreadable / an UNEXPLORED reticle (honk
+    unresolved) all ASSIST. The prior 2026-07-06 fix (which refused on
+    anything but a confirmed STAR) over-corrected the run-010444 "caught onto
+    a random signal" incident into a NEW failure class: a CV miss on the
+    known position stranded the ship (never-strand law, L2, forbids that —
+    the CV may steer/veto a positive contra-ID, never block an absence of
+    confirmation). Row 0 is re-read IN PLACE up to `row_reads` times
+    (`row_retry_s` apart) within the ONE panel open before committing to a
+    veto (operator directive 2026-07-06 after the run-085221 loop: "we do
+    shit once" — a transient bad frame must never cost a procedure retry).
+
+    Brightness-UNCONFIRMED (a CV miss on POSITION, not kind) skips the
+    positive-POI check entirely and assists straight through: the
+    _confirm_row0_selected recovery already deterministically PINNED the
+    cursor to row 0 via a HOLD-up (cursor-mechanics memory: a hold always
+    saturates at the top regardless of what the brightness CV can confirm).
 
     LABEL CONFIRM with IN-STEP RE-READS (live findings 3/5): a transient bad
     label read used to fail the whole step -> full panel close + procedure
@@ -2119,7 +2161,10 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
     the RAW OCR text is logged on every refusal, and every read's frame is
     dumped (frame capture DEFAULT ON, operator order 2026-07-06).
     DEACTIVATE label = the assist is ALREADY ON = the step's goal state ->
-    close and succeed (pressing would turn it OFF).
+    close and succeed (pressing would turn it OFF). D1/B2: the label refuse
+    is likewise POSITIVE-ONLY — an unreadable/unclassified label blind-
+    assists (legacy); only a label confidently read as a DIFFERENT actionable
+    button (e.g. LOCK/UNLOCK DESTINATION) vetoes.
 
     Fail-soft / no regression: no detail grabber wired -> press blind (legacy).
     KeyError (unbound) -> False. A mid-macro emergency drop (out of
@@ -2132,9 +2177,16 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
     t0 = int(ctx.clock())
     try:
         s.press(panel_focus_action); sl(settle_s)   # open the panel
-        # --- ROW-0 VISUAL CONFIRM + STAR-ICON CONFIRM (defense in depth) ------
-        # The row-0 brightness check STACKS in FRONT of the icon confirm; it is
-        # engaged ONLY when the nav-list grabber is wired (unwired -> legacy
+        # --- ROW-0 VISUAL CONFIRM + POSITIVE-POI VETO (defense in depth) ------
+        # D1/B2 (2026-07-07, never-strand council): row 0 IS the arrival star
+        # by GAME TRUTH (L3, known position wins). CV here ASSISTS unless it
+        # POSITIVELY identifies a station/beacon/POI glyph — the only
+        # False-return from this whole block is a confident contra-ID; an
+        # absence of confirmation (unreadable / NONE / a non-POI glyph /
+        # an UNEXPLORED reticle) is NEVER grounds to refuse (that would
+        # strand the ship — never-strand re-dispatch is for genuine required-
+        # step exhaustion, not a CV abstain on a known position).
+        # Engaged ONLY when the nav-list grabber is wired (unwired -> legacy
         # blind press path, no regression).
         if frame_grabber is not None:
             # (1) POSITIONAL brightness read (council-v2, 2026-07-06): the cursor
@@ -2142,41 +2194,54 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
             # down and every confirm below then reads the WRONG row (a night of
             # real stars refused at NAV BEACON rows, runs 102104/104612). Confirm
             # row 0 is the BRIGHT row FIRST, anchored on the LOCATION header, with
-            # a bounded one-shot recovery. Row-0 UNCONFIRMED -> refuse, press
-            # NOTHING (the detail page is never opened).
+            # a bounded one-shot recovery.
+            #
+            # UNCONFIRMED (2026-07-07 B2, INVERTED from a refuse): the recovery
+            # inside _confirm_row0_selected already deterministically PINNED the
+            # cursor to row 0 (tap-down then a HOLD-up saturate — cursor-mechanics
+            # memory: a hold always wraps to the top regardless of what the CV
+            # brightness read can confirm). An unreadable/dark brightness read is
+            # a CV miss, not a position miss — assist the known position instead
+            # of refusing on it. The positive-POI icon check below is SKIPPED in
+            # this branch: the same bad-frame conditions that missed brightness
+            # would likely also abstain there, and the HOLD-up already settles
+            # the only thing that check exists to defend against (a WRONG row).
             conf = _confirm_row0_selected(ctx)
             if conf.status != "selected":
-                ctx.log("NavSupercruiseStarRefused",
+                ctx.log("NavSupercruiseStarRowUnconfirmedAssisting",
                         {"reason": "row0_unconfirmed"})
-                s.press(panel_focus_action); sl(settle_s)   # close; press nothing
-                return False
-            # (2) SELECTED-ROW star confirm via the validated DYNAMIC localizer
-            # (2026-07-06 audit: the fixed-y detect_row_icon read the right
-            # cell on 1 of 4 real frames — only the one its constant was tuned
-            # on; selected_destination_icon's band+glyph search reads 7/7).
-            # Row 0 is confirmed selected, so the highlight band IS row 0.
-            from ed_vision.navpanel_icons import STAR, detect_selected_row_star
-            verdict, score = None, 0.0
-            for attempt in range(max(1, row_reads)):
-                try:
-                    row_frame = frame_grabber()
-                    if row_frame is not None and ctx.frame_sink is not None:
-                        ctx.frame_sink(f"navstar_row0_{t0}_r{attempt}", row_frame)
-                    verdict, score = detect_selected_row_star(row_frame)
-                except Exception as exc:  # noqa: BLE001 — CV error -> fail closed
-                    ctx.log("NavSupercruiseStarUnconfirmed",
-                            {"reason": "row_cv_error", "err": type(exc).__name__})
-                    verdict, score = None, 0.0
-                if verdict == STAR:
-                    break
-                sl(row_retry_s)                      # transient artifact: re-read in place
-            if verdict != STAR:
-                ctx.log("NavSupercruiseStarRefused",
-                        {"reason": "row0_not_star", "verdict": verdict,
-                         "score": round(float(score), 3),
-                         "reads": max(1, row_reads)})
-                s.press(panel_focus_action); sl(settle_s)   # close; press nothing
-                return False
+            else:
+                # (2) POSITIVE POI/STATION VETO ONLY, via the raw registry-kind
+                # read (selected_row_kind_confirmed — no STAR-veto override;
+                # see D1/B1 for the localizer fix and D1/B2 for why this call,
+                # not detect_selected_row_star, is the right oracle here: a
+                # bare NON_STAR is NOT enough to refuse, only a CONFIDENT
+                # registry dock-kind match is). Row 0 is confirmed selected,
+                # so the highlight band IS row 0.
+                from ed_vision.navpanel_icons import selected_row_kind_confirmed
+                kind_verdict = {"action": "park", "kind": "", "score": 0.0}
+                for attempt in range(max(1, row_reads)):
+                    try:
+                        row_frame = frame_grabber()
+                        if row_frame is not None and ctx.frame_sink is not None:
+                            ctx.frame_sink(f"navstar_row0_{t0}_r{attempt}", row_frame)
+                        kind_verdict = selected_row_kind_confirmed(row_frame)
+                    except Exception as exc:  # noqa: BLE001 — CV error never refuses
+                        ctx.log("NavSupercruiseStarUnconfirmed",
+                                {"reason": "row_cv_error", "err": type(exc).__name__})
+                        kind_verdict = {"action": "park", "kind": "", "score": 0.0}
+                    if not (kind_verdict.get("action") == "dock"
+                            and kind_verdict.get("kind")):
+                        break             # no positive POI -> stop reading, assist
+                    sl(row_retry_s)       # positive POI read: re-confirm before veto
+                if kind_verdict.get("action") == "dock" and kind_verdict.get("kind"):
+                    ctx.log("NavSupercruiseStarRefused",
+                            {"reason": "row0_positive_poi",
+                             "kind": kind_verdict["kind"],
+                             "score": round(float(kind_verdict.get("score", 0.0)), 3),
+                             "reads": max(1, row_reads)})
+                    s.press(panel_focus_action); sl(settle_s)   # close; press nothing
+                    return False
         s.press("UI_Select"); sl(settle_s)           # open the star's detail page
         s.press("UI_Right"); sl(settle_s)            # onto the Supercruise Assist button
         if grabber is not None:
@@ -2201,10 +2266,19 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
                 ctx.log("NavSupercruiseStarAlreadyOn", {"label": read.text})
                 s.press(panel_focus_action); sl(settle_s)
                 return True
-            if read is None or read.button is not DetailButton.SC_ASSIST:
+            # D1/B2 (2026-07-07): refuse ONLY on a label POSITIVELY read as a
+            # DIFFERENT actionable button (e.g. LOCK/UNLOCK DESTINATION — a
+            # confidently classified control that is NOT Supercruise Assist).
+            # An unreadable label (read is None: grabber/CV exception) or an
+            # UNCLASSIFIED one (DetailButton.UNKNOWN: some text, but it
+            # matched no known pattern) is an ABSENCE of confirmation, not a
+            # contra-ID — blind-assist (legacy press), never refuse on it.
+            if (read is not None
+                    and read.button not in (DetailButton.SC_ASSIST,
+                                            DetailButton.UNKNOWN)):
                 ctx.log("NavSupercruiseStarRefused",
-                        {"reason": "label_not_sc_assist",
-                         "label": getattr(read, "text", None),
+                        {"reason": "label_positive_other_button",
+                         "label": read.text, "button": read.button.value,
                          "reads": max(1, label_reads)})
                 s.press(panel_focus_action); sl(settle_s)   # close; press nothing
                 return False

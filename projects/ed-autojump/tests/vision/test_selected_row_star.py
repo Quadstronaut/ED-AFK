@@ -9,6 +9,22 @@ two live 2026-07-06 refusal frames (tilt truncation, run 085221). Any future
 locator change must keep this table green — these ARE the operator's trained
 frames.
 
+D1/B1 FALSE-NEGATIVE FIX (2026-07-07, council-v2): navstar_row0_2004_r0.png
+pinned the live refusal (row0 = SYNUEFAI HT-P B39-5 A, confirmed selected,
+NONE/0.0). Root cause: frame capture is DEFAULT ON, so this grab caught the
+CV-debug overlay's OWN 'hit' box (green, #ff00cc44) still drawn over the row
+from a moment-earlier read. The box's green edges bridged the row's thin
+divider line into the star's own dark hole at BOTH the location stage
+(_strip_glyph) and the classify stage (_glyph_mask/_enclosed_dark), merging
+them into one oversized/border-touching blob that hid the true glyph. Fixed
+by excluding green-dominant pixels from the dark/glyph-candidate mask at both
+stages (_debug_box_green) plus widening the classify-crop margin
+(GLYPH_CLASSIFY_PAD 5->10) so the green-corrected glyph clears the crop
+border. Zero change on the 9 previously-validated frames below.
+navstar_row0_1994_r0.png (same session, UNEXPLORED reticle selected) is
+pinned informationally: NON_STAR, not a positive POI/station kind either —
+see test_nav_supercruise_star.py for the step-level ASSIST contract.
+
 Pure cv2 — no game, no OCR engine.
 """
 
@@ -43,6 +59,15 @@ CASES = [
     # and the pin — the only icon-sized blob left in scan — is (correctly)
     # excluded as blue-dominant. Rectification recovers the glyph.
     ("l32-8_arrival_row0_cyanpin_1080.png", STAR,  0.60),
+    # D1/B1 (2026-07-07): the pinned live false-negative -- row0 = SYNUEFAI
+    # HT-P B39-5 A, confirmed selected, refused NONE/0.0 before the debug-box
+    # green-exclusion fix. Acceptance floor is >=0.50 (STAR_CC_MIN); the fix
+    # actually lands at 0.74, comfortably clear.
+    ("navstar_row0_2004_r0.png", STAR, 0.50),
+    # Same session, UNEXPLORED reticle selected (honk unresolved). NOT a
+    # star -- and, per step_nav_supercruise_star's B2 contract, not a
+    # positive POI/station kind either, so the step ASSISTS row 0 anyway.
+    ("navstar_row0_1994_r0.png", NON_STAR, None),
 ]
 
 

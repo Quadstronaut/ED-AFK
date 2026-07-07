@@ -90,13 +90,32 @@ def build_determine_context(runner: Any) -> DetermineContext:
     )
 
 
+def _announce_no_route(runner: Any) -> None:
+    """LOUD legit-idle (2026-07-07 council: "make it LOUD" — this is the ONE
+    NoRouteOnStartup emission site, shared by the C-series idle path and the
+    legacy classifier's empty-route guard so both announce IDENTICALLY,
+    including on the console). Nothing plotted = genuinely nothing to fly —
+    this is NOT a strand (never-strand re-dispatch correctly leaves it alone,
+    per the OUT-OF-SCOPE note: 'NoRouteOnStartup legit-idle, make it LOUD')."""
+    msg = "[NO ROUTE] Plot a route and relaunch"
+    print(msg, flush=True)
+    if runner.record is not None:
+        runner.record("NoRouteOnStartup", {"system": runner._current_system})
+    if runner.overlay is not None:
+        try:
+            runner.overlay.event(msg)
+            runner.overlay.status("No route plotted. Idle.")
+        except Exception:              # noqa: BLE001 -- overlay is fail-soft
+            pass
+
+
 def _idle_side_effect(runner: Any, state: CSeriesState, label: Any) -> None:
     """Emit the named idle record/overlay for idle-mapped C-series states.
 
     DOCKED: noop (legacy 'nothing to escape', returns None with no side-effect).
     PARKED: record ParkedIdleNormalSpace — DISTINCT from the in-SC legacy
             RouteCompleteIdleOnRestart (AC6/PIN 1).
-    NO_ROUTE: reproduce legacy lines verbatim (record + fail-soft overlay).
+    NO_ROUTE: _announce_no_route (LOUD, shared with the legacy guard).
     """
     if state is CSeriesState.DOCKED:
         return                                           # noop — legacy 'nothing to escape'
@@ -106,14 +125,7 @@ def _idle_side_effect(runner: Any, state: CSeriesState, label: Any) -> None:
                           {"system": runner._current_system})
         return
     if state is CSeriesState.NO_ROUTE:
-        if runner.record is not None:
-            runner.record("NoRouteOnStartup", {"system": runner._current_system})
-        if runner.overlay is not None:
-            try:
-                runner.overlay.event("[NO ROUTE] Plot a route and relaunch")
-                runner.overlay.status("No route plotted. Idle.")
-            except Exception:                            # noqa: BLE001 — overlay is fail-soft
-                pass
+        _announce_no_route(runner)
         return
 
 
@@ -457,24 +469,22 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
         return "sc_resume"
 
     if runner._smacked and getattr(st, "fsd_cooldown", False):
-        # Restart while SMACKED (normal space, last SC transition was a
-        # massive-body drop, FSD cooldown STILL burning).
-        # OQ1 (pre-resolved): abstain when no CV-confirmed smack_kind is present.
-        # On a cold restart the escape vector may have already cleared from the HUD,
-        # so the CV cannot be read — the determination MUST abstain (no recovery).
-        # The existing flow (arrival/startup continuation) proceeds unchanged.
-        smack_kind = getattr(runner, "_smack_kind", None)
-        if smack_kind in ("star", "planet"):
-            runner._run("smack_recovery")
-            return "smack_recovery"
-        # No CV confirmation -> abstain. Fall through to route/startup logic.
-        # LOUD (2026-07-06): every smack abstain announces itself -- see the
-        # cv_unwired site in _route_sc_exit for the incident.
-        print("[SMACK?] restarted smacked (FSD cooldown live) -- no CV "
-              "confirmation, continuing normal boot", flush=True)
+        # ALWAYS-RECOVER (D2/C2, 2026-07-07 council -- no smack_kind/CV gate,
+        # aligned with _route_sc_exit's always-recover intent). Restart while
+        # SMACKED (normal space, last SC transition was a massive-body drop,
+        # FSD cooldown STILL burning) is smack evidence enough on its own.
+        # The PRIOR CV-confirmation gate abstained exactly when the escape
+        # vector had already cleared the HUD by restart time -- the SAME
+        # stranding class as _route_sc_exit's old cv_unwired abstain (live
+        # 2026-07-06 010444). smack_recovery's own steps degrade sensibly
+        # when _smack_kind is still unset (a cold restart never ran the
+        # CV-gated LIVE event route that would have set it -- backlog replay
+        # only updates state, it never dispatches).
         if runner.record is not None:
-            runner.record("SmackDeterminationAbstained",
-                          {"reason": "restart_no_cv", "fsd_cooldown": True})
+            runner.record("RestartSmackAlwaysRecover",
+                          {"smack_kind": getattr(runner, "_smack_kind", None)})
+        runner._run("smack_recovery")
+        return "smack_recovery"
     # EMPTY-ROUTE GUARD (2026-06-08 council, Wolf 359 fresh-login defect):
     # a normal-space fresh login with NO plotted route fell through to
     # startup, which flailed against a non-existent route.
@@ -482,14 +492,7 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
     nr = runner._navroute_state()
     route = getattr(nr, "route", None) if nr is not None else None
     if not route:                          # None / absent / [] -> no onward hop
-        if runner.record is not None:
-            runner.record("NoRouteOnStartup", {"system": runner._current_system})
-        if runner.overlay is not None:
-            try:
-                runner.overlay.event("[NO ROUTE] Plot a route and relaunch")
-                runner.overlay.status("No route plotted. Idle.")
-            except Exception:              # noqa: BLE001 -- overlay is fail-soft
-                pass
+        _announce_no_route(runner)
         return None
     return _run_startup_with_escape_override(runner)
 
@@ -1120,129 +1123,82 @@ def _route_fsd_jump(runner: Any, ev: Any) -> Optional[str]:
 def _route_sc_exit(runner: Any, ev: Any) -> Optional[str]:
     """Event route for SupercruiseExit at a Star or Planet.
 
-    Routes ALL smack determination through the escape-vector CV, FAIL-CLOSED.
-    Decision table (spec section 2):
-      Station body_type        -> early return None, never a smack.
-      Star/Planet, grabber None -> ABSTAIN (SmackDeterminationAbstained{cv_unwired}).
-      Star/Planet, token 'none' -> deliberate drop (SmackDeterminationNegative).
-      Star  + token 'blue'     -> StarSmackConfirmed  -> smack_recovery, kind='star'.
-      Planet + token 'purple'  -> PlanetSmackConfirmed -> smack_recovery, kind='planet'.
-      body/color mismatch      -> SmackDeterminationMismatch, ABSTAIN.
-      unknown token            -> SmackDeterminationAbstained{unknown_token}, ABSTAIN.
+    ALWAYS-RECOVER (D2/C2, 2026-07-07 council — REPEALS INV1/INV2). ANY
+    real-space Star/Planet SupercruiseExit dispatches smack_recovery,
+    unconditionally: grabber None => recover; token NONE => recover; a
+    mismatch/unknown token => recover. Worst case, smack_recovery's opening
+    moves (throttle, pitch star off, wait cooldown — v8, already built) are
+    safe no-ops on a deliberate drop. This is the correct trade under the
+    council's never-strand law (L2): the old CV-gated abstain was exactly
+    what stranded a ship in a gravity well not once but TWICE, LOUDLY, while
+    the operator watched (live runs 2026-07-06 010444 and 2026-07-07) —
+    "no CV evidence yet" is never grounds to leave the ship stuck.
 
-    INV1: a bare SupercruiseExit with no CV evidence is NOT a smack and MUST
-    NOT dispatch smack_recovery. INV2: grabber None (CV unwired) == abstain.
-    INV5: planet-smack is first-class — no longer silently dropped (BUG A fix).
+    Station body_type -> early return None, never a smack (unchanged).
+
+    The escape-vector CV (detect_escape_vector) is now STEER-ONLY: when the
+    grabber IS wired and returns a token that POSITIVELY matches the
+    journal's own body_type (blue+Star, purple+Planet), it REFINES
+    `_smack_kind` from the body_type default to the CV-confirmed kind. A
+    mismatch, an unknown token, or an unwired grabber leaves `_smack_kind` at
+    its body_type-derived default and is logged for observability only —
+    NONE of those outcomes ever block or delay the recovery dispatch below.
     """
     from ed_vision.escape_vector import detect_escape_vector, NONE as EV_NONE
     from ed_core.boot.primitives import classify_smack
 
     body_type = getattr(ev, "body_type", None)
 
-    # INV6: Station is never a smack — early return, no determination record.
+    # INV6 (kept): Station is never a smack — early return, no record.
     if body_type not in ("Star", "Planet"):
         return None
 
-    # OPERATOR WIRE-IN 2026-07-07 ("after me screaming in all caps to wire
-    # everything up it never occured to you to wire it up?" — live smack,
-    # loud abstain, ship idling in the gravity well AGAIN): the SAME cooldown
-    # rule the operator ratified for boot smacks applies to the LIVE drop —
-    # a Star/Planet drop with the FSD on COOLDOWN in real space IS a smack.
-    # A deliberate drop's brief cooldown could technically match, but during
-    # an AFK run there ARE no deliberate drops, and v8's opening moves
-    # (throttle, pitch star off, wait cooldown) are safe for a non-smack too.
-    # This SUPERSEDES the color-CV gate below as the primary confirm; the
-    # escape-vector color path remains for the kind refinement when wired.
-    fresh = getattr(runner, "_fresh_status", None)
-    st = fresh() if callable(fresh) else None
-    if st is None:
-        st = runner._latest_status
-    if (st is not None
-            and not getattr(st, "in_supercruise", False)
-            and (fsd_cooldown_blocked(st)
-                 or getattr(st, "fsd_cooldown", False))):
-        runner._event_times["drop"] = runner.clock()
-        kind = "star" if body_type == "Star" else "planet"
-        runner._smack_kind = kind
-        if runner.record is not None:
-            runner.record("StarSmackConfirmed" if kind == "star"
-                          else "PlanetSmackConfirmed",
-                          {"body_type": body_type, "via": "cooldown"})
-        print(f"[SMACK] dropped at {body_type} with FSD cooldown live -- "
-              f"dispatching smack_recovery", flush=True)
-        runner._run("smack_recovery")
-        return "smack_recovery"
-
-    # Check the injected escape-vector grabber (Optional[Callable[[], Any]],
-    # default None). Wired exactly like frame_grabber / station_menu_grabber:
-    # the attribute is set on the runner at construction time or by the
-    # operator's activate() hook; UNWIRED by default so determination abstains
-    # until the operator calibrates the CV (INV2).
-    grabber = getattr(runner, "_escape_vector_grabber", None)
-
-    if grabber is None:
-        # CV UNWIRED -> ABSTAIN. Never fire smack_recovery without CV evidence.
-        # LOUD ABSTAIN (live 2026-07-06, run 010444): the ship starsmacked,
-        # this abstain fired SILENTLY, and the bot idled with zero indication
-        # while the operator watched nothing happen for 78s. Abstaining is
-        # still correct (INV1/INV2) but it must never again be invisible.
-        msg = (f"[SMACK?] dropped at {body_type} -- smack CV unwired, "
-               f"NOT recovering (operator eyes needed)")
-        print(msg, flush=True)
-        if runner.overlay is not None:
-            try:
-                runner.overlay.event(msg)
-                runner.overlay.status(msg)   # persistent: stays on screen
-            except Exception:  # noqa: BLE001 -- overlay is fail-soft
-                pass
-        if runner.record is not None:
-            runner.record("SmackDeterminationAbstained",
-                          {"reason": "cv_unwired", "body_type": body_type})
-        return None
-
-    # Acquire a frame and classify.
-    frame = grabber()
-    token = detect_escape_vector(frame)
-    route = classify_smack(token)
-
-    if token == EV_NONE:
-        # Deliberate drop — no escape vector means NOT smacked.
-        if runner.record is not None:
-            runner.record("SmackDeterminationNegative",
-                          {"body_type": body_type, "token": token})
-        return None
-
-    # Mismatch check: color must agree with journal body_type (OQ2 default:
-    # FAIL-CLOSED abstain + record; never guess which signal wins, INV9).
-    expected_body = {"star": "Star", "planet": "Planet"}.get(route) if route else None
-    if route is not None and expected_body != body_type:
-        if runner.record is not None:
-            runner.record("SmackDeterminationMismatch",
-                          {"body_type": body_type, "token": token})
-        return None
-
-    if route is None:
-        # Unknown token -> fail-closed abstain.
-        if runner.record is not None:
-            runner.record("SmackDeterminationAbstained",
-                          {"reason": "unknown_token", "body_type": body_type,
-                           "token": token})
-        return None
-
-    # CV-confirmed smack. Set the drop time and thread body kind into the
-    # runner so recovery can read it (e.g. for a future color-aware CV step).
     runner._event_times["drop"] = runner.clock()
-    runner._smack_kind = route   # 'star' | 'planet' — read by smack_recovery steps
+    # Default kind straight from the journal's own body_type — ALWAYS valid,
+    # never depends on CV. The steer below may refine it; nothing below can
+    # ever leave it unset or block the dispatch.
+    runner._smack_kind = "star" if body_type == "Star" else "planet"
 
-    if route == "star":
+    # STEER (never gate): a wired grabber + a body_type-matching token
+    # refines _smack_kind. Anything else (unwired, NONE, mismatch, unknown)
+    # leaves the body_type-derived default standing — observability only.
+    grabber = getattr(runner, "_escape_vector_grabber", None)
+    if grabber is None:
         if runner.record is not None:
-            runner.record("StarSmackConfirmed",
-                          {"body_type": body_type, "token": token})
+            runner.record("SmackCvSteerUnwired", {"body_type": body_type})
     else:
-        if runner.record is not None:
-            runner.record("PlanetSmackConfirmed",
-                          {"body_type": body_type, "token": token})
+        try:
+            frame = grabber()
+            token = detect_escape_vector(frame)
+        except Exception as exc:  # noqa: BLE001 -- steer failure never blocks recovery
+            token = EV_NONE
+            if runner.record is not None:
+                runner.record("SmackCvSteerError",
+                              {"body_type": body_type, "error": repr(exc)})
+        else:
+            route = classify_smack(token)
+            expected_body = {"star": "Star", "planet": "Planet"}.get(route) if route else None
+            if route is not None and expected_body == body_type:
+                runner._smack_kind = route   # CV-confirmed refinement
+            elif token == EV_NONE:
+                if runner.record is not None:
+                    runner.record("SmackCvSteerNoVector", {"body_type": body_type})
+            elif route is not None:
+                if runner.record is not None:
+                    runner.record("SmackDeterminationMismatch",
+                                  {"body_type": body_type, "token": token})
+            else:
+                if runner.record is not None:
+                    runner.record("SmackDeterminationAbstained",
+                                  {"reason": "unknown_token", "body_type": body_type,
+                                   "token": token})
 
+    if runner.record is not None:
+        runner.record("StarSmackConfirmed" if runner._smack_kind == "star"
+                      else "PlanetSmackConfirmed",
+                      {"body_type": body_type, "kind": runner._smack_kind})
+    print(f"[SMACK] dropped at {body_type} -- dispatching smack_recovery "
+          f"(kind={runner._smack_kind})", flush=True)
     runner._run("smack_recovery")
     return "smack_recovery"
 
@@ -1298,6 +1254,71 @@ def _route_nav_route(runner: Any, ev: Any) -> Optional[str]:
                     {"station": runner._docked_station})
     runner._run("dock_resume")
     return "dock_resume"
+
+
+# ---------------------------------------------------------------------------
+# NEVER-STRAND re-dispatch driver (workstream A, 2026-07-07 council spec).
+# ---------------------------------------------------------------------------
+
+def redispatch_from_live_state(runner: Any) -> Optional[str]:
+    """The domain re-dispatch driver: wired to runner._redispatch_driver at
+    FlowRunner-construction time (cli.py — the SAME per-instance wiring
+    pattern as _escape_vector_grabber / navpanel_icon_grabber; there is no
+    runner instance yet when ed_autojump.activate() registers the module-
+    level classifier/event-route surfaces, so this hook cannot live there).
+
+    Called by FlowRunner.run_live's _maybe_redispatch whenever a required-
+    fail abort queued a re-dispatch and the bounded-backoff window elapsed.
+    Re-runs the SAME classification a fresh boot would, from LIVE
+    Status+journal state (NOT one-shot: runner._startup_done is untouched
+    here and this may fire any number of times across a session) — the
+    domain hook the ENTIRE strand inventory funnels through (nav_supercruise_
+    star refuse, engage_jump_clearance obscured, target_next_route watchdog,
+    engage_supercruise no-charge, dock deny, smack_recovery internal fails),
+    because every one of them ends in the SAME required-fail abort path.
+
+    Priority (mirrors classify_startup's own body, MINUS its one-shot guard
+    and minus the newer C-series scene_for path — the LEGACY gate alone is
+    deliberately reused here: simpler, battle-tested, and safe to invoke
+    repeatedly, unlike the C-series latches which are ARM/CONSUME-per-event
+    and not meant for arbitrary re-entry):
+      1. real-space + FSD cooldown still burning + undocked -> smack_recovery
+         (the SAME boot-time rule classify_startup applies at the top of its
+         own body, repeated here because this driver can fire independently
+         of any boot-time call having happened this session).
+      2. docked / in-supercruise (proximity gate: arrival vs sc_resume vs
+         parked-idle) / real-space-smacked-latch (ALWAYS-RECOVER, C2 repeal
+         of INV1/INV2) / real-space+route (startup) / real-space+no-route
+         (NoRouteOnStartup, LOUD legit-idle) — ALL owned by
+         _classify_startup_legacy, which is safe to call any number of times
+         (unlike classify_startup itself, whose one-shot guard this driver
+         must NOT trip).
+
+    Returns the dispatched procedure name (or a sentinel outcome string) for
+    observability/tests; callers do not need the return value."""
+    st = runner._fresh_status() if hasattr(runner, "_fresh_status") else None
+    if st is None:
+        st = getattr(runner, "_latest_status", None)
+    if st is None:
+        return None                          # no status yet -- try again next backoff
+
+    # Priority 1: the SAME boot-time cooldown rule classify_startup applies
+    # at its own top, independent of the _smacked latch (the drive itself
+    # may not have cleared yet, or the latch may be stale/unset).
+    if (not getattr(st, "in_supercruise", False)
+            and not getattr(st, "docked", False)
+            and (fsd_cooldown_blocked(st) or getattr(st, "fsd_cooldown", False))):
+        if runner.record is not None:
+            runner.record("RedispatchBootCooldownSmack",
+                          {"system": getattr(runner, "_current_system", None)})
+        runner._run("smack_recovery")
+        return "smack_recovery"
+
+    # Priorities 2-6: docked no-op / in-SC proximity gate / real-space
+    # ALWAYS-RECOVER smacked-latch / real-space+route startup / no-route
+    # LOUD idle -- entirely owned by _classify_startup_legacy (NOT one-shot;
+    # safe to call any number of times, unlike classify_startup itself).
+    return _classify_startup_legacy(runner, st)
 
 
 # ---------------------------------------------------------------------------

@@ -139,16 +139,21 @@ def test_gate_row0_unconfirmed_forces_close_over_far_read(monkeypatch):
     assert s.actions()[-1] == "FocusLeftPanel"
 
 
-def test_nav_star_row0_unconfirmed_refuses_no_select(monkeypatch):
-    """nav_supercruise_star: row-0 unconfirmed -> refuse, press NO UI_Select
-    (detail page never opened), open/close the panel once."""
+def test_nav_star_row0_unconfirmed_assists_known_position(monkeypatch):
+    """D1/B2 (2026-07-07, supersedes the pre-council refuse): row-0
+    UNCONFIRMED (brightness CV miss, not a position miss -- the recovery
+    inside _confirm_row0_selected already deterministically PINNED the
+    cursor to row 0 via HOLD-up) ASSISTS the known position instead of
+    refusing on it. UI_Select DOES fire (detail page opens, blind label path
+    since no detail grabber is wired here); open/close the panel once."""
     _script(monkeypatch, ["dark", "unreadable"])
     s = FakeSender()
     logs = []
     ctx = _ctx(s, logs)
-    assert STEP_REGISTRY["nav_supercruise_star"](ctx) is False
-    assert "UI_Select" not in s.actions()
+    assert STEP_REGISTRY["nav_supercruise_star"](ctx) is True
     assert s.actions()[0] == "FocusLeftPanel"
     assert s.actions()[-1] == "FocusLeftPanel"
-    assert any(n == "NavSupercruiseStarRefused" and p.get("reason") == "row0_unconfirmed"
+    assert "UI_Select" in s.actions()
+    assert any(n == "NavSupercruiseStarRowUnconfirmedAssisting"
+               and p.get("reason") == "row0_unconfirmed"
                for n, p in logs)
