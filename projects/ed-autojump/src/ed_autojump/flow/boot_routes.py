@@ -1143,6 +1143,36 @@ def _route_sc_exit(runner: Any, ev: Any) -> Optional[str]:
     if body_type not in ("Star", "Planet"):
         return None
 
+    # OPERATOR WIRE-IN 2026-07-07 ("after me screaming in all caps to wire
+    # everything up it never occured to you to wire it up?" — live smack,
+    # loud abstain, ship idling in the gravity well AGAIN): the SAME cooldown
+    # rule the operator ratified for boot smacks applies to the LIVE drop —
+    # a Star/Planet drop with the FSD on COOLDOWN in real space IS a smack.
+    # A deliberate drop's brief cooldown could technically match, but during
+    # an AFK run there ARE no deliberate drops, and v8's opening moves
+    # (throttle, pitch star off, wait cooldown) are safe for a non-smack too.
+    # This SUPERSEDES the color-CV gate below as the primary confirm; the
+    # escape-vector color path remains for the kind refinement when wired.
+    fresh = getattr(runner, "_fresh_status", None)
+    st = fresh() if callable(fresh) else None
+    if st is None:
+        st = runner._latest_status
+    if (st is not None
+            and not getattr(st, "in_supercruise", False)
+            and (fsd_cooldown_blocked(st)
+                 or getattr(st, "fsd_cooldown", False))):
+        runner._event_times["drop"] = runner.clock()
+        kind = "star" if body_type == "Star" else "planet"
+        runner._smack_kind = kind
+        if runner.record is not None:
+            runner.record("StarSmackConfirmed" if kind == "star"
+                          else "PlanetSmackConfirmed",
+                          {"body_type": body_type, "via": "cooldown"})
+        print(f"[SMACK] dropped at {body_type} with FSD cooldown live -- "
+              f"dispatching smack_recovery", flush=True)
+        runner._run("smack_recovery")
+        return "smack_recovery"
+
     # Check the injected escape-vector grabber (Optional[Callable[[], Any]],
     # default None). Wired exactly like frame_grabber / station_menu_grabber:
     # the attribute is set on the runner at construction time or by the
