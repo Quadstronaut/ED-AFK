@@ -51,13 +51,16 @@ def test_loop_runs_body_n_times_then_exits_via_skip_to():
 
     assert result.completed is True and result.aborted is False
     assert calls.count("nav_supercruise_unexplored") == N + 1   # N True + 1 False exit
-    assert calls.count("orient_compass") == N
+    # orient_compass: N loop-body passes + 1 in the operator's jump tail.
+    assert calls.count("orient_compass") == N + 1
     assert calls.count("confirm_sc_assist_active") == N
+    assert calls.count("confirm_orbiting") == N
     assert calls.count("wait_body_scanned") == N
-    # set_throttle runs twice per loop (body throttle 100 + back-edge throttle 0)
-    assert calls.count("set_throttle") == 2 * N
+    # set_throttle: 2 per loop (75 body + 0 back-edge) + 1 in the jump tail (100).
+    assert calls.count("set_throttle") == 2 * N + 1
     assert calls.count("target_next_route") == 1
-    assert calls[-1] == "target_next_route"
+    # OPERATOR LAYOUT 2026-07-07: exploration now carries its own jump tail.
+    assert calls[-1] == "engage_jump_clearance"
 
 
 def test_loop_immediate_terminator_exits_once_no_body():
@@ -71,7 +74,10 @@ def test_loop_immediate_terminator_exits_once_no_body():
     ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None)
     result = run_procedure(proc, ctx, registry=registry)
     assert result.completed is True
-    assert calls == ["nav_supercruise_unexplored", "target_next_route"]
+    # OPERATOR LAYOUT 2026-07-07: the skip_to exit runs the full jump tail.
+    assert calls == ["nav_supercruise_unexplored", "target_next_route",
+                     "orient_compass", "orient_widget_ring", "set_throttle",
+                     "engage_jump_clearance"]
 
 
 def test_loop_always_engaged_stops_at_loop_max_no_hang():
