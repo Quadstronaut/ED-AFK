@@ -1,6 +1,7 @@
 # TRAVERSAL — the steady-state A->B hyperspace hop. Operator-verbatim sequence
 # (MASTER-SPEC "Traversal"): wait 5s -> target_next_route -> set_throttle 100 ->
-# wait 3s -> orient_compass -> orient_widget_ring -> engage_jump_clearance.
+# wait 5s -> orient_compass -> orient_widget_ring -> engage_jump_clearance.
+# (both leading waits bumped 3s->5s per operator 2026-07-07.)
 #
 # STANDALONE procedure. There is NO goto / chaining primitive (model.py defines
 # only Step/OnRequiredFail/Procedure); inter-scene entry (how Arrival / Smack /
@@ -24,7 +25,7 @@
 
 # BLOCKED-ON-KYLE (carried from C5 design; NOT resolved in this build):
 #   B1 inter-scene ENTRY contract (C2-owned) — traversal built standalone here.
-#   B2 should `wait 3s` (idx 3) gate on an at-speed Status/journal signal?
+#   B2 should `wait 5s` (idx 3) gate on an at-speed Status/journal signal?
 #      Operator literal kept verbatim.
 #   B3 should `wait 5s` (idx 0) gate on an SC-assist/orbit-acquired signal
 #      (esp. the Smack->Traversal path)? Operator literal kept verbatim.
@@ -37,7 +38,7 @@ backoff_s = 2.0
 
 steps = [
   { action = "wait_sc_assist_orbiting" },
-  { action = "wait", s = 3.0 },
+  { action = "wait", s = 5.0 },
   { action = "target_next_route", required = true },
   { action = "set_throttle", pct = 100 },
   { action = "orient_compass", required = true },

@@ -40,7 +40,7 @@ steps = [
   { action = "orient_compass" },
   { action = "confirm_sc_assist_active" },
   { action = "confirm_orbiting" },
-  { action = "wait", s = 3.0 },
+  { action = "wait", s = 5.0 },
   { action = "wait_body_scanned" },
   { action = "set_throttle", pct = 0, loop_to = "nav_supercruise_unexplored", loop_max = 128 },
   { action = "target_next_route" },
