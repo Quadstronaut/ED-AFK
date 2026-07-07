@@ -119,10 +119,47 @@ def test_orient_inside_deadzone_no_press(monkeypatch):
     assert s.actions() == []                 # holding, no corrections
 
 
-def test_orient_marker_lost_fails_closed(monkeypatch):
+def test_orient_searches_by_pitch_while_charging(monkeypatch):
+    """Live fix 2026-07-07 (run 002437): a live charge with the marker
+    off-view SEARCHES — one pitch-up pulse per miss — instead of dying at
+    miss_limit. Unfound past the search budget -> fail closed."""
     monkeypatch.setattr(evm, "read_escape_vector_marker",
                         lambda f: _read(False))
     st = SimpleNamespace(in_supercruise=False, fsd_charging=True)
+    s = FakeSender()
+    logs = []
+    assert step_orient_escape_vector(_ctx(s, st, logs),
+                                     search_limit=5) is False
+    assert s.actions() == ["PitchUpButton"] * 4   # pulses 1..4, fail at 5
+    assert any(n == "OrientEscapeVector" and p.get("result") == "marker_lost"
+               for n, p in logs)
+
+
+def test_orient_search_finds_marker_then_entry(monkeypatch):
+    """The search pitch brings the marker into view -> normal centering ->
+    entry."""
+    st = SimpleNamespace(in_supercruise=False, fsd_charging=True)
+    calls = {"i": 0}
+
+    def fake(frame):
+        calls["i"] += 1
+        if calls["i"] <= 6:                       # two search iterations (3 samples each)
+            return _read(False)
+        if calls["i"] > 12:
+            st.in_supercruise = True
+        return _read(True, 5, 5)                  # found, centered
+    monkeypatch.setattr(evm, "read_escape_vector_marker", fake)
+    s = FakeSender()
+    assert step_orient_escape_vector(_ctx(s, st)) is True
+    assert s.actions().count("PitchUpButton") == 2   # the search pulses only
+
+
+def test_orient_marker_lost_no_charge_fails_without_search(monkeypatch):
+    """No live charge = no vector exists — no search pitching, plain
+    miss_limit fail."""
+    monkeypatch.setattr(evm, "read_escape_vector_marker",
+                        lambda f: _read(False))
+    st = SimpleNamespace(in_supercruise=False, fsd_charging=False)
     s = FakeSender()
     logs = []
     assert step_orient_escape_vector(_ctx(s, st, logs),
