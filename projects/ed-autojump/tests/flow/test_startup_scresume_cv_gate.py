@@ -306,15 +306,17 @@ def test_startup_rewired_shape():
 
 
 def test_sc_resume_rewired_shape():
-    """OPERATOR LAYOUT 2026-07-07: gate first (already in SC — no SC entry),
-    star assist, orbit wait, hop lock, 75% orient, 100% jump."""
+    """OPERATOR LAYOUT 2026-07-07 + 2026-07-11 pacing wait: gate first
+    (already in SC — no SC entry), star assist, orbit wait, 7s settle
+    (operator: near-star resume needs the pace), hop lock, 75% orient,
+    100% jump."""
     proc, actions = _shape("sc_resume")
     assert actions == [
         "star_distance_gate", "nav_supercruise_star", "wait_sc_assist_orbiting",
-        "target_next_route", "set_throttle", "orient_compass",
+        "wait", "target_next_route", "set_throttle", "orient_compass",
         "orient_widget_ring", "set_throttle", "engage_jump_clearance",
     ]
-    for gone in ("nav_panel_target", "sc_assist_orbit", "wait",
+    for gone in ("nav_panel_target", "sc_assist_orbit",
                  "engage_jump", "hold_alignment", "engage_supercruise"):
         assert gone not in actions
     assert proc.steps[0].skip_to == "target_next_route"

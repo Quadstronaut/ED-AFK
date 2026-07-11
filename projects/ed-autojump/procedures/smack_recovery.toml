@@ -54,6 +54,7 @@ steps = [
   { action = "nav_supercruise_star", required = true },
   { action = "wait_sc_assist_orbiting" },
   { action = "confirm_orbiting" },
+  { action = "wait", s = 5.0 },
   { action = "target_next_route", required = true, retry_anchor = true },
   { action = "set_throttle", pct = 75 },
   { action = "wait", s = 5.0 },

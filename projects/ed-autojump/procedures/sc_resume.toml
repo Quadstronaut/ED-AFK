@@ -47,6 +47,7 @@ steps = [
   { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 10.0 },
   { action = "nav_supercruise_star", required = true },
   { action = "wait_sc_assist_orbiting" },
+  { action = "wait", s = 7.0 },
   { action = "target_next_route", required = true },
   { action = "set_throttle", pct = 75 },
   { action = "orient_compass", required = true },

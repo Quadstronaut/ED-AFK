@@ -73,11 +73,11 @@ def test_required_flags_match_the_contract():
 # ---- AC-4: operator literals -----------------------------------------------
 
 def test_operator_literal_params_preserved():
-    """AC-4 (INV-3): the 5s pacing wait (bumped from 3s -> 5s, operator
-    2026-07-07 "bump all 3s step waits to 5s", commit 38c4568) and
+    """AC-4 (INV-3): the pacing wait (3s -> 5s @38c4568, -> 7s operator
+    2026-07-11 "slower pc will definitely not perform as well") and
     throttle=100 are byte-faithful to the operator's authored values."""
     proc = _traversal()
-    assert proc.steps[1].action == "wait" and proc.steps[1].params["s"] == 5.0
+    assert proc.steps[1].action == "wait" and proc.steps[1].params["s"] == 7.0
     assert proc.steps[3].action == "set_throttle" and proc.steps[3].params["pct"] == 100
 
 

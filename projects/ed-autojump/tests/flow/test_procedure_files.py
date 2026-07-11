@@ -57,10 +57,10 @@ def test_arrival_is_exactly_throttle_scoop_star():
     assert [s.action for s in arrival.steps] == [
         "set_throttle", "scoop_refuel", "nav_supercruise_star"]
     scoop = next(s for s in arrival.steps if s.action == "scoop_refuel")
-    # OPERATOR 2026-07-06 final: 0.75 = scoop under three-quarter tank
-    # (supersedes same-day 1.0 restore; council-A's 0.50 drained tank live).
-    # The destination top-off (0.99) stays in route_complete_park.toml.
-    assert scoop.params.get("refuel_below") == 0.75
+    # OPERATOR 2026-07-11 retune: 0.65 (was 0.75 on 07-06; council-A's 0.50
+    # drained the tank live). Destination top-off (0.99) stays in
+    # route_complete_park.toml.
+    assert scoop.params.get("refuel_below") == 0.65
     star = next(s for s in arrival.steps if s.action == "nav_supercruise_star")
     assert star.required is True
     assert arrival.parallel_tracks == ("honk",)
