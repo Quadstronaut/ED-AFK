@@ -28,6 +28,22 @@ class ProcedureResult:
     steps: list[StepResult] = field(default_factory=list)
 
 
+def _reassert_focus(ctx: StepContext, at: str) -> None:
+    """OPERATOR RULING 2026-07-11: re-assert ED window foreground whenever an
+    error state is set (retry/abort) — not before every keypress ("overkill").
+    Overnight run 094825: a stolen foreground ate keypresses for 4.8 h; the
+    first retry's re-assert would have recovered it. Fail-soft, logged, no-op
+    when unwired (tests / keys-off runs)."""
+    fr = getattr(ctx, "focus_reassert", None)
+    if fr is None:
+        return
+    try:
+        ok = bool(fr())
+    except Exception:  # noqa: BLE001 — focus is best-effort, never fatal
+        ok = False
+    ctx.log("FocusReassert", {"ok": ok, "at": at})
+
+
 def run_procedure(
     proc: Procedure,
     ctx: StepContext,
@@ -206,6 +222,7 @@ def run_procedure(
                         {"procedure": proc.name, "failed": step.action,
                          "resume_at": proc.steps[target].action,
                          "resume_index": target, "retries": result.retries})
+                _reassert_focus(ctx, "procedure_retry")
                 if policy.backoff_s > 0:
                     ctx.sleeper(policy.backoff_s)
                 i = target
@@ -213,6 +230,7 @@ def run_procedure(
             result.aborted = True
             ctx.log("ProcedureAborted",
                     {"procedure": proc.name, "at": step.action, "retries": result.retries})
+            _reassert_focus(ctx, "procedure_aborted")
             return result
         i += 1
 

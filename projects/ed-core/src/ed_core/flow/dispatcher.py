@@ -169,6 +169,11 @@ class FlowRunner:
         # to a LOUD bounded idle: the backoff/attempt mechanics still run and are
         # testable via an injected fake driver, but nothing actually re-dispatches.
         redispatch_driver: Optional[Callable[["FlowRunner"], None]] = None,
+        # OPERATOR RULING 2026-07-11: re-assert ED window foreground at every
+        # error state (retry/abort via ctx.focus_reassert, strand-guard
+        # redispatch here) — never before every keypress ("overkill"). cli
+        # wires launcher.focus.focus_ed_window when --engage-keys.
+        focus_reassert: Optional[Callable[[], bool]] = None,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -301,6 +306,7 @@ class FlowRunner:
         # no added delay beyond the poll cadence (no-idling law, L2).
         self._redispatch_next_t: float = 0.0
         self._redispatch_driver = redispatch_driver
+        self.focus_reassert = focus_reassert
         # Single tail consumer + fan-out (see _TailHub). None without a tail.
         self._hub: Optional[_TailHub] = (
             _TailHub(tail, on_event=self._on_tail_event) if tail is not None else None)
@@ -614,6 +620,7 @@ class FlowRunner:
             in_witchspace=lambda: self._in_witchspace,
             record=self.record,
             frame_sink=self.frame_sink,
+            focus_reassert=self.focus_reassert,
         )
         ctx._tail_handle = handle   # for _run's unsubscribe; None without a tail
 
@@ -1163,6 +1170,17 @@ class FlowRunner:
             self.record("RedispatchAttempt",
                         {"attempt": self._redispatch_attempts, "backoff_s": backoff})
         self._needs_redispatch = False
+        # OPERATOR RULING 2026-07-11: re-assert ED foreground before the
+        # re-dispatch drives — overnight run 094825 spent 4.8 h pressing keys
+        # into a stolen focus; this recovers it at the first strand-guard
+        # window. Fail-soft, logged, no-op when unwired.
+        if self.focus_reassert is not None:
+            try:
+                _focus_ok = bool(self.focus_reassert())
+            except Exception:  # noqa: BLE001 — focus is best-effort, never fatal
+                _focus_ok = False
+            if self.record is not None:
+                self.record("FocusReassert", {"ok": _focus_ok, "at": "redispatch"})
         driver = self._redispatch_driver
         if driver is None:
             # UNWIRED: LOUD bounded idle (still testable — see docstring).

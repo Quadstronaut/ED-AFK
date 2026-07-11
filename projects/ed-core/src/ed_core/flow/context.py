@@ -131,6 +131,16 @@ class StepContext:
     # be running with the ship parked). None -> frames are not retained.
     frame_sink: Optional[Callable[[str, Any], None]] = None
 
+    # Focus re-assert hook (OPERATOR RULING 2026-07-11): fired whenever an
+    # error state is set (ProcedureRetry / ProcedureAborted / strand-guard
+    # redispatch) — SendInput delivers to the FOREGROUND window, and the
+    # overnight run 094825 pressed keys into a stolen focus for 4.8 hours;
+    # a re-assert at the FIRST failure would have recovered it at cycle 1.
+    # Deliberately NOT before every keypress (operator: "refiring it all the
+    # time seems harmless but also overkill"). cli wires
+    # launcher.focus.focus_ed_window when --engage-keys; None -> no-op.
+    focus_reassert: Optional[Callable[[], bool]] = None
+
     # widget-ring fine-align vision. widget_frame_grabber is the CENTRE-CROP
     # .grab — distinct from frame_grabber, which is the compass-region crop.
     # widget_ring_on_miss: "degrade" (default — a miss skips the fine pass,
