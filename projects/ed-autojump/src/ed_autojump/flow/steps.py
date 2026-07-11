@@ -1938,10 +1938,6 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
             ctx.log("StarDistanceGate", {"verdict": "close",
                                          "reason": "row0_unconfirmed"})
             return True                              # fail-closed: get-around
-        # Anchor the distance OCR crop on the CONFIRMED row-0 y (closes the
-        # "LOCATION | FILTERS ACTIVE" summary-distance hazard sitting one row
-        # ABOVE row 0, inside the fixed top-of-panel crop).
-        row_y = conf.read.row_y if conf.read is not None else None
         try:
             frame = grabber()
         except Exception:  # noqa: BLE001 — grab failure -> frame None -> unreadable
@@ -1952,9 +1948,31 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
         ctx.log("BindMissing", {"step": "star_distance_gate"})
         return True                                  # fail-closed: get-around
     # Frame capture DEFAULT ON (operator order 2026-07-06): every CV read
-    # dumps its frame so a bad verdict is diagnosable offline, always.
+    # dumps its frame so a bad verdict is diagnosable offline, always — dumped
+    # BEFORE any verdict-bearing read of it.
     if frame is not None and ctx.frame_sink is not None:
         ctx.frame_sink(f"stargate_{int(ctx.clock())}", frame)
+    # SAME-FRAME ANCHOR (live G8, session 090913 2026-07-11): the confirm's
+    # row_y belongs to the confirm's OWN grab — the panel floats with head/
+    # ship attitude (header_y 448->418 in ~1 s live), so applying it to THIS
+    # grab put the crop a full row down and read 474 Ls for a 1.60 Ls star
+    # (false FAR -> burn lane). Re-read row 0 on the gate's own frame; the
+    # confirm above keeps press authority (pin/recovery), this read presses
+    # nothing. Row 0 not bright on THIS frame -> no anchor is trustworthy ->
+    # CLOSE lane.
+    row_y = None
+    if frame is not None:
+        try:
+            from ed_vision.navpanel_row0 import read_row0_selected
+            own = read_row0_selected(frame)
+            if own.state == "bright":
+                row_y = own.row_y
+        except Exception:  # noqa: BLE001 — fail-soft; row_y stays None
+            row_y = None
+    if row_y is None:
+        ctx.log("StarDistanceGate", {"verdict": "close",
+                                     "reason": "row0_moved"})
+        return True                                  # fail-closed: get-around
     try:
         from ed_vision.navpanel_reader import read_first_row_distance_ls
         ls = read_first_row_distance_ls(frame, row_y=row_y)
