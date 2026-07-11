@@ -207,6 +207,7 @@ def step_engage_jump_clearance(
     max_jump_polls: int = 12,
     max_charge_polls: int = 75,  # LIVE FIX 2026-07-06 — 75*0.8s = the 60s operator watchdog class
     max_clear_attempts: int = 3,
+    max_sc_entry_polls: int = 25,  # G19: realspace obscured -> SC-entry wait ceiling (~20s @0.8s)
     clear_burn_s: float = 7.0,   # post-orbit-engage settle pacing (D3: was the straight-burn duration)
     retry_throttle_pct: int = 100,  # noqa: ARG001 — SetSpeed100 hardcoded per spec; kept for TOML knob
 ) -> bool:
@@ -249,10 +250,12 @@ def step_engage_jump_clearance(
           occluded target clears, then RETRY from C1. THROTTLE FAIL-CLOSED:
           this edge NEVER issues SetSpeed100 toward/into the body — the OLD
           pitch-away-then-forward-burn could ram a jump target hidden BEHIND
-          the star (memory obscured-jump-ram). If the get-around cannot even
-          run (not in supercruise — the ONE structural precondition an
-          SC-assist orbit needs; a bind is missing; cockpit focus is stuck),
-          BAIL: return False WITH NO THROTTLE AT ALL, routing to never-strand
+          the star (memory obscured-jump-ram). REALSPACE (G19, operator order
+          2026-07-11): not in supercruise -> ENTER IT first (throttle already
+          100 from C1; bounded max_sc_entry_polls wait) then orbit — the
+          live-validated startup CLOSE-lane sequence. Entry fails / no
+          status / a bind is missing / cockpit focus is stuck -> BAIL:
+          return False with no further press, routing to never-strand
           (workstream A) rather than ramming forward blind.
       C6  CEILING ABORT: max_clear_attempts move+retry cycles; ceiling with no
           StartJump -> log EngageJumpClearanceAborted{reason:'obstruction_ceiling'}
@@ -381,16 +384,47 @@ def step_engage_jump_clearance(
         #
         # The ONE structural precondition an SC-assist orbit needs is
         # supercruise itself (the mechanic doesn't exist in normal space).
-        # No status / not in supercruise -> the get-around CANNOT run at
-        # all: BAIL immediately, NO throttle press of any kind. This is a
-        # required step, so the bail routes to never-strand (workstream A)
-        # instead of ramming forward on a guess.
+        # No status at all -> nothing is knowable: BAIL, no press of any
+        # kind, route to never-strand.
         st = ctx.status_supplier()
-        if st is None or not getattr(st, "in_supercruise", False):
+        if st is None:
             ctx.log("EngageJumpClearanceAborted",
                     {"reason": "getaround_unavailable", "attempt": attempt,
-                     "cause": "not_in_supercruise"})
+                     "cause": "no_status"})
             return False
+        if not getattr(st, "in_supercruise", False):
+            # G19 (operator order 2026-07-11, session 090913): a REALSPACE
+            # obscured jump used to dead-end right here — the FAR-lane start
+            # pressed jump from normal space at a target behind the star and
+            # had no escape (getaround_unavailable). ENTER SUPERCRUISE FIRST:
+            # throttle is already 100 from this attempt's own C1 press (ED
+            # refuses entry at zero throttle — live finding 1), and the very
+            # next act after entry is the SC-assist ORBIT press, i.e. the
+            # exact sequence of the live-validated startup CLOSE lane (SC
+            # entry -> row-0 orbit assist) — never a free burn at the star.
+            # Entry refused / never completes (exclusion zone, cooldown,
+            # wedged FSD) -> bail with zero further presses; the required-
+            # fail routes to never-strand / the live smack dispatch.
+            ctx.log("EngageJumpClearanceScEntry", {"attempt": attempt})
+            if not _press(ctx, "Supercruise"):
+                return False
+            entry_ceiling = max(1, int(max_sc_entry_polls))
+            entry_polls = 0
+            while True:
+                if ctx.should_abort():
+                    ctx.log("EngageJumpClearanceAborted",
+                            {"reason": "abort", "attempt": attempt})
+                    return False
+                st = ctx.status_supplier()
+                if st is not None and getattr(st, "in_supercruise", False):
+                    break
+                entry_polls += 1
+                if entry_polls >= entry_ceiling:
+                    ctx.log("EngageJumpClearanceAborted",
+                            {"reason": "getaround_unavailable",
+                             "attempt": attempt, "cause": "sc_entry_failed"})
+                    return False
+                ctx.sleeper(poll_s)
         if not _ensure_cockpit_focus(ctx):
             ctx.log("EngageJumpClearanceAborted",
                     {"reason": "getaround_unavailable", "attempt": attempt,
