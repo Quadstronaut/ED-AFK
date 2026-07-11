@@ -3,25 +3,25 @@
 # an onward hop. DISTINCT procedure / distinct overlay label — NOT a traversal
 # alias.
 #
-# Operator-authored intent (MASTER-SPEC):
+# Operator-authored intent (MASTER-SPEC, jump tail per the operator's
+# 2026-07-07 reorg 70c248e):
 #   1. nav_supercruise_unexplored  (LOOP until the `✦` system icon is at the row
 #      selector — the list-bottom terminator)
-#   2. -> Traversal
+#   2. -> the terminal jump tail BELOW (target/orient/jump)
 #
 # The LOOP is the SCENE's job, not the step's (council #4): nav_supercruise_
 # unexplored does ONE body per call and the interpreter's loop_to back-edge
 # repeats the between-body body (throttle/orient/confirm/wait) until the step
-# returns False on the `✦` terminator (or an unreadable list). There is NO jump
-# step here — a jump inside exploration would re-create the double-jump. The
-# onward hop is fired by TRAVERSAL, which run_arrival_then_branch chains
-# UNCONDITIONALLY after this proc completes (C2-D5).
+# returns False on the `✦` terminator (or an unreadable list). The tour then
+# jumps out ITSELF via the terminal tail — the old C2-D5 exploration->traversal
+# chain was REMOVED (G2, 2026-07-11): it double-pressed this tail's jump keys.
+# Exploration is a TERMINAL branch, exactly like docking and traversal.
 #
-# BEST-EFFORT by design (D-D): NO required steps. The loop's correctness rests on
+# BEST-EFFORT loop, REQUIRED tail: the loop's correctness rests on
 #   (a) nav_supercruise_unexplored's skip_to="target_next_route" exit on False,
 #   (b) the loop_max cap on the set_throttle back-edge (fail-closed budget),
 #   (c) should_abort, checked every step by the interpreter.
-# Any read failure exits the loop and jumps on — never drives blind. Traversal
-# (chained after) owns the REQUIRED target/orient/jump.
+# Any read failure exits the loop and jumps on — never drives blind.
 #
 # BLOCKED-ON-KYLE carried, not resolved:
 #   BK-1  wait_body_scanned gates on the AutoScan seq-advance; confirm AutoScan

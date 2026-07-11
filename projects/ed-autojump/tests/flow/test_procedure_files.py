@@ -76,8 +76,8 @@ def test_exploration_loads_and_is_a_bounded_loop():
     nav_supercruise_unexplored, and the operator's own jump tail
     (orient -> widget -> throttle 100 -> engage_jump_clearance) is TERMINAL —
     the tour jumps out itself now (supersedes the no-jump-in-exploration
-    contract; the orchestrator's exploration->traversal chain is redundant
-    but harmless: traversal re-locks and the clearance loop fails closed)."""
+    contract; the orchestrator's exploration->traversal chain was REMOVED
+    (G2, 2026-07-11) — it double-pressed this tail's jump keys)."""
     exp = load_procedures(PROC_DIR)["exploration"]
     head = next(s for s in exp.steps if s.action == "nav_supercruise_unexplored")
     assert head.skip_to == "target_next_route"

@@ -293,15 +293,17 @@ def test_clean_arrival_branches():
 
 
 # ===========================================================================
-# Group C2 — Exploration -> Traversal UNCONDITIONAL onward chain (C2-D5, the
-# GAP this council closes). run_arrival_then_branch chains traversal AFTER the
-# exploration proc completes (exploration itself never jumps).
+# Group C2 — Exploration is a TERMINAL branch (G2, operator 2026-07-11 —
+# REPEALS the C2-D5 unconditional exploration->traversal chain). The operator's
+# 2026-07-07 toml reorg (70c248e) gave exploration.toml its own terminal jump
+# tail; chaining traversal after it pressed the SAME jump-tail keys a second
+# time, possibly mid-hyperspace-tunnel.
 # ===========================================================================
 
 class _SmackOnExplorationRunner(_Runner):
     """A runner whose EXPLORATION tour lands a smack: _run('exploration') sets
-    the smack/preempt flags. Proves the chained traversal hop is suppressed when
-    a smack lands mid-tour (yields to _route_sc_exit, never the exclusion zone)."""
+    the smack/preempt flags. The tour must still yield to _route_sc_exit
+    (never the exclusion zone) — unchanged by the G2 chain removal."""
 
     def _run(self, name: str) -> None:
         super()._run(name)
@@ -310,14 +312,16 @@ class _SmackOnExplorationRunner(_Runner):
             self._preempt = "star_smack"
 
 
-def test_clean_arrival_exploration_on_chains_through_traversal():
-    # Onward hop + body_tour_enabled=True -> arrival, exploration, THEN traversal.
+def test_clean_arrival_exploration_on_is_terminal_no_traversal_chain():
+    # Onward hop + body_tour_enabled=True -> arrival, exploration. NOTHING
+    # after: exploration.toml owns its own jump tail (G2 — the old chained
+    # traversal double-pressed the jump keys).
     r = _Runner(
         status=_status(dest_name="Next", dest_body=0, dest_system=99),
         navroute=_route((SYS, SYS_ADDR), ("Next", 99)),
         body_tour_enabled=True)
     assert run_arrival_then_branch(r) == "arrival"
-    assert r.dispatched == ["arrival", "exploration", "traversal"]
+    assert r.dispatched == ["arrival", "exploration"]
 
 
 def test_clean_arrival_exploration_off_dispatches_arrival_traversal():
@@ -338,10 +342,10 @@ def test_empty_route_dispatches_arrival_then_dock():
     assert r.dispatched == ["arrival", "dock"]
 
 
-def test_smack_mid_exploration_suppresses_the_traversal_chain():
-    # A smack landing DURING the exploration tour suppresses the onward traversal
-    # hop: only [arrival, exploration] dispatched, runner left flagged for
-    # _route_sc_exit. The bot can never branch into the exclusion zone from a tour.
+def test_smack_mid_exploration_leaves_runner_flagged_for_sc_exit():
+    # A smack landing DURING the exploration tour: only [arrival, exploration]
+    # dispatched, runner left flagged for _route_sc_exit. (Trivially no chain
+    # since G2, but the smack flags must survive the branch untouched.)
     r = _SmackOnExplorationRunner(
         status=_status(dest_name="Next", dest_body=0, dest_system=99),
         navroute=_route((SYS, SYS_ADDR), ("Next", 99)),
