@@ -2175,8 +2175,9 @@ def step_wait_body_scanned(ctx: StepContext, *, poll_s: float = 0.5,
 
 def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
                               panel_focus_action: str = "FocusLeftPanel",
-                              label_reads: int = 5,
+                              label_reads: int = 2,
                               label_retry_s: float = 0.5,
+                              bar_walk_max: int = 5,
                               row_reads: int = 3,
                               row_retry_s: float = 0.5) -> bool:
     """SC-assist the ARRIVAL STAR (nav-panel row 0) — with a CV POSITIVE-POI
@@ -2205,18 +2206,16 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
     cursor to row 0 via a HOLD-up (cursor-mechanics memory: a hold always
     saturates at the top regardless of what the brightness CV can confirm).
 
-    LABEL CONFIRM with IN-STEP RE-READS (live findings 3/5): a transient bad
-    label read used to fail the whole step -> full panel close + procedure
-    retry — the operator-hated "opened the star's properties 3 times doing
-    nothing". Now the label is re-read up to `label_reads` times (bounded
-    read-count, `label_retry_s` apart) with the pane open before refusing,
-    the RAW OCR text is logged on every refusal, and every read's frame is
-    dumped (frame capture DEFAULT ON, operator order 2026-07-06).
-    DEACTIVATE label = the assist is ALREADY ON = the step's goal state ->
-    close and succeed (pressing would turn it OFF). D1/B2: the label refuse
-    is likewise POSITIVE-ONLY — an unreadable/unclassified label blind-
-    assists (legacy); only a label confidently read as a DIFFERENT actionable
-    button (e.g. LOCK/UNLOCK DESTINATION) vetoes.
+    LABEL CONFIRM = BUTTON-BAR WALK (operator, LIVE 2026-07-11 22:34 —
+    supersedes the D1/B2 "unreadable label blind-assists" clause): the bar
+    layout is not fixed; a blind press on an unverified slot opened the
+    SYSTEM MAP twice live. The step reads the label at the cursor position
+    (up to `label_reads` in-place re-reads for transients), steps UI_Right
+    between positions (`bar_walk_max` positions total), and presses ONLY a
+    label positively read as SC ASSIST. DEACTIVATE = already on = goal state
+    -> close, succeed. Nothing found on the whole bar -> close and refuse
+    with NO press (never-strand owns the retry). RAW OCR text logged on
+    refusal; every read's frame dumped (frame capture DEFAULT ON).
 
     Fail-soft / no regression: no detail grabber wired -> press blind (legacy).
     KeyError (unbound) -> False. A mid-macro emergency drop (out of
@@ -2295,43 +2294,58 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
                     s.press(panel_focus_action); sl(settle_s)   # close; press nothing
                     return False
         s.press("UI_Select"); sl(settle_s)           # open the star's detail page
-        s.press("UI_Right"); sl(settle_s)            # onto the Supercruise Assist button
+        s.press("UI_Right"); sl(settle_s)            # onto the usual SC-assist slot
         if grabber is not None:
+            # BUTTON-BAR WALK (operator, LIVE 2026-07-11 22:34 — supersedes
+            # the D1/B2 "unreadable label blind-assists" clause): the bar's
+            # layout is NOT fixed. The cursor landed on SYSTEM MAP, the label
+            # read UNKNOWN, and the legacy blind press OPENED THE SYSTEM MAP
+            # (twice) — every downstream CV read went garbage. NEVER press a
+            # button the CV didn't POSITIVELY read as Supercruise Assist:
+            # read the label at each position, step UI_Right between reads
+            # (bounded bar_walk_max positions), and press ONLY on a confirmed
+            # SC ASSIST. SC DEACTIVATE = assist already on = goal state.
+            # Nothing found across the whole bar -> close and refuse WITHOUT
+            # pressing — never-strand re-dispatch owns the retry; a wrong
+            # press wrecks the scene worse than a refuse ever can. The
+            # grabber-unwired path below keeps the legacy blind macro (no CV
+            # exists to verify with — cli gates that wiring on WinRT).
             from ed_vision.navpanel_detail import DetailButton, read_detail_button_label
-            read = None
-            for attempt in range(max(1, label_reads)):
-                try:
-                    lbl_frame = grabber()
-                    if lbl_frame is not None and ctx.frame_sink is not None:
-                        ctx.frame_sink(f"navstar_label_{t0}_r{attempt}", lbl_frame)
-                    read = read_detail_button_label(lbl_frame)
-                except Exception as exc:  # noqa: BLE001 — grabber/CV error
-                    ctx.log("NavSupercruiseStarUnconfirmed",
-                            {"reason": "cv_error", "err": type(exc).__name__})
-                    read = None
-                if read is not None and read.button in (DetailButton.SC_ASSIST,
-                                                        DetailButton.SC_DEACTIVATE):
+            found = False
+            last_text, last_button = "", "none"
+            for walk_i in range(max(1, bar_walk_max)):
+                read = None
+                for attempt in range(max(1, label_reads)):
+                    try:
+                        lbl_frame = grabber()
+                        if lbl_frame is not None and ctx.frame_sink is not None:
+                            ctx.frame_sink(
+                                f"navstar_label_{t0}_w{walk_i}_r{attempt}", lbl_frame)
+                        read = read_detail_button_label(lbl_frame)
+                    except Exception as exc:  # noqa: BLE001 — grabber/CV error
+                        ctx.log("NavSupercruiseStarUnconfirmed",
+                                {"reason": "cv_error", "err": type(exc).__name__})
+                        read = None
+                    if read is not None and read.button is not DetailButton.UNKNOWN:
+                        break                        # readable: no in-place re-read needed
+                    sl(label_retry_s)                # transient artifact: re-read in place
+                if read is not None:
+                    last_text, last_button = read.text, read.button.value
+                if read is not None and read.button is DetailButton.SC_DEACTIVATE:
+                    # Assist ALREADY ON — the goal state. A press would turn it off.
+                    ctx.log("NavSupercruiseStarAlreadyOn", {"label": read.text})
+                    s.press(panel_focus_action); sl(settle_s)
+                    return True
+                if read is not None and read.button is DetailButton.SC_ASSIST:
+                    found = True
                     break
-                sl(label_retry_s)                    # transient artifact: re-read in place
-            if read is not None and read.button is DetailButton.SC_DEACTIVATE:
-                # Assist ALREADY ON — the goal state. A press would turn it off.
-                ctx.log("NavSupercruiseStarAlreadyOn", {"label": read.text})
-                s.press(panel_focus_action); sl(settle_s)
-                return True
-            # D1/B2 (2026-07-07): refuse ONLY on a label POSITIVELY read as a
-            # DIFFERENT actionable button (e.g. LOCK/UNLOCK DESTINATION — a
-            # confidently classified control that is NOT Supercruise Assist).
-            # An unreadable label (read is None: grabber/CV exception) or an
-            # UNCLASSIFIED one (DetailButton.UNKNOWN: some text, but it
-            # matched no known pattern) is an ABSENCE of confirmation, not a
-            # contra-ID — blind-assist (legacy press), never refuse on it.
-            if (read is not None
-                    and read.button not in (DetailButton.SC_ASSIST,
-                                            DetailButton.UNKNOWN)):
+                if walk_i + 1 < max(1, bar_walk_max):
+                    s.press("UI_Right"); sl(settle_s)   # next button on the bar
+            if not found:
                 ctx.log("NavSupercruiseStarRefused",
-                        {"reason": "label_positive_other_button",
-                         "label": read.text, "button": read.button.value,
-                         "reads": max(1, label_reads)})
+                        {"reason": "sc_assist_button_not_found",
+                         "last_label": last_text, "last_button": last_button,
+                         "positions": max(1, bar_walk_max)})
                 s.press(panel_focus_action); sl(settle_s)   # close; press nothing
                 return False
         s.press("UI_Select"); sl(settle_s)           # engage Supercruise Assist

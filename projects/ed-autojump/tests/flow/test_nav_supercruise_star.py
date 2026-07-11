@@ -5,10 +5,15 @@ run-010444 STAR-required gate): row 0 IS the arrival star by GAME TRUTH. The
 step now ASSISTS row 0 unless CV POSITIVELY identifies a confident
 station/beacon/POI glyph (selected_row_kind_confirmed's registry dock-kind
 match) — STAR / a bare NON_STAR / NONE / unreadable / a CV exception all
-ASSIST. Likewise the #8 label check refuses ONLY on a label POSITIVELY read
-as a DIFFERENT actionable button; an unreadable/unclassified label
-blind-assists. The only False-return from either check is a positive
-contra-ID — never an absence of confirmation (that would strand the ship).
+ASSIST.
+
+LABEL layer (OPERATOR LAW, live 2026-07-11 22:34 — supersedes D1/B2's
+blind-assist-on-unreadable-label): the bar layout is not fixed; a blind press
+on an unverified slot opened the SYSTEM MAP twice live. The step WALKS the
+button bar (UI_Right between bounded label reads) and presses ONLY a label
+positively read as SC ASSIST; nothing verified across the bar -> close +
+refuse with zero presses (never-strand re-dispatch owns the retry). The
+grabber-UNWIRED path keeps the legacy blind macro (no CV to verify with).
 """
 
 from types import SimpleNamespace
@@ -65,11 +70,12 @@ def test_confirms_then_presses(monkeypatch):
     assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
 
 
-def test_refuses_on_wrong_label_and_logs_raw_text(monkeypatch):
-    """Grabber wired + label POSITIVELY a DIFFERENT actionable button (LOCK
-    DESTINATION, all reads) -> DO NOT press engage; close the panel,
-    fail-closed, and the refusal carries the RAW OCR text (live findings 3/5:
-    refusals were undiagnosable without it)."""
+def test_wrong_label_walks_the_bar_then_refuses_without_press(monkeypatch):
+    """OPERATOR LAW (live 2026-07-11 22:34): never press a button the CV
+    didn't POSITIVELY read as SC ASSIST. A bar that never shows it (here:
+    LOCK DESTINATION at every position) is WALKED (UI_Right between reads,
+    bounded) and then refused with NO engage press; the refusal carries the
+    raw OCR text."""
     monkeypatch.setattr(navdetail, "read_detail_button_label",
                         lambda frame: _read(DetailButton.LOCK, "LOCK DESTINATION"))
     s = FakeSender()
@@ -78,18 +84,37 @@ def test_refuses_on_wrong_label_and_logs_raw_text(monkeypatch):
                       record=lambda k, p: logs.append((k, p)))
     ctx.navpanel_detail_grabber = lambda: "frame"
     assert step_nav_supercruise_star(ctx) is False
-    # open -> detail -> right -> CLOSE.  No second UI_Select (no engage).
-    assert s.actions() == [OPEN, SEL, RIGHT, OPEN]
+    # open -> detail -> right, then 4 more walk-rights (5 positions), CLOSE.
+    # ZERO further UI_Select — nothing verified, nothing pressed.
+    assert s.actions() == [OPEN, SEL, RIGHT] + [RIGHT] * 4 + [OPEN]
     refusals = [p for k, p in logs if k == "NavSupercruiseStarRefused"]
-    assert refusals and refusals[0]["label"] == "LOCK DESTINATION"
-    assert refusals[0]["reason"] == "label_positive_other_button"
+    assert refusals and refusals[0]["last_label"] == "LOCK DESTINATION"
+    assert refusals[0]["reason"] == "sc_assist_button_not_found"
+
+
+def test_system_map_slot_is_walked_past_never_pressed(monkeypatch):
+    """THE LIVE BUG (2026-07-11 22:34): cursor landed on SYSTEM MAP, the
+    label read UNKNOWN, and the old blind press OPENED THE MAP twice. Now the
+    walk steps past the unverified slot and presses only the position that
+    reads SC ASSIST."""
+    reads = [_read(DetailButton.UNKNOWN, "SYSTEM MAp"),    # pos 1, read 1
+             _read(DetailButton.UNKNOWN, "SYSTEM MAp"),    # pos 1, read 2
+             _read(DetailButton.SC_ASSIST, "SUPERCRUISE ASSIST")]  # pos 2
+    monkeypatch.setattr(navdetail, "read_detail_button_label",
+                        lambda frame: reads.pop(0) if reads else _read(DetailButton.SC_ASSIST))
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.navpanel_detail_grabber = lambda: "frame"
+    assert step_nav_supercruise_star(ctx) is True
+    # one extra RIGHT (the walk), engage fires ONLY at the verified slot
+    assert s.actions() == [OPEN, SEL, RIGHT, RIGHT, SEL, OPEN]
 
 
 def test_transient_bad_read_recovers_in_step(monkeypatch):
     """Live findings 3/5 fix: a transient UNKNOWN read must NOT fail the step —
-    the label is re-read in place and the engage still fires. No procedure
-    retry, no repeated panel opens."""
-    reads = [_read(DetailButton.UNKNOWN), _read(DetailButton.UNKNOWN),
+    the label is re-read in place (label_reads per position) and the engage
+    still fires at the same slot. No procedure retry, no repeated panel opens."""
+    reads = [_read(DetailButton.UNKNOWN),
              _read(DetailButton.SC_ASSIST, "SUPERCRUISE ASSIST")]
     monkeypatch.setattr(navdetail, "read_detail_button_label",
                         lambda frame: reads.pop(0) if reads else _read(DetailButton.SC_ASSIST))
@@ -97,7 +122,7 @@ def test_transient_bad_read_recovers_in_step(monkeypatch):
     ctx = StepContext(sender=s, sleeper=lambda _x: None)
     ctx.navpanel_detail_grabber = lambda: "frame"
     assert step_nav_supercruise_star(ctx) is True
-    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]   # ONE panel pass
+    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]   # ONE panel pass, no walk
 
 
 def test_already_on_is_success_without_press(monkeypatch):
@@ -113,32 +138,36 @@ def test_already_on_is_success_without_press(monkeypatch):
     assert s.actions() == [OPEN, SEL, RIGHT, OPEN]        # no second UI_Select
 
 
-def test_label_persistently_unknown_blind_assists(monkeypatch):
-    """D1/B2: an UNKNOWN label on EVERY read (never resolves to a known
-    button) is an absence of confirmation, not a contra-ID -- blind-assist
-    (press engage), never refuse."""
+def test_label_persistently_unknown_refuses_without_press(monkeypatch):
+    """OPERATOR LAW (2026-07-11, supersedes D1/B2 blind-assist-on-unreadable):
+    an UNKNOWN label at EVERY bar position = nothing verified = NOTHING
+    pressed. Walk the bar, close, refuse — never-strand owns the retry. (The
+    blind press this replaces opened the SYSTEM MAP live, twice.)"""
     monkeypatch.setattr(navdetail, "read_detail_button_label",
-                        lambda frame: _read(DetailButton.UNKNOWN))
+                        lambda frame: _read(DetailButton.UNKNOWN, "SYSTEM MAp"))
     s = FakeSender()
-    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    logs = []
+    ctx = StepContext(sender=s, sleeper=lambda _x: None,
+                      record=lambda k, p: logs.append((k, p)))
     ctx.navpanel_detail_grabber = lambda: "frame"
-    assert step_nav_supercruise_star(ctx) is True
-    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
+    assert step_nav_supercruise_star(ctx) is False
+    assert s.actions() == [OPEN, SEL, RIGHT] + [RIGHT] * 4 + [OPEN]
+    refusals = [p for k, p in logs if k == "NavSupercruiseStarRefused"]
+    assert refusals and refusals[0]["reason"] == "sc_assist_button_not_found"
 
 
-def test_label_cv_error_blind_assists(monkeypatch):
-    """D1/B2 (was test_cv_error_fails_closed under the old REFUSE-on-miss
-    contract): a grabber/CV exception on EVERY read is unreadable, not a
-    positive contra-ID -- blind-assist, never refuse (never-strand: a CV
-    miss on a known position must not block it)."""
+def test_label_cv_error_refuses_without_press(monkeypatch):
+    """A grabber/CV exception at every position verifies nothing -> walk,
+    close, refuse, zero presses (operator law 2026-07-11; the unwired-grabber
+    path below keeps the legacy blind macro)."""
     def boom(frame):
         raise RuntimeError("ocr blew up")
     monkeypatch.setattr(navdetail, "read_detail_button_label", boom)
     s = FakeSender()
     ctx = StepContext(sender=s, sleeper=lambda _x: None)
     ctx.navpanel_detail_grabber = lambda: "frame"
-    assert step_nav_supercruise_star(ctx) is True
-    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
+    assert step_nav_supercruise_star(ctx) is False
+    assert s.actions() == [OPEN, SEL, RIGHT] + [RIGHT] * 4 + [OPEN]
 
 
 # ---- row-0 positive-POI veto (D1/B2, 2026-07-07) -----------------------------
