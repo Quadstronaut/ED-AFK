@@ -171,6 +171,58 @@ def test_gate_row0_unconfirmed_forces_close(monkeypatch):
     assert sender.actions() == ["FocusLeftPanel", "UI_Down", "UI_Up", "FocusLeftPanel"]
 
 
+def test_gate_anchor_comes_from_gates_own_grab_not_the_confirm(monkeypatch):
+    """LIVE G8 FIX (session 090913, 2026-07-11): the confirm's row_y was applied
+    to the gate's LATER grab while the panel floated 30 px between them — the
+    crop landed a row down and read 474 Ls for a 1.60 Ls star (false FAR ->
+    burn lane). The gate must re-read row 0 on its OWN frame and anchor there."""
+    reads = {"n": 0}
+
+    def floating_row0(frame):
+        # confirm's read(s) see row_y=474; the gate's own grab sees 451 (float).
+        reads["n"] += 1
+        return nr0.Row0Read("bright", 401 if reads["n"] == 1 else 378, 0.75,
+                            True, (490, 463, 410, 23),
+                            474 if reads["n"] == 1 else 451)
+
+    monkeypatch.setattr(nr0, "read_row0_selected", floating_row0)
+    seen = {}
+
+    def spy(frame, **kw):
+        seen.update(kw)
+        return 12.0
+
+    monkeypatch.setattr(npr, "read_first_row_distance_ls", spy)
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None,
+                      navpanel_frame_grabber=lambda: object())
+    assert STEP_REGISTRY["star_distance_gate"](ctx) is True
+    assert seen.get("row_y") == 451          # the gate frame's OWN anchor
+
+
+def test_gate_row0_lost_on_own_grab_forces_close(monkeypatch):
+    """If the gate's own frame can no longer confirm a bright row 0 (float/wash
+    between the confirm and the grab), NO anchor is trustworthy: CLOSE lane,
+    never a FAR off a guessed crop."""
+    reads = {"n": 0}
+
+    def bright_then_dark(frame):
+        reads["n"] += 1
+        return nr0.Row0Read("bright" if reads["n"] == 1 else "dark",
+                            401, 0.75 if reads["n"] == 1 else 0.08,
+                            True, (490, 463, 410, 23), 474)
+
+    monkeypatch.setattr(nr0, "read_row0_selected", bright_then_dark)
+    monkeypatch.setattr(npr, "read_first_row_distance_ls",
+                        lambda frame, **kw: 504.0)   # would-be FAR must not stand
+    logs = []
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None,
+                      navpanel_frame_grabber=lambda: object(),
+                      record=lambda n, p: logs.append((n, p)))
+    assert STEP_REGISTRY["star_distance_gate"](ctx) is True   # CLOSE
+    assert any(n == "StarDistanceGate" and p.get("reason") == "row0_moved"
+               for n, p in logs)
+
+
 # ---- step_wait_sc_assist_orbiting ----------------------------------------------
 
 def test_orbit_wait_no_grabber_immediate_true():

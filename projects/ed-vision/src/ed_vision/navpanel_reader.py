@@ -55,6 +55,13 @@ DEFAULT_NAV_REGION = (505, 435, 410, 330)
 # and carries no digits, so panel drift pulling it into the crop fails closed.
 DEFAULT_NAV_DISTANCE_REGION = (1120, 395, 230, 380)
 
+# Row-center -> distance-column vertical shift (@1080p): the HUD ribbon's slant
+# (~0.055 px/px, navpanel_calib_columns.json) plus the row-0 anchor bias puts a
+# row's distance text ~37 px above its name-column cell center. Measured on the
+# live G8 frame (stargate_121349, truth 1.60 Ls) and cross-validated on
+# lawd26_sc_distance_1080 (truth 79,420 Ls).
+_DIST_COL_TILT_PX = 37
+
 
 def resolve_nav_region(
     default_region: Sequence[int],
@@ -210,8 +217,17 @@ def read_first_row_distance_ls(
         x, y, w, h = region
         x0, x1 = int(x * sc), int((x + w) * sc)
         if row_y is not None:
+            # DISTANCE-COLUMN TILT (live G8, session 090913 2026-07-11): the
+            # panel is a slanted ribbon — at the distance column (~540 px right
+            # of the row-0 cell) a row's own number renders ~37 px ABOVE the
+            # cell center measured at the name columns. Without this shift the
+            # crop reads the NEXT row's distance (474 Ls for a 1.60 Ls star =
+            # the false-FAR smack recipe). Validated on both pinned truth
+            # frames: synuefai_gate_close_1p6ls -> 1.6, lawd26_sc_distance ->
+            # 79,420 (shift 0 misreads BOTH: 2.0 / 78,432).
             band = int(round(22 * sc))          # ~one row pitch, tilt-tolerant
-            y0, y1 = max(0, int(row_y) - band), int(row_y) + band
+            yc = int(row_y) - int(round(_DIST_COL_TILT_PX * sc))
+            y0, y1 = max(0, yc - band), yc + band
         else:
             y0, y1 = int(y * sc), int((y + h) * sc)
         crop = arr[y0:y1, x0:x1]
