@@ -2425,7 +2425,10 @@ def step_nav_target_star(ctx: StepContext, *, settle_s: float = 0.4,
 
 def step_nav_supercruise_unexplored(ctx: StepContext, *, settle_s: float = 0.4,
                                     panel_focus_action: str = "FocusLeftPanel",
-                                    pin_hold_s: float = 4.0) -> bool:
+                                    pin_hold_s: float = 4.0,
+                                    label_reads: int = 2,
+                                    label_retry_s: float = 0.5,
+                                    bar_walk_max: int = 5) -> bool:
     """Exploration #6: open the nav panel, find the FIRST UNEXPLORED body, walk the
     cursor to it, and SC-assist it (with the #8 label confirm). The operator's
     exploration step 2 ("find the first UNEXPLORED down the list, supercruise assist
@@ -2437,9 +2440,16 @@ def step_nav_supercruise_unexplored(ctx: StepContext, *, settle_s: float = 0.4,
     panel open). find_first_unexplored crops the nav-list region itself, so it needs
     the WHOLE frame, NOT ctx.frame_grabber (that is the compass-region crop, no nav
     list in it). None until the live wiring provides it -> False ("unreadable"); NO
-    blind walk of an unread list, ever. The optional navpanel_detail_grabber adds the
-    pre-press SC-assist label confirm (#8); without it the press is blind (today's
-    engage_supercruise_assist_row behaviour).
+    blind walk of an unread list, ever.
+
+    G3 (operator 2026-07-11): row 0 is VISUALLY confirmed (_confirm_row0_selected,
+    the council read + one-shot recovery) BEFORE the walk — unconfirmed fails
+    closed; the walk itself no longer blind-pins. G4: both CV reads dump frames
+    (navunexp_list_*, navunexp_label_*; frame capture DEFAULT ON). The detail
+    press uses the BUTTON-BAR WALK law (2026-07-11 22:34, same as
+    nav_supercruise_star): press ONLY a positively-read SC ASSIST label; walked
+    bar with nothing verified -> refuse, zero presses. No detail grabber wired ->
+    legacy blind press.
 
     Returns (contract matches arrival.toml's required=false + skip_to pattern):
       True  -> SC-assist engaged toward an unexplored body; fall through to the
@@ -2461,12 +2471,30 @@ def step_nav_supercruise_unexplored(ctx: StepContext, *, settle_s: float = 0.4,
         return False
     detail_grabber = getattr(ctx, "navpanel_detail_grabber", None)
     s, sl = ctx.sender, ctx.sleeper
+    t0 = int(ctx.clock())
     from ed_core.executor.navpanel import _target_pin_and_walk
     from ed_vision.navpanel_column0 import find_first_unexplored
     try:
         s.press(panel_focus_action); sl(settle_s)    # open the nav panel
+        # G3 (operator 2026-07-11): VISUAL row-0 confirm BEFORE the walk — the
+        # cursor persists across opens and can be ANYWHERE; the old blind
+        # _target_pin_and_walk pin made the row index a guess (the exact bug
+        # class of the run-102104/104612 smacks). _confirm_row0_selected is
+        # the council-proven read + one-shot recovery its siblings use; a
+        # confirmed row 0 makes `row` a true walk distance. Unconfirmed ->
+        # fail closed (skip_to routes to the jump tail; never walk blind).
+        conf = _confirm_row0_selected(ctx)
+        if conf.status != "selected":
+            ctx.log("NavSupercruiseUnexploredUnreadable",
+                    {"reason": "row0_unconfirmed"})
+            s.press(panel_focus_action); sl(settle_s)   # close
+            return False
         try:
-            res = find_first_unexplored(grabber())
+            list_frame = grabber()
+            # G4: frame capture DEFAULT ON — every CV read dumps its frame.
+            if list_frame is not None and ctx.frame_sink is not None:
+                ctx.frame_sink(f"navunexp_list_{t0}", list_frame)
+            res = find_first_unexplored(list_frame)
         except Exception as exc:  # noqa: BLE001 — grabber/CV error -> close, fail closed
             ctx.log("NavSupercruiseUnexploredUnreadable",
                     {"reason": "cv_error", "err": type(exc).__name__})
@@ -2481,22 +2509,51 @@ def step_nav_supercruise_unexplored(ctx: StepContext, *, settle_s: float = 0.4,
                 {"terminated": ctx.explore_terminated})
             s.press(panel_focus_action); sl(settle_s)   # close
             return False
-        # Walk the cursor onto the target row (pin to top, then UI_Down x row),
-        # open its detail page, step right onto the Supercruise Assist button.
-        _target_pin_and_walk(s, sl, settle_s, row, True, pin_hold_s)
+        # Walk the cursor onto the target row. pin_to_top=False: row 0 was
+        # just VISUALLY confirmed above — the blind re-pin is gone (G3) and
+        # the walk is UI_Down x row from a verified origin.
+        _target_pin_and_walk(s, sl, settle_s, row, False, pin_hold_s)
         s.press("UI_Select"); sl(settle_s)           # open detail page
-        s.press("UI_Right"); sl(settle_s)            # onto Supercruise Assist button
+        s.press("UI_Right"); sl(settle_s)            # onto the usual SC-assist slot
         if detail_grabber is not None:
-            from ed_vision.navpanel_detail import DetailButton, confirm_button
-            try:
-                on_button = confirm_button(detail_grabber(), DetailButton.SC_ASSIST)
-            except Exception as exc:  # noqa: BLE001 — CV error -> fail closed
+            # BUTTON-BAR WALK (operator law, live 2026-07-11 22:34 — same
+            # contract as nav_supercruise_star): press ONLY a label positively
+            # read as SC ASSIST; walk UI_Right between bounded reads; nothing
+            # verified across the bar -> close + refuse, ZERO presses.
+            from ed_vision.navpanel_detail import DetailButton, read_detail_button_label
+            found = False
+            last_text, last_button = "", "none"
+            for walk_i in range(max(1, bar_walk_max)):
+                read = None
+                for attempt in range(max(1, label_reads)):
+                    try:
+                        lbl_frame = detail_grabber()
+                        if lbl_frame is not None and ctx.frame_sink is not None:
+                            ctx.frame_sink(
+                                f"navunexp_label_{t0}_w{walk_i}_r{attempt}", lbl_frame)
+                        read = read_detail_button_label(lbl_frame)
+                    except Exception as exc:  # noqa: BLE001 — grabber/CV error
+                        ctx.log("NavSupercruiseUnexploredRefused",
+                                {"reason": "cv_error", "err": type(exc).__name__})
+                        read = None
+                    if read is not None and read.button is not DetailButton.UNKNOWN:
+                        break
+                    sl(label_retry_s)
+                if read is not None:
+                    last_text, last_button = read.text, read.button.value
+                if read is not None and read.button is DetailButton.SC_DEACTIVATE:
+                    ctx.log("NavSupercruiseUnexploredAlreadyOn", {"label": read.text})
+                    s.press(panel_focus_action); sl(settle_s)
+                    return True
+                if read is not None and read.button is DetailButton.SC_ASSIST:
+                    found = True
+                    break
+                if walk_i + 1 < max(1, bar_walk_max):
+                    s.press("UI_Right"); sl(settle_s)
+            if not found:
                 ctx.log("NavSupercruiseUnexploredRefused",
-                        {"reason": "cv_error", "err": type(exc).__name__})
-                on_button = False
-            if not on_button:
-                ctx.log("NavSupercruiseUnexploredRefused",
-                        {"reason": "label_not_sc_assist", "row": row})
+                        {"reason": "sc_assist_button_not_found", "row": row,
+                         "last_label": last_text, "last_button": last_button})
                 s.press(panel_focus_action); sl(settle_s)   # close; press nothing
                 return False
         s.press("UI_Select"); sl(settle_s)           # engage Supercruise Assist
@@ -2753,6 +2810,16 @@ def step_orient_escape_vector(ctx: StepContext, *, deadzone_px: float = 48.0,
     if grabber is None:
         ctx.log("OrientEscapeVector", {"result": "no_grabber"})
         return False
+    # NO-CHARGE PRE-GATE (operator "build it, ship it" 2026-07-11; session
+    # 091323 09:37-09:46): the marker exists ONLY while a charge is live —
+    # after a FAILED engage there is nothing to orient at, and the step
+    # burned read cycles hunting it anyway. No charge and not already in
+    # SC -> fail fast with ZERO presses; the retry lane re-fires the engage.
+    st0 = ctx.status_supplier()
+    if (st0 is not None and not getattr(st0, "fsd_charging", False)
+            and not getattr(st0, "in_supercruise", False)):
+        ctx.log("OrientEscapeVector", {"result": "no_charge"})
+        return False
     from ed_vision.escape_vector_marker import read_escape_vector_marker
     t0 = int(ctx.clock())
     misses = 0
@@ -2788,19 +2855,25 @@ def step_orient_escape_vector(ctx: StepContext, *, deadzone_px: float = 48.0,
             misses += 1
             charging = st is not None and getattr(st, "fsd_charging", False)
             if charging:
-                # Marker EXISTS (live charge) but is off-view -> SEARCH:
-                # one pitch-up pulse per miss sweeps the sky (operator's own
-                # recovery: turn until the marker comes into view).
+                # Marker EXISTS (live charge) but is off-view -> SEARCH.
+                # SPHERE SWEEP (live 2026-07-11, session 091323 09:37-09:46:
+                # two full pitch-only budgets missed a marker sitting off the
+                # pitch great-circle — a pitch loop only ever scans ONE
+                # vertical circle). Per 16 pulses: 13 pitch-up (a near-full
+                # vertical circle) then 3 yaw-right to rotate the sweep plane
+                # before the next circle — the whole sky inside search_limit.
                 if misses >= max(1, search_limit):
                     ctx.log("OrientEscapeVector", {"result": "marker_lost",
                                                    "iters": i,
                                                    "searched": misses})
                     return False
-                if not _press(ctx, "PitchUpButton", hold_s=search_hold_s):
+                yaw_leg = (misses % 16) >= 13
+                if not _press(ctx, "YawRightButton" if yaw_leg
+                              else "PitchUpButton", hold_s=search_hold_s):
                     return False
-                ctx.log("EscapeVectorIter", {"i": i, "found": False,
-                                             "misses": misses,
-                                             "action": "search_pitch"})
+                ctx.log("EscapeVectorIter",
+                        {"i": i, "found": False, "misses": misses,
+                         "action": "search_yaw" if yaw_leg else "search_pitch"})
             else:
                 if misses >= max(1, miss_limit):
                     ctx.log("OrientEscapeVector", {"result": "marker_lost",

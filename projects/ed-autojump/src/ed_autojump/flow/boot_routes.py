@@ -360,18 +360,16 @@ def run_arrival_then_branch(runner: Any) -> Optional[str]:
     if _transition_aborted(runner):
         return "arrival"                                # branch suppressed
     section = _arrival_branch(runner)
-    dispatched = transition_to(runner, section)
-    # EXPLORATION -> TRAVERSAL is an UNCONDITIONAL onward chain (C2-D5, the GAP
-    # this council closes): the exploration proc TOURS bodies and NEVER jumps, so
-    # without this hand-off the ship would explore and then sit forever. Chain
-    # ONLY when exploration actually RAN (dispatched == "exploration"); a docking
-    # or plain-traversal branch already dispatched its terminal proc and needs no
-    # follow-on. transition_to's own top-of-fn abort-recheck (point b) then
-    # suppresses the traversal hop if a smack / preempt / operator-abort landed
-    # DURING the tour — a smack mid-exploration leaves [arrival, exploration] and
-    # yields to _route_sc_exit, never branching into the exclusion zone.
-    if dispatched == "exploration":
-        transition_to(runner, "traversal")
+    transition_to(runner, section)
+    # EXPLORATION -> TRAVERSAL CHAIN REMOVED (G2, operator 2026-07-11). The
+    # operator's 2026-07-07 toml reorg (70c248e) gave exploration.toml its OWN
+    # terminal jump tail (target -> orients -> throttle 100 ->
+    # engage_jump_clearance), so the old C2-D5 "tour never jumps" premise is
+    # dead: chaining traversal after it pressed the SAME jump-tail keys a
+    # second time, possibly mid-hyperspace-tunnel (target_next_route has no
+    # witchspace guard). Exploration is now a TERMINAL branch exactly like
+    # docking and traversal. A smack/preempt mid-tour still yields to
+    # _route_sc_exit via transition_to's abort-recheck, unchanged.
     return "arrival"
 
 

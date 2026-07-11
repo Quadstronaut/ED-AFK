@@ -154,19 +154,44 @@ def test_orient_search_finds_marker_then_entry(monkeypatch):
     assert s.actions().count("PitchUpButton") == 2   # the search pulses only
 
 
-def test_orient_marker_lost_no_charge_fails_without_search(monkeypatch):
-    """No live charge = no vector exists — no search pitching, plain
-    miss_limit fail."""
-    monkeypatch.setattr(evm, "read_escape_vector_marker",
-                        lambda f: _read(False))
+def test_orient_no_charge_pregates_immediately(monkeypatch):
+    """NO-CHARGE PRE-GATE (operator 2026-07-11, session 091323 09:37): no
+    live charge = no vector exists — fail FAST with zero presses and zero
+    read cycles; the retry lane re-fires the engage."""
+    reads = {"n": 0}
+
+    def counting(f):
+        reads["n"] += 1
+        return _read(False)
+    monkeypatch.setattr(evm, "read_escape_vector_marker", counting)
     st = SimpleNamespace(in_supercruise=False, fsd_charging=False)
     s = FakeSender()
     logs = []
-    assert step_orient_escape_vector(_ctx(s, st, logs),
-                                     miss_limit=3) is False
-    assert any(n == "OrientEscapeVector" and p.get("result") == "marker_lost"
+    assert step_orient_escape_vector(_ctx(s, st, logs)) is False
+    assert any(n == "OrientEscapeVector" and p.get("result") == "no_charge"
                for n, p in logs)
     assert s.actions() == []
+    assert reads["n"] == 0                    # not one CV read wasted
+
+
+def test_orient_search_interleaves_yaw_to_cover_the_sphere(monkeypatch):
+    """SPHERE SWEEP (live 2026-07-11 09:37-09:46: two full pitch-only budgets
+    missed a marker sitting off the pitch great-circle): per 16 search pulses,
+    misses 13-15 are YAW-right — the sweep plane rotates between vertical
+    circles instead of rescanning the same one forever."""
+    monkeypatch.setattr(evm, "read_escape_vector_marker",
+                        lambda f: _read(False))
+    st = SimpleNamespace(in_supercruise=False, fsd_charging=True)
+    s = FakeSender()
+    logs = []
+    assert step_orient_escape_vector(_ctx(s, st, logs),
+                                     search_limit=20) is False
+    acts = s.actions()                        # presses at misses 1..19
+    assert acts.count("YawRightButton") == 3  # misses 13, 14, 15
+    assert acts.count("PitchUpButton") == 16
+    assert acts[12:15] == ["YawRightButton"] * 3   # 0-indexed: misses 13-15
+    assert any(p.get("action") == "search_yaw" for n, p in logs
+               if n == "EscapeVectorIter")
 
 
 def test_orient_charge_dropped_fails(monkeypatch):
