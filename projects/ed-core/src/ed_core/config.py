@@ -277,7 +277,12 @@ class VisionConfig:
     # Closed-loop tunables (all overridable from config for in-flight tuning).
     # Defaults validated live 2026-05-24: dominant-axis + behind-flip law,
     # long settle for momentum decay, hard drive (high gain + max_press).
-    align_tol: float = 0.12
+    # 0.12 -> 0.20 (OPERATOR 2026-07-11: "aligning too hard on compass before
+    # handing over to widget ring" — loosen by almost a full dot's freedom).
+    # Dot measured 6 px on live orient frames = 0.086 normalized diameter;
+    # 0.20 = 0.12 + ~0.93 dot. Invariant deadzone*sqrt(2) <= align_tol still
+    # holds (0.113 <= 0.20); the widget ring owns fine alignment after.
+    align_tol: float = 0.20
     deadzone: float = 0.08
     gain: float = 2.0
     min_press_s: float = 0.10
