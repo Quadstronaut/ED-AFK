@@ -45,13 +45,14 @@ def test_v8_step_order():
         "nav_supercruise_star",    # 6  star assist (operator: settle at the star)
         "wait_sc_assist_orbiting", # 7
         "confirm_orbiting",        # 8
-        "target_next_route",       # 9  hop lock — SC-segment retry anchor
-        "set_throttle",            # 10 75% orient
-        "wait",                    # 11 3s pacing
-        "orient_compass",          # 12
-        "orient_widget_ring",      # 13
-        "set_throttle",            # 14 100 jump
-        "engage_jump_clearance",   # 15 terminal
+        "wait",                    # 9  pacing (operator 2026-07-11: settle before hop lock)
+        "target_next_route",       # 10 hop lock — SC-segment retry anchor
+        "set_throttle",            # 11 75% orient
+        "wait",                    # 12 pacing
+        "orient_compass",          # 13
+        "orient_widget_ring",      # 14
+        "set_throttle",            # 15 100 jump
+        "engage_jump_clearance",   # 16 terminal
     ]
 
 

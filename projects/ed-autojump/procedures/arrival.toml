@@ -42,6 +42,6 @@ backoff_s = 2.0
 
 steps = [
   { action = "set_throttle", pct = 0 },
-  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.75, full_epsilon = 0.2 },
+  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.65, full_epsilon = 0.2 },
   { action = "nav_supercruise_star", required = true },
 ]
