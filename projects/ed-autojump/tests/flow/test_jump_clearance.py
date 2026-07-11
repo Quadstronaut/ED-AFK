@@ -131,26 +131,74 @@ def test_charge_dropped_goes_to_move_edge():
     assert any(k == "EngageJumpClearanceChargeDropped" for k, _ in logs)
 
 
-def test_getaround_not_in_supercruise_bails_with_no_throttle():
-    """D3 THROTTLE FAIL-CLOSED: if the get-around cannot even run (not in
-    supercruise), BAIL immediately -- NOT ONE throttle/orbit press, routing
-    the required-fail straight to never-strand rather than ramming forward
-    blind."""
+class _SpaceRig(_FsdRig):
+    """_FsdRig plus scripted in_supercruise: False until `sc_at` sleeps have
+    elapsed (None = never). Models the G19 realspace-obscured start."""
+
+    def __init__(self, phases, sc_at=None):
+        super().__init__(phases)
+        self.sc_at = sc_at
+
+    def status(self):
+        st = super().status()
+        st.in_supercruise = self.sc_at is not None and self.polls >= self.sc_at
+        return st
+
+
+def _rs_ctx(sender, phases, sc_at=None, logs=None):
+    rig = _SpaceRig(phases, sc_at)
+    return StepContext(
+        sender=sender,
+        sleeper=rig.sleep,
+        status_supplier=rig.status,
+        ship_supplier=lambda: "mandalay",
+        record=(lambda kind, payload: logs.append((kind, payload)))
+        if logs is not None else None,
+    )
+
+
+def test_realspace_obscured_enters_sc_then_orbits_then_jumps():
+    """G19 (operator order 2026-07-11, session 090913): a REALSPACE obscured
+    jump no longer dead-ends. The step enters supercruise FIRST (throttle is
+    already 100 from C1's own press — no new throttle press), then runs the
+    same SC-assist ORBIT get-around, then retries the jump. The exact
+    sequence of the live-validated startup CLOSE lane."""
     sender = FakeSender()
     logs = []
-    ctx = _ctx(sender, ["idle"], logs=logs)
-    ctx.status_supplier = lambda: SimpleNamespace(
-        docked=False, in_supercruise=False, fsd_charging=False,
-        fsd_cooldown=False, fsd_mass_locked=False, overheating=False,
-        fsd_jump=False)
+    # attempt 1: idle x2 -> obscured; SC entry completes at 2 sleeps; orbit;
+    # settle; attempt 2 commits.
+    ctx = _rs_ctx(sender, ["idle", "idle", "idle", "jump"], sc_at=2, logs=logs)
     assert STEP_REGISTRY["engage_jump_clearance"](
-        ctx, max_jump_polls=2, max_clear_attempts=3) is False
+        ctx, max_jump_polls=2, max_clear_attempts=2) is True
+    acts = sender.actions()
+    assert acts.count("Supercruise") == 1           # entered SC exactly once
+    assert acts.count("UI_Right") == 1              # orbit get-around ran once
+    assert acts.count("Hyperspace") == 2            # re-pressed after the move
+    assert acts.count("SetSpeed100") == 2           # ONLY the two C1 presses
+    assert "PitchDownButton" not in acts            # D3 stands: never pitches
+    assert any(k == "EngageJumpClearanceScEntry" for k, _ in logs)
+    # ordering: SC entry strictly before the orbit macro
+    assert acts.index("Supercruise") < acts.index("UI_Right")
+
+
+def test_realspace_sc_entry_failure_bails_with_no_orbit_press():
+    """G19 FAIL-CLOSED: entry refused / never completes (exclusion zone,
+    cooldown, wedged FSD) -> bail with ZERO orbit presses and no further
+    throttle — the required-fail routes to never-strand / smack dispatch."""
+    sender = FakeSender()
+    logs = []
+    ctx = _rs_ctx(sender, ["idle"], sc_at=None, logs=logs)   # SC never happens
+    assert STEP_REGISTRY["engage_jump_clearance"](
+        ctx, max_jump_polls=2, max_clear_attempts=3,
+        max_sc_entry_polls=3) is False
     acts = sender.actions()
     assert "UI_Right" not in acts and "UI_Select" not in acts
+    assert acts.count("Supercruise") == 1        # one entry attempt, no spam
     assert acts.count("SetSpeed100") == 1        # only the single C1 attempt
     assert acts.count("Hyperspace") == 1         # bailed before any retry
     assert any(k == "EngageJumpClearanceAborted"
                and p.get("reason") == "getaround_unavailable"
+               and p.get("cause") == "sc_entry_failed"
                for k, p in logs)
 
 
