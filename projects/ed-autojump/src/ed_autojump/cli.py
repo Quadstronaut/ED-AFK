@@ -693,6 +693,12 @@ def cmd_run(args) -> int:
         panic=panic, sender=sender, recorder=recorder, on_log=print,
     )
 
+    def _focus_reassert() -> bool:
+        # Bounded 2s find: ED is already running mid-flight, so the poll is
+        # a formality; a dead/missing window returns False (logged, non-fatal).
+        from ed_core.launcher.focus import focus_ed_window
+        return focus_ed_window(timeout_s=2.0)
+
     runner = FlowRunner(
         procedures=procedures,
         sender=sender,
@@ -728,6 +734,12 @@ def cmd_run(args) -> int:
         tail=JournalTail(journal_dir),
         panic_switch=panic,
         redispatch_driver=_br.redispatch_from_live_state,
+        # OPERATOR RULING 2026-07-11: re-assert ED foreground at every error
+        # state (ProcedureRetry / ProcedureAborted / strand-guard redispatch),
+        # never before every keypress. Overnight run 094825 pressed keys into
+        # a stolen focus for 4.8 h; the first retry's re-assert recovers it.
+        # Keys-off runs stay unwired — a diagnostic run must not steal focus.
+        focus_reassert=(_focus_reassert if args.engage_keys else None),
     )
 
     # Startup route check. The jump loop only engages when a route is plotted;
