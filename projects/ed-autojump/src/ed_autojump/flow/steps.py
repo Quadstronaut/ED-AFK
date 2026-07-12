@@ -205,7 +205,8 @@ def step_engage_jump_clearance(
     *,
     poll_s: float = 0.8,
     max_jump_polls: int = 12,
-    max_charge_polls: int = 75,  # LIVE FIX 2026-07-06 — 75*0.8s = the 60s operator watchdog class
+    max_charge_polls: int = 75,  # LIVE FIX 2026-07-06 — 75*0.8s = the 60s slow-charge NOTICE line (no longer the give-up)
+    max_charge_live_polls: int = 300,  # PHROEA FIX 2026-07-12 — wedged-FSD hard cap (~240s) for a STILL-LIVE charge
     max_clear_attempts: int = 3,
     max_sc_entry_polls: int = 25,  # G19: realspace obscured -> SC-entry wait ceiling (~20s @0.8s)
     clear_burn_s: float = 7.0,   # post-orbit-engage settle pacing (D3: was the straight-burn duration)
@@ -277,6 +278,10 @@ def step_engage_jump_clearance(
     if charge_ceiling != max_charge_polls:
         ctx.log("EngageJumpClearanceClamp",
                 {"max_charge_polls": max_charge_polls, "clamped": charge_ceiling})
+    # A STILL-LIVE charge is a PENDING jump, never "stuck": give up only at this
+    # generous wedged-FSD hard cap, not at the 60s charge_ceiling (Phroea fix,
+    # see the charge branch below). Never below the ceiling.
+    live_ceiling = max(charge_ceiling, int(max_charge_live_polls))
 
     # --- Helper: dual hyperspace-committed signal (C3) ---
     def _is_hyperspace_committed() -> bool:
@@ -333,13 +338,27 @@ def step_engage_jump_clearance(
                 charge_seen = True
                 charging_polls += 1
                 if charging_polls >= charge_ceiling:
-                    # ALIGN hold / wedged FSD: NEVER pitch off a live charge —
-                    # fail to the outer retry, whose orient re-aligns while
-                    # the charge is still spooling.
-                    ctx.log("EngageJumpClearanceAborted",
-                            {"reason": "charge_stuck", "attempt": attempt,
-                             "polls": charging_polls})
-                    return False
+                    # A STILL-LIVE charge is a PENDING jump, not a stuck one
+                    # (Phroea Eaec IB-N d7-8 ram, live 2026-07-12): a struggling
+                    # drive (loose align / mass-lock chatter) spooled ~67s —
+                    # PAST this 60s ceiling — then committed. The old give-up
+                    # here returned False into the on_required_fail
+                    # throttle-retry, which re-issued SetSpeed100 nose-on the
+                    # just-arrived star (the ram). While fsd_charging stays TRUE
+                    # the jump is still coming: keep waiting, up to the wedged-
+                    # FSD hard cap (live_ceiling, ~240s, matching
+                    # smack_recovery's engage watchdog). NEVER pitch/throttle
+                    # off a live charge. Only a charge STILL live at that cap is
+                    # a genuinely wedged FSD -> charge_stuck (the outer retry
+                    # then re-orients, exactly the original ALIGN-hold intent).
+                    if charging_polls == charge_ceiling:
+                        ctx.log("EngageJumpClearanceChargeSlow",
+                                {"attempt": attempt, "polls": charging_polls})
+                    if charging_polls >= live_ceiling:
+                        ctx.log("EngageJumpClearanceAborted",
+                                {"reason": "charge_stuck", "attempt": attempt,
+                                 "polls": charging_polls})
+                        return False
             elif charge_seen:
                 # Charge dropped without a commit. One grace poll absorbs the
                 # Status-write vs journal-write race (engage_supercruise's

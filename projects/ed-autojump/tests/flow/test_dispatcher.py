@@ -16,6 +16,12 @@ def _dispatch(r, ev):
     if name == 'FSDJump':
         _br._route_fsd_jump(r, ev)
     elif name == 'SupercruiseExit':
+        # Mirror the real flow: FlowRunner._record_event_time sets _smacked from
+        # THIS same event during the hub pump, BEFORE run_event_routes ->
+        # _route_sc_exit runs. The stale-drop guard (boot_routes) reads that
+        # latch, so a test that dispatches the route in isolation must set it
+        # exactly as the pump would, or it models a drop that never happened.
+        r._smacked = getattr(ev, 'body_type', None) in ('Star', 'Planet')
         _br._route_sc_exit(r, ev)
     elif name == 'NavRoute':
         _br._route_nav_route(r, ev)

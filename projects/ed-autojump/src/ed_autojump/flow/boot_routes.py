@@ -1151,6 +1151,23 @@ def _route_sc_exit(runner: Any, ev: Any) -> Optional[str]:
     if body_type not in ("Star", "Planet"):
         return None
 
+    # STALE-DROP GUARD (Slegoae UB-V b6-0 -> EC-A c2-2, live 2026-07-12,
+    # session 023204). This SupercruiseExit's smack_recovery dispatch is a
+    # QUEUED event route: it cannot fire until the running arrival->traversal
+    # chain returns, which in the live incident was 3:49 later and one system
+    # onward. By then the ship had re-entered supercruise on its own
+    # (SupercruiseEntry cleared _smacked) and jumped again -- yet _route_sc_exit
+    # still ran smack_recovery, STALE, eating the NEXT system's arrival. If the
+    # ship is demonstrably no longer in the smacked state (a SupercruiseEntry /
+    # FSDJump / Docked has cleared _smacked since this drop), the drop is stale:
+    # abstain. This is NOT a D2 abstain-to-idle -- the ship already recovered;
+    # a genuine current real-space massive-body drop still has _smacked=True at
+    # this event's own dispatch and recovers exactly as before.
+    if not getattr(runner, "_smacked", False):
+        if runner.record is not None:
+            runner.record("SmackDispatchStale", {"body_type": body_type})
+        return None
+
     runner._event_times["drop"] = runner.clock()
     # Default kind straight from the journal's own body_type — ALWAYS valid,
     # never depends on CV. The steer below may refine it; nothing below can

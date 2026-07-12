@@ -72,3 +72,34 @@ def test_pump_broadcasts_to_run_live_queues_too():
     assert r._run_abort() is True
     pending = r._hub.poll(handle)
     assert [getattr(e, "event", None) for e in pending] == ["SupercruiseExit"]
+
+
+def _fsd_jump(system="Slegoae EC-A c2-2"):
+    return SimpleNamespace(event="FSDJump", star_system=system,
+                           timestamp="2026-07-12T03:19:52Z")
+
+
+def test_fsdjump_preempts_a_running_procedure():
+    """Phroea IB-N d7-8 ram, pinned: a live FSDJump arriving mid-procedure
+    means the ship is in a NEW system -- the running scene (traversal's jump
+    retry) is now obsolete and blind. should_abort() must flip TRUE with
+    _preempt='new_system' so run_live can flip to the new system's arrival
+    before the stale scene re-issues SetSpeed100 into the just-arrived star."""
+    r = _runner([_fsd_jump()])
+    r._running_proc = "traversal"
+    records = []
+    r.record = lambda n, p: records.append((n, p))
+    assert r._run_abort() is True
+    assert r._preempt == "new_system"
+    assert ("PreemptRequested",
+            {"procedure": "traversal", "reason": "new_system"}) in records
+
+
+def test_fsdjump_between_procedures_does_not_preempt():
+    """Backlog replay / between-scene FSDJump (no procedure running) must NOT
+    set a preempt -- the normal _route_fsd_jump -> arrival dispatch owns it,
+    and a backlog jump must never abort a scene that has not started."""
+    r = _runner([_fsd_jump()])
+    # _running_proc left at its None default (no live scene running)
+    assert r._run_abort() is False
+    assert r._preempt is None
