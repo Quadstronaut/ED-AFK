@@ -274,6 +274,39 @@ def get_debug_sink() -> Optional[CvDebugSink]:
     return _sink
 
 
+def publish_read(name: str, rect: Optional[Region] = None,
+                 verdict: Optional[str] = None,
+                 label: Optional[str] = None) -> None:
+    """Illustrate a CV/OCR read on the debug overlay from a reader's RETURN site.
+
+    The ONE shared self-publish helper (operator 2026-07-12: "ensure all OCR and
+    CV reads on-screen are illustrated somehow on the edoverlay"). Every screen
+    reader calls this so its OUTCOME + VALUE shows on the overlay, not just the
+    grabber's region outline. Two modes:
+
+      * `rect` given (SCREEN (x,y,w,h)) -> flash a box there. Use when the reader
+        knows its own crop coords but no named grabber owns the region.
+      * `rect` None -> re-flash the `name`'s EXISTING grabber box with the
+        verdict + label. Use when a named ScreenGrabber already auto-boxed the
+        region (the reader holds only its bound .grab); no-op until that grabber
+        has fired once.
+
+    verdict: None|'hit'|'miss' (white / teal / red). Fully fail-soft + INERT
+    unless the VISION toggle wired a sink (get_debug_sink() is None). This is the
+    generalisation of the read_sc_hud / navpanel_row0 / escape_vector_marker
+    self-publish pattern -- one place, so no reader re-invents the guard."""
+    try:
+        sink = get_debug_sink()
+        if sink is None:
+            return
+        if rect is not None:
+            sink.box(name, rect, verdict=verdict, label=label)
+        else:
+            sink.verdict(name, verdict, label=label)
+    except Exception as e:  # noqa: BLE001 — overlay is decoration, never the read
+        warn_once("publish_read", name, e)
+
+
 # ---------------------------------------------------------------------------
 # The gate -> registration decision (2026-07-07 fix, AC-2). Extracted to a
 # pure function (same pattern as overlay.py's `_text_message`/`_frame`) so the

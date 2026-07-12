@@ -15,10 +15,66 @@ from ed_vision.debug_overlay import (
     CvDebugSink,
     ScreenToOverlay,
     get_debug_sink,
+    publish_read,
     resolve_cv_debug_sink,
     set_debug_sink,
     warn_once,
 )
+
+
+# ---------------------------------------------------------------------------
+# publish_read — the shared self-publish helper (operator 2026-07-12)
+# ---------------------------------------------------------------------------
+
+class _RecordingSink:
+    """Duck-typed CvDebugSink stand-in: records box()/verdict() calls."""
+    def __init__(self, raises=False):
+        self.boxes = []
+        self.verdicts = []
+        self._raises = raises
+
+    def box(self, name, rect, verdict=None, label=None):
+        if self._raises:
+            raise RuntimeError("boom")
+        self.boxes.append((name, tuple(rect), verdict, label))
+
+    def verdict(self, name, verdict, label=None):
+        if self._raises:
+            raise RuntimeError("boom")
+        self.verdicts.append((name, verdict, label))
+
+
+@pytest.fixture
+def _clean_sink():
+    yield
+    set_debug_sink(None)   # never leak a fake sink into another test
+
+
+def test_publish_read_with_rect_boxes(_clean_sink):
+    sink = _RecordingSink()
+    set_debug_sink(sink)
+    publish_read("target_dist", rect=(10, 20, 30, 40), verdict="hit", label="6.1km")
+    assert sink.boxes == [("target_dist", (10, 20, 30, 40), "hit", "6.1km")]
+    assert sink.verdicts == []
+
+
+def test_publish_read_without_rect_reflashes_verdict(_clean_sink):
+    sink = _RecordingSink()
+    set_debug_sink(sink)
+    publish_read("widget_ring", verdict="miss", label="dx120 dy-40")
+    assert sink.verdicts == [("widget_ring", "miss", "dx120 dy-40")]
+    assert sink.boxes == []
+
+
+def test_publish_read_noop_without_sink(_clean_sink):
+    set_debug_sink(None)
+    publish_read("x", rect=(0, 0, 1, 1), verdict="hit")   # must not raise
+
+
+def test_publish_read_fail_soft_on_sink_error(_clean_sink):
+    debug_overlay._reset_warned_for_tests()
+    set_debug_sink(_RecordingSink(raises=True))
+    publish_read("x", verdict="hit")   # sink.verdict raises -> swallowed, warn_once
 
 
 # ---------------------------------------------------------------------------

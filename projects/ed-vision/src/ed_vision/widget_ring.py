@@ -276,6 +276,8 @@ class WidgetRingReader:
         # 2. widget — required, no assume-centre fallback.
         widget = self._find_widget(frame)
         if widget is None:
+            from .debug_overlay import publish_read
+            publish_read("widget_ring", verdict="miss", label="no widget")
             return WidgetRingRead.not_found()
         widget_cx, widget_cy = widget
 
@@ -284,19 +286,30 @@ class WidgetRingReader:
         ring = self._find_ring(frame, mask, np, cv2)
         # 4. either missing → not_found.
         if ring is None:
+            from .debug_overlay import publish_read
+            publish_read("widget_ring", verdict="miss", label="no ring")
             return WidgetRingRead.not_found()
         ring_cx, ring_cy, ring_r = ring
 
         # 5. delta + deadzone.
         delta_x = ring_cx - widget_cx
         delta_y = ring_cy - widget_cy
-        return WidgetRingRead(
+        result = WidgetRingRead(
             found=True,
             widget_cx=widget_cx, widget_cy=widget_cy,
             ring_cx=ring_cx, ring_cy=ring_cy, ring_radius_px=ring_r,
             delta_x=delta_x, delta_y=delta_y,
             deadzone_px=0.55 * ring_r,
         )
+        # Illustrate the fine-align read on the overlay: the 'widget_ring'
+        # grabber already boxed the region outline, so re-flash it with the
+        # verdict (teal when inside the deadzone) + the live delta.
+        from .debug_overlay import publish_read
+        _aligned = (delta_x ** 2 + delta_y ** 2) ** 0.5 <= result.deadzone_px
+        publish_read("widget_ring", verdict="hit" if _aligned else None,
+                     label=f"{'aligned' if _aligned else 'steer'} "
+                           f"dx{delta_x:.0f} dy{delta_y:.0f}")
+        return result
 
 
 def median_of(reads: List[WidgetRingRead]) -> WidgetRingRead:
