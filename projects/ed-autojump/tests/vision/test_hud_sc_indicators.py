@@ -20,6 +20,7 @@ from ed_vision.hud_sc_indicators import (
     classify_hud_text,
     detect_align_warning,
     detect_connection_error,
+    detect_mode_button_ready,
     detect_orbiting,
     detect_sc_assist_active,
     detect_sc_assist_engaged,
@@ -149,6 +150,16 @@ def test_connection_error_detector_injected_ocr():
     assert detect_connection_error(f, ocr=lambda c: mauve) is True
     assert detect_connection_error(f, ocr=lambda c: ["ORBITING DESTINATION"]) is False
     assert detect_connection_error(f, ocr=lambda c: []) is False
+
+
+def test_mode_button_ready_stub_reports_ready():
+    """detect_mode_button_ready is a STUB (operator 2026-07-12, awaiting
+    enabled-vs-grayed frames): returns True (assume ready) so connection_recovery
+    keeps its current blind timing until the detector is trained. When the frames
+    land, this test flips to real enabled/grayed cases."""
+    f = _blank_frame()
+    assert detect_mode_button_ready(f) is True
+    assert detect_mode_button_ready(f, ocr=lambda c: []) is True
 
 
 # --------------------------------------------------------------------------

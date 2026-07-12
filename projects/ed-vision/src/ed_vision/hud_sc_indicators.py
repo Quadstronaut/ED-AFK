@@ -333,3 +333,25 @@ def detect_connection_error(
         except Exception:  # noqa: BLE001
             pass
     return hit
+
+
+def detect_mode_button_ready(frame: Any, *,
+                             ocr: Optional[Callable[[Any], Any]] = None) -> bool:
+    """STUB (operator 2026-07-12, awaiting training frames): True iff the main-menu
+    game-mode buttons (Open Play / Private Group / Solo) are ENABLED/clickable
+    rather than GRAYED OUT.
+
+    WHY IT MATTERS: after a CONNECTION ERROR the recovery macro clicks CONTINUE
+    then blind-presses toward Solo. But the mode buttons behind CONTINUE stay
+    **grayed and non-responsive until the game client has reached AND
+    authenticated with Frontier's servers** -- pressing a grayed Solo is a no-op
+    that desyncs connection_recovery (it likely FAILS on the first try). The fix
+    is to WAIT for Solo to be clickable before the mode-select presses.
+
+    NOT YET TRAINED -- returns True (assume ready) so live behavior is UNCHANGED
+    (current blind timing). Fill this in with an enabled-vs-grayed pixel/OCR check
+    once the operator provides authenticated-vs-still-connecting frames; the
+    connection_recovery step already polls this before the mode-select presses,
+    so training it is a one-function change with no re-plumbing. `ocr`/`frame`
+    accepted now for signature stability."""
+    return True  # STUB: no detector yet -> keep the current blind timing

@@ -819,6 +819,39 @@ def step_engage_supercruise(
     return False
 
 
+def _wait_mode_buttons_ready(ctx: StepContext, *, max_s: float,
+                             poll_s: float = 1.0) -> None:
+    """Poll until the main-menu game-mode buttons (Open/Private/Solo) are
+    clickable, up to max_s, then return. connection_recovery calls this before
+    the mode-select presses so it does not blind-press a GRAYED Solo (grayed
+    until the game authenticates with Frontier's servers after a reconnect;
+    operator 2026-07-12).
+
+    STUB TODAY: detect_mode_button_ready is not yet trained (returns True), so
+    this returns on the first poll -- live timing is UNCHANGED. The loop is wired
+    so a real enabled-vs-grayed detector gates the presses once operator frames
+    land. No grabber / no vision extras -> return immediately (blind behavior)."""
+    grab = getattr(ctx, "hud_grabber", None)
+    if grab is None:
+        return
+    try:
+        from ed_vision.hud_sc_indicators import detect_mode_button_ready
+    except Exception:  # noqa: BLE001 — no vision extras -> keep blind behavior
+        return
+    deadline = ctx.clock() + max_s
+    while True:
+        try:
+            frame = grab()
+            if frame is not None and detect_mode_button_ready(frame):
+                return
+        except Exception:  # noqa: BLE001 — read failure must not block recovery
+            return
+        if ctx.clock() >= deadline:
+            ctx.log("ConnectionRecoveryModeButtonsWaitTimeout", {"waited_s": max_s})
+            return
+        ctx.sleeper(poll_s)
+
+
 def step_connection_recovery(
     ctx: StepContext,
     *,
@@ -827,6 +860,7 @@ def step_connection_recovery(
     load_settle_s: float = 5.0,
     load_wait_s: float = 90.0,
     replot_gap_s: float = 1.5,
+    mode_ready_wait_s: float = 30.0,  # bounded wait for the mode buttons to un-gray (server auth); STUB detector reports ready now
 ) -> bool:
     """Recover from a CONNECTION ERROR modal (operator-verified 2026-07-12).
 
@@ -851,6 +885,14 @@ def step_connection_recovery(
     # 2. CONTINUE (resume the last commander/session)
     _press(ctx, "UI_Select")
     ctx.sleeper(menu_settle_s)
+    # 2b. MODE-BUTTON READINESS GATE (operator 2026-07-12, STUB): the mode
+    # buttons behind CONTINUE stay GRAYED + non-responsive until the game
+    # authenticates with the servers -- blind-pressing Solo while grayed no-ops
+    # and desyncs recovery (likely a 1st-try FAILURE). Wait for them to be
+    # clickable before selecting. detect_mode_button_ready is a STUB (returns
+    # ready) until operator frames land, so this is a no-op today; the seam is
+    # wired for a one-function fill-in. See ed-connection-error-screens memory.
+    _wait_mode_buttons_ready(ctx, max_s=mode_ready_wait_s)
     # 3. move the mode selector RIGHT to Solo (Open -> Private -> Solo)
     _press(ctx, "UI_Right")
     ctx.sleeper(nav_gap_s)
