@@ -214,6 +214,23 @@ def test_sco_malfunction_skips_orbit_and_represses(monkeypatch):
     assert acts.count("SetSpeed100") == 3
 
 
+def test_sco_malfunction_at_charge_drop_skips_orbit(monkeypatch):
+    """The classic malfunction signature (operator 2026-07-12): the FSD spools a
+    charge then DROPS it (FSD (SCO) MALFUNCTIONED). It must be caught AT THE DROP
+    (the prompt is still up), NOT at the ~10s obscured edge where it had always
+    cleared (ScoMalf=0 across every live run -> the ship orbit-assisted). Wait +
+    re-fire, NEVER the orbit get-around."""
+    import ed_vision.hud_sc_indicators as hud_mod
+    monkeypatch.setattr(hud_mod, "detect_sco_malfunction", lambda frame, **k: True)
+    sender = FakeSender()
+    # charge x3 then drops (idle) -> charge_dropped edge with the malfunction up.
+    ctx = _ctx(sender, ["idle"] + ["charging"] * 3 + ["idle"] * 20)
+    ctx.hud_grabber = lambda: object()
+    STEP_REGISTRY["engage_jump_clearance"](
+        ctx, max_clear_attempts=2, malfunction_recovery_s=0.0)
+    assert "UI_Right" not in sender.actions()   # malfunction, not an obstruction
+
+
 def test_no_malfunction_still_orbits_on_obscured(monkeypatch):
     """Regression guard: with NO malfunction prompt (a real obstruction), the
     no-charge edge still runs the SC-assist orbit get-around as before."""

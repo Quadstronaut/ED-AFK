@@ -392,6 +392,7 @@ def step_engage_jump_clearance(
         charging_polls = 0
         poll_i = 0
         align_holds = 0        # in-place ALIGN re-aligns done this attempt
+        malfunctioned = False  # FSD (SCO) MALFUNCTIONED seen this attempt
         while True:
             if ctx.should_abort():
                 ctx.log("EngageJumpClearanceAborted",
@@ -454,9 +455,30 @@ def step_engage_jump_clearance(
                     return True
                 ctx.log("EngageJumpClearanceChargeDropped",
                         {"attempt": attempt, "polls": poll_i})
-                break             # -> C4 obstructed/move edge
+                # A charge that spooled then DROPPED is the classic FSD (SCO)
+                # malfunction signature -- read the HUD NOW (the prompt is still
+                # up). Malfunction -> wait + re-fire, NEVER the orbit get-around.
+                if _hud_sco_malfunction(ctx):
+                    ctx.log("EngageJumpClearanceScoMalfunction",
+                            {"attempt": attempt, "poll": poll_i,
+                             "edge": "charge_dropped"})
+                    malfunctioned = True
+                break             # -> malfunction handling / C4 move edge
             else:
                 no_charge_polls += 1
+                # FSD (SCO) MALFUNCTION discriminator (operator 2026-07-12): the
+                # prompt FLASHES right after the press and clears in seconds --
+                # checking only at the ~10s obscured edge missed it EVERY live run
+                # (ScoMalf=0; the ship orbit-assisted the star instead). Read the
+                # HUD on every no-charge poll so a malfunction is caught the moment
+                # it shows. A malfunction is NOT an obstruction; we are already
+                # oriented -> wait + re-fire, never orbit-assist a body that isn't
+                # in the way. Fail-soft: no HUD read -> the get-around still runs.
+                if _hud_sco_malfunction(ctx):
+                    ctx.log("EngageJumpClearanceScoMalfunction",
+                            {"attempt": attempt, "poll": poll_i, "edge": "no_charge"})
+                    malfunctioned = True
+                    break
                 if no_charge_polls >= effective_polls:
                     break         # press refused, no charge -> C4 move edge
             poll_i += 1
@@ -468,6 +490,19 @@ def step_engage_jump_clearance(
                     {"reason": "abort", "attempt": attempt})
             return False
 
+        # --- FSD (SCO) MALFUNCTION handling (operator 2026-07-12): the poll loop
+        # caught the malfunction prompt at the charge-drop / a no-charge poll (the
+        # in-loop checks above). A malfunction is NOT an obstruction and we are
+        # already oriented -> do NOT orbit-assist. Wait a recovery beat and
+        # RE-FIRE the same jump on the next attempt; the required-fail retry ladder
+        # + strand guard keep re-pressing if it persists (the drive recovers on
+        # its own timescale). Moved OFF the ~10s obscured edge, where the
+        # transient prompt had always cleared before the read (ScoMalf=0 across
+        # every live run -- the ship orbit-assisted the star instead).
+        if malfunctioned:
+            ctx.sleeper(malfunction_recovery_s)
+            continue
+
         # --- C4: StartJump absent after max_jump_polls -> obstructed edge ---
         ctx.log("EngageJumpClearanceObscured",
                 {"attempt": attempt, "polls": effective_polls})
@@ -477,21 +512,6 @@ def step_engage_jump_clearance(
             ctx.log("EngageJumpClearanceAborted",
                     {"reason": "abort", "attempt": attempt})
             return False
-
-        # --- FSD (SCO) MALFUNCTION discriminator (operator 2026-07-12, HEGIO
-        # NV-P C5-1 frame): a no-charge edge is normally treated as an
-        # obstruction and gets the SC-assist ORBIT get-around below. But when the
-        # HUD shows FSD (SCO) MALFUNCTIONED the DRIVE briefly refused to spool --
-        # NOT an obstruction -- and we are ALREADY oriented to the next jump. So
-        # do NOT orbit-assist a body that isn't in the way: wait a recovery beat
-        # and let the NEXT attempt re-press the SAME jump. If the malfunction
-        # outlasts max_clear_attempts the required-fail retry ladder + strand
-        # guard keep re-pressing; the drive recovers on its own timescale.
-        # Fail-soft: no HUD read -> falls through to the get-around (today's path).
-        if _hud_sco_malfunction(ctx):
-            ctx.log("EngageJumpClearanceScoMalfunction", {"attempt": attempt})
-            ctx.sleeper(malfunction_recovery_s)
-            continue
 
         # --- C4 MOVE (D3 FIX): SC-assist ORBIT get-around, THROTTLE FAIL-
         # CLOSED. The old pitch-away-then-forward-burn could ram a jump
