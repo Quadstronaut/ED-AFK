@@ -37,11 +37,16 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
+  { action = "wait", s = 3.33 },
   { action = "wait_sc_assist_orbiting" },
-  { action = "wait", s = 7.0 },
+  { action = "confirm_orbiting" },
+  { action = "wait", s = 13.0 },
   { action = "target_next_route", required = true },
   { action = "set_throttle", pct = 100 },
+  { action = "wait", s = 3.33 },
+  { action = "set_throttle", pct = 75 },
   { action = "orient_compass", required = true },
   { action = "orient_widget_ring", required = true },
+  { action = "set_throttle", pct = 100 },
   { action = "engage_jump_clearance", required = true },
 ]
