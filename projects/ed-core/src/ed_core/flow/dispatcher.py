@@ -894,11 +894,18 @@ class FlowRunner:
 
         # Witchspace latch — SET on a Hyperspace StartJump, CLEARED on FSDJump.
         # Supercruise StartJumps (JumpType=="Supercruise") must NOT set it.
-        # Belt-and-suspenders releases on SupercruiseEntry / Docked ensure a
-        # missed FSDJump can never permanently wedge the interpreter pause.
+        # Belt-and-suspenders releases on SupercruiseEntry / Docked / Location
+        # ensure a missed FSDJump can never permanently wedge the interpreter
+        # pause. LOCATION added 2026-07-12 (live wedge, session 040709): a game
+        # QUIT mid-hyperspace leaves a Hyperspace StartJump with NO FSDJump in
+        # the backlog; on relaunch ED emits LoadGame + Location (ship reverted to
+        # its last stable system) but neither FSDJump/SC-entry/Docked ever fires,
+        # so the latch stayed True and startup WitchspacePaused every step — the
+        # bot never took its first action. Location is ED's authoritative
+        # post-load real-space position event, never emitted inside the tunnel.
         if name == "StartJump" and getattr(ev, "jump_type", None) == "Hyperspace":
             self._in_witchspace = True
-        elif name in ("FSDJump", "SupercruiseEntry", "Docked"):
+        elif name in ("FSDJump", "SupercruiseEntry", "Docked", "Location"):
             self._in_witchspace = False
 
     def _apply_state(self, ev: Any) -> None:
