@@ -2907,6 +2907,10 @@ def step_pitch_star_off(ctx: StepContext, *, bright_thresh: int = 125,
     grabber = getattr(ctx, "hud_grabber", None)
     if grabber is None:
         ctx.log("PitchStarOff", {"result": "no_grabber"})
+        # Overlay: no probe possible. rect=None re-flashes the named 'sun'
+        # grabber box (build_sun_grabber owns the region outline).
+        from ed_vision.debug_overlay import publish_read
+        publish_read("sun", verdict="miss", label="no grabber")
         return False
     import numpy as np
     t0 = int(ctx.clock())
@@ -2925,16 +2929,25 @@ def step_pitch_star_off(ctx: StepContext, *, bright_thresh: int = 125,
                 ctx.frame_sink(f"pitchoff_{t0}_i{i:02d}", frame)
         except Exception:  # noqa: BLE001 — unreadable frame -> fail closed
             ctx.log("PitchStarOff", {"result": "read_error", "iters": i})
+            from ed_vision.debug_overlay import publish_read
+            publish_read("sun", verdict="miss", label="read error")
             return False
         ctx.log("PitchStarOffIter", {"i": i, "bright_frac": round(frac, 4)})
         if frac < clear_frac:
             ctx.log("PitchStarOff", {"result": "clear", "iters": i,
                                      "bright_frac": round(frac, 4)})
+            # Star pitched off-screen: sun probe reads clear -> no star ahead.
+            from ed_vision.debug_overlay import publish_read
+            publish_read("sun", verdict="miss", label=f"bright {frac:.3f} clear")
             return True
         if not _press(ctx, "PitchUpButton", hold_s=pitch_hold_s):
             return False
         ctx.sleeper(settle_s)               # rotational momentum settle
     ctx.log("PitchStarOff", {"result": "never_cleared", "iters": max_iters})
+    # Star still bright ahead after every pulse: sun probe = star-ahead HIT.
+    # frac is defined here (the loop ran to completion computing it each iter).
+    from ed_vision.debug_overlay import publish_read
+    publish_read("sun", verdict="hit", label=f"bright {frac:.3f} stuck")
     return False
 
 

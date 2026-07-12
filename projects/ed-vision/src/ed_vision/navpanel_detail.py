@@ -113,26 +113,57 @@ def read_detail_button_label(
     DetailButton.UNKNOWN (confident=False) so the caller fails CLOSED (never presses
     a button it couldn't confirm). `ocr` is injected for tests; defaults to WinRT
     ocr_detailed, falling back to UNKNOWN if WinRT isn't available."""
+
+    def _publish(button: DetailButton) -> None:
+        """Illustrate the button-label read on the CV-debug overlay. No named
+        grabber owns this region, so we compute the LABEL_REGION_FRAC box from the
+        frame ourselves (mirrors read_sc_hud) and pass it as the flash rect. The
+        label shows the classified action; verdict 'hit' when a known control
+        classified, 'miss' when the label was unreadable. Fully fail-soft: never
+        changes the return value, never raises."""
+        try:
+            from .debug_overlay import publish_read
+            rect = None
+            try:
+                import numpy as np  # type: ignore
+                fh, fw = np.asarray(frame).shape[:2]
+                rect = (int(region_frac[0] * fw), int(region_frac[1] * fh),
+                        int((region_frac[2] - region_frac[0]) * fw),
+                        int((region_frac[3] - region_frac[1]) * fh))
+            except Exception:  # noqa: BLE001 — bad frame -> no rect, still flash
+                rect = None
+            publish_read("nav_detail", rect=rect,
+                         verdict="hit" if button is not DetailButton.UNKNOWN
+                                 else "miss",
+                         label=button.value)
+        except Exception:  # noqa: BLE001 — overlay is decoration, never the read
+            pass
+
     if ocr is None:
         try:
             from ed_vision import ocr_winrt
             if not ocr_winrt.available():
+                _publish(DetailButton.UNKNOWN)
                 return DetailLabelRead(DetailButton.UNKNOWN, "", False)
             ocr = ocr_winrt.ocr_detailed
         except Exception:  # noqa: BLE001
+            _publish(DetailButton.UNKNOWN)
             return DetailLabelRead(DetailButton.UNKNOWN, "", False)
 
     crop = _crop_frac(frame, region_frac)
     if crop is None:
+        _publish(DetailButton.UNKNOWN)
         return DetailLabelRead(DetailButton.UNKNOWN, "", False)
     try:
         lines = ocr(crop)
     except Exception:  # noqa: BLE001 — OCR engine failure -> fail-closed.
+        _publish(DetailButton.UNKNOWN)
         return DetailLabelRead(DetailButton.UNKNOWN, "", False)
 
     # ocr_detailed returns OcrLine objects; a test stub may return plain strings.
     text = " ".join(getattr(ln, "text", ln) for ln in (lines or []))
     button = classify_detail_label(text)
+    _publish(button)
     return DetailLabelRead(button, text, button is not DetailButton.UNKNOWN)
 
 

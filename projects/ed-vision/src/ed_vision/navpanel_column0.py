@@ -622,6 +622,23 @@ def find_first_unexplored(frame: Any, *, crop=NAVLIST_CROP,
     anchors = derive_navlist_anchors(frame, crop=crop, ocr_lines_fn=ocr_lines_fn)
     scan = scan_column0_rows(frame, anchors)
     row, terminated = _first_unexplored_from_scan(scan, skip_selected=skip_selected)
+    # Illustrate every scanned row's column-0 glyph verdict on the debug overlay
+    # (mirrors cv_debug_cli's navrow loop). Each row already carries its own
+    # SCREEN rect + verdict + template scores, and no NAMED grabber owns these
+    # dynamic per-row cells, so we box each rect directly. SYSTEM/UNEXPLORED are
+    # positive classifications (hit); UNKNOWN read nothing usable (miss). Rows
+    # with rect=None (unlocatable) have nothing to draw. Fully fail-soft.
+    from .debug_overlay import publish_read
+    for r in scan:
+        row_rect = r.get("rect")
+        if row_rect is None:
+            continue
+        verdict = r.get("verdict")
+        publish_read(
+            f"col0_row{r.get('row')}", rect=row_rect,
+            verdict="hit" if verdict in (SYSTEM, UNEXPLORED) else "miss",
+            label=f"{verdict} s{r.get('star_score', 0.0):.2f} "
+                  f"b{r.get('box_score', 0.0):.2f}")
     return {"row": row, "terminated": terminated, "scan": scan, "anchors": anchors}
 
 
