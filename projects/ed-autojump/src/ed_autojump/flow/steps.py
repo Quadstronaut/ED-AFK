@@ -273,7 +273,7 @@ def step_engage_jump_clearance(
     max_charge_live_polls: int = 300,  # PHROEA FIX 2026-07-12 — wedged-FSD hard cap (~240s) for a STILL-LIVE charge
     align_hold_check_poll: int = 8,  # PHROEA NO-Q 2026-07-12 — charging polls w/o commit before the first ALIGN HUD check
     max_align_holds: int = 3,        # bounded in-place re-aligns per attempt
-    malfunction_recovery_s: float = 3.0,  # HEGIO 2026-07-12 — beat for a MALFUNCTIONED FSD to recover before the re-press
+    malfunction_recovery_s: float = 10.0,  # operator 2026-07-12: 3.0 was too short -- the FSD was still recovering on the re-fire, the malfunction went UNDETECTED, and it fell through to SC-assisting the star. Longer beat between detections so a device-damaged drive actually recovers.
     max_clear_attempts: int = 3,
     max_sc_entry_polls: int = 25,  # G19: realspace obscured -> SC-entry wait ceiling (~20s @0.8s)
     clear_burn_s: float = 7.0,   # post-orbit-engage settle pacing (D3: was the straight-burn duration)
