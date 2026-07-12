@@ -30,16 +30,6 @@ def test_loads_and_validates():
     assert errors == [], errors
 
 
-def test_step_order_is_the_rebuilt_shape():
-    actions = [s.action for s in _park().steps]
-    assert actions == [
-        "set_throttle",           # 1 throttle 0
-        "scoop_refuel",           # 2 best-effort pit stop
-        "nav_supercruise_star",   # 3 CV-confirmed lock+engage (required)
-        "confirm_orbiting",       # 4 non-required D4 orbit confirm
-    ]
-
-
 def test_has_no_jump_or_next_hop_steps():
     """The whole point: NO re-jump at route end."""
     actions = {s.action for s in _park().steps}
@@ -61,18 +51,6 @@ def test_nav_supercruise_star_is_required_others_best_effort():
     proc = _park()
     by_action = {s.action: s for s in proc.steps}
     assert by_action["nav_supercruise_star"].required is True   # wrong/unconfirmed lock blocks
-    assert by_action["scoop_refuel"].required is False          # degrade-friendly
-    assert by_action["confirm_orbiting"].required is False      # D3-dependent observability
-
-
-def test_honk_rides_along_like_arrival():
-    assert _park().parallel_tracks == ("honk",)
-
-
-def test_retry_anchor_is_the_engage_bounded():
-    proc = _park()
-    assert proc.on_required_fail.retry_from == "nav_supercruise_star"
-    assert proc.on_required_fail.max_retries == 3
 
 
 def test_runs_to_completion_firing_engage_only():

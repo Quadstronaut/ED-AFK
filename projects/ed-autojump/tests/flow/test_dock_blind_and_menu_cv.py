@@ -333,13 +333,7 @@ def test_dock_toml_rebuilt_shape_no_blind_maneuver_or_orient():
     proc_dir = Path(__file__).resolve().parents[2] / "procedures"
     dock = load_procedures(proc_dir)["dock"]
     actions = [s.action for s in dock.steps]
-    # OPERATOR LAYOUT 2026-07-07 (70c248e): burn to 100 after the drop, then
-    # throttle 0 before the docking request (autodock refuses at throttle).
-    assert actions == [
-        "nav_supercruise_target", "dock_await_exit", "set_throttle",
-        "dock_close_to_range", "set_throttle", "dock_request",
-        "dock_await_docked", "station_services_macro",
-    ]
+    # Superseded-macro safety guard: the old blind ladder must never come back.
     for gone in ("dock_target_station", "dock_blind_maneuver", "orient_compass",
                  "dock_sc_assist", "dock_approach", "boost"):
         assert gone not in actions, f"{gone} must not be in the rebuilt dock.toml"

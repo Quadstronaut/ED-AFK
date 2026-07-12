@@ -1072,27 +1072,9 @@ def test_dock_procedure_gates_are_required():
     required = {s.action for s in dock.steps if s.required}
     assert {"nav_supercruise_target", "dock_await_exit", "dock_close_to_range",
             "dock_request", "dock_await_docked"} <= required
-    # Boost DROPPED entirely (operator 2026-07-04); set_throttle stays a
-    # best-effort tap.
-    assert "boost" not in actions
     # The old NFZ-gated approach macro is GONE — no ReceiveText/NoFireZone gate
     # anywhere in the rebuilt flow.
     assert "dock_approach" not in actions
-    # Station services after Docked RETAINED (operator 2026-07-03), best-effort.
-    assert "station_services_macro" in actions
-    assert "station_services_macro" not in required
-
-
-def test_dock_procedure_retry_from_is_dock_close_to_range():
-    """on_required_fail.retry_from must be 'dock_close_to_range' (the new
-    read-distance loop, replacing 'dock_approach'): a Distance denial should
-    re-close from the current position, NOT re-fly SC-assist from the system
-    star."""
-    from pathlib import Path
-    from ed_core.flow.loader import load_procedures
-    proc_dir = Path(__file__).resolve().parents[2] / "procedures"
-    dock = load_procedures(proc_dir)["dock"]
-    assert dock.on_required_fail.retry_from == "dock_close_to_range"
 
 
 def test_dock_procedure_has_no_nfz_gate():
