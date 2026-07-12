@@ -187,6 +187,12 @@ class FlowRunner:
         # redispatch here) — never before every keypress ("overkill"). cli
         # wires launcher.focus.focus_ed_window when --engage-keys.
         focus_reassert: Optional[Callable[[], bool]] = None,
+        # CONNECTION-ERROR watch (operator 2026-07-12): a full-frame BGR grab
+        # polled by a background daemon for the CONNECTION ERROR modal. A server
+        # drop carries NO journal event, so CV/OCR is the only signal. None
+        # (unwired / unit tests) -> the watch thread never starts. Wired by cli
+        # exactly like the other full-frame grabbers.
+        connection_grabber: Optional[Callable[[], Any]] = None,
     ):
         self.procedures = procedures
         self.sender = sender
@@ -297,6 +303,14 @@ class FlowRunner:
         # beat late, never torn.
         self._running_proc: Optional[str] = None
         self._preempt: Optional[str] = None
+        # CONNECTION-ERROR latch (operator 2026-07-12). Set by the connection
+        # watch daemon when it OCRs the CONNECTION ERROR modal; consumed on the
+        # MAIN thread by run_live's _maybe_recover_connection (procedure
+        # execution stays single-threaded -- the watch thread only flags). Stays
+        # set across the recovery run so the watch doesn't re-trigger mid-
+        # recovery; cleared when recovery returns (a still-down server then
+        # re-triggers on the next tick).
+        self._connection_error_seen: bool = False
         # OPERATOR WIRE-IN 2026-07-06: a step saw ALIGN WITH ESCAPE VECTOR
         # (boot-smack state). Latched by ctx.escape_vector_notify; consumed by
         # boot_routes' startup override, which hands off to smack_recovery.
@@ -320,6 +334,7 @@ class FlowRunner:
         self._redispatch_next_t: float = 0.0
         self._redispatch_driver = redispatch_driver
         self.focus_reassert = focus_reassert
+        self._connection_grabber = connection_grabber
         # Single tail consumer + fan-out (see _TailHub). None without a tail.
         self._hub: Optional[_TailHub] = (
             _TailHub(tail, on_event=self._on_tail_event) if tail is not None else None)
@@ -1164,6 +1179,85 @@ class FlowRunner:
     def request_stop(self) -> None:
         self.stop_requested = True
 
+    # ---- connection-error watch (operator 2026-07-12) ---------------------
+    def _connection_tick(self) -> None:
+        """One connection-watch tick: skip while a UI macro owns input or a
+        recovery is already pending/running; else grab a full frame and OCR for
+        the CONNECTION ERROR modal. On a hit, latch a preempt (aborts the running
+        proc at its next poll -- a drop obsoletes EVERY scene, so unlike
+        star_smack there is NO scene allow-list) + a recovery flag for the
+        main-thread consumer. This thread NEVER presses keys."""
+        if self.input_exclusive() or self._connection_error_seen:
+            return
+        grab = self._connection_grabber
+        if grab is None:
+            return
+        try:
+            frame = grab()
+        except Exception:  # noqa: BLE001 — grab is best-effort, never fatal
+            return
+        if frame is None:
+            return
+        try:
+            from ed_vision.hud_sc_indicators import detect_connection_error
+            hit = detect_connection_error(frame)
+        except Exception:  # noqa: BLE001 — detector/import is best-effort
+            return
+        if not hit:
+            return
+        self._connection_error_seen = True
+        if self._running_proc is not None:
+            self._preempt = "connection_error"
+        print("[CONNECTION-ERROR] modal detected -> recovering", flush=True)
+        if self.record is not None:
+            self.record("ConnectionErrorDetected", {})
+        if self.overlay is not None:
+            try:
+                self.overlay.status("[CONNECTION-ERROR] detected -> recovering")
+            except Exception:  # noqa: BLE001 — overlay is fail-soft
+                pass
+
+    def _connection_watch_loop(self, stop: threading.Event,
+                               tick_s: float = 1.5) -> None:
+        """Flight-wide connection-error watch (operator 2026-07-12): a daemon
+        thread like the heat watchdog. The CONNECTION ERROR dialog carries no
+        journal event, so the journal-preempt path can't see it -- only this
+        CV/OCR poll can. Exits on stop / panic / stop_requested."""
+        while not stop.is_set():
+            if self._should_abort():
+                return
+            self._connection_tick()
+            self.sleeper(tick_s)
+
+    def _maybe_recover_connection(self) -> None:
+        """Main-thread consumer of the connection-error latch. Runs
+        connection_recovery, then clears the latch so a still-down server
+        re-triggers on the next tick. A no-op when nothing is flagged."""
+        if not self._connection_error_seen:
+            return
+        if "connection_recovery" not in self.procedures:
+            # No recovery procedure wired (unit tests / minimal build): clear +
+            # log so the watch doesn't spin re-detecting with no consumer.
+            self._connection_error_seen = False
+            if self.record is not None:
+                self.record("ConnectionRecoveryUnwired", {})
+            return
+        print("[CONNECTION-ERROR] running connection_recovery", flush=True)
+        if self.record is not None:
+            self.record("ConnectionRecoveryStart", {})
+        # Re-assert ED foreground before driving menu input (a stolen focus would
+        # send the whole macro into the wrong window).
+        if self.focus_reassert is not None:
+            try:
+                self.focus_reassert()
+            except Exception:  # noqa: BLE001 — focus is best-effort, never fatal
+                pass
+        try:
+            self._run("connection_recovery")
+        finally:
+            # Cleared AFTER recovery: a still-present modal re-latches next tick.
+            self._connection_error_seen = False
+
     # ---- never-strand re-dispatch (workstream A, 2026-07-07 council) ------
     def _maybe_redispatch(self) -> None:
         """Fire the queued re-dispatch when its bounded-backoff window has
@@ -1280,6 +1374,14 @@ class FlowRunner:
         watchdog = threading.Thread(
             target=self._heat_watchdog_loop, args=(watchdog_stop,), daemon=True)
         watchdog.start()
+        # CONNECTION-ERROR watch (operator 2026-07-12): its own daemon, started
+        # only if a connection grabber is wired (the CV signal for the
+        # journal-blind modal). It sets latches; the MAIN loop does the recovery.
+        conn_stop = threading.Event()
+        if self._connection_grabber is not None:
+            threading.Thread(
+                target=self._connection_watch_loop, args=(conn_stop,),
+                daemon=True).start()
         deadline = self.clock() + duration_s
         try:
             while not self.stop_requested and self.clock() < deadline:
@@ -1293,12 +1395,18 @@ class FlowRunner:
                 events = self._hub.poll(main_handle)
                 if not events:
                     self._caught_up = True
-                    run_classifiers(self)
-                    # NEVER-STRAND (workstream A): fire a queued re-dispatch
-                    # once its backoff window elapses. A no-op (single clock
-                    # comparison) when nothing is queued -- the idle branch
-                    # stays a plain poll+sleep, no busy-spin.
-                    self._maybe_redispatch()
+                    if self._connection_error_seen:
+                        # A server drop obsoletes classify/redispatch -- the
+                        # CONNECTION ERROR modal is up. Recover (re-enter the
+                        # game) before anything else touches input.
+                        self._maybe_recover_connection()
+                    else:
+                        run_classifiers(self)
+                        # NEVER-STRAND (workstream A): fire a queued re-dispatch
+                        # once its backoff window elapses. A no-op (single clock
+                        # comparison) when nothing is queued -- the idle branch
+                        # stays a plain poll+sleep, no busy-spin.
+                        self._maybe_redispatch()
                     self.sleeper(poll_interval_s)
                     continue
                 for ev in events:
@@ -1349,6 +1457,7 @@ class FlowRunner:
             self.stop_requested = True
         finally:
             watchdog_stop.set()
+            conn_stop.set()
             self._hub.unsubscribe(main_handle)
 
     # (Phase-1 reorg): backward-compat shim methods _maybe_startup, dispatch,

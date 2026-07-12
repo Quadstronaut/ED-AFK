@@ -470,6 +470,10 @@ def cmd_run(args) -> int:
     # (never gate) _smack_kind. None -> the steer is skipped; recovery still
     # ALWAYS dispatches regardless (see _route_sc_exit's always-recover body).
     escape_vector_grabber = None
+    # CONNECTION-ERROR watch (operator 2026-07-12): a bare full-frame grab polled
+    # by the dispatcher's connection-watch daemon for the journal-blind CONNECTION
+    # ERROR modal. None -> the watch thread never starts (no regression).
+    connection_grabber = None
     if args.engage_keys:
         from ed_vision.capture import build_vision
         compass_reader, frame_grabber = build_vision(cfg)
@@ -540,6 +544,15 @@ def cmd_run(args) -> int:
             hud_grabber = _navpanel_icon_full_frame
             print("vision: SC-assist HUD reader ON "
                   "(ORBITING/ACTIVE/ALIGN center prompts)")
+        # CONNECTION-ERROR watch (operator 2026-07-12): the SAME bare full-frame
+        # grab, polled by the dispatcher's connection-watch daemon for the
+        # CONNECTION ERROR modal (a server drop -- no journal event, so CV/OCR is
+        # the only signal). WinRT-gated (the detector OCRs the dialog text);
+        # unwired -> the watch thread never starts, no regression.
+        if _navpanel_icon_full_frame is not None and _ocr.available():
+            connection_grabber = _navpanel_icon_full_frame
+            print("vision: connection-error watch ON "
+                  "(CONNECTION ERROR modal -> Solo re-entry recovery)")
         if nav_panel_reader is not None:
             print(f"exploration: nav-panel identity targeting ON "
                   f"(region={tuple(cfg.exploration.nav_panel_region)}) "
@@ -747,6 +760,7 @@ def cmd_run(args) -> int:
         hud_grabber=hud_grabber,
         dock_distance_km_supplier=dock_distance_km_supplier,
         escape_vector_grabber=escape_vector_grabber,
+        connection_grabber=connection_grabber,
         visited_logger=visited_logger,
         overlay=overlay,
         record=(recorder.record_outcome if recorder is not None else None),

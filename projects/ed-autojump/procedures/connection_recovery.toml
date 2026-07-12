@@ -1,0 +1,18 @@
+# CONNECTION_RECOVERY -- runs when the real-time scene monitor OCR-detects the
+# CONNECTION ERROR modal (operator 2026-07-12). Elite throws a full-screen
+# white-on-black dialog on a server drop; it carries NO journal event, so the
+# dispatcher's connection-watch daemon is the only signal. That daemon latches a
+# preempt (aborts whatever scene was running) + a recovery flag; run_live's idle
+# branch then runs THIS procedure on the main thread.
+#
+# One step: the operator-verified menu macro (press OK -> main menu -> CONTINUE
+# -> Solo mode [automatons can't play Open] -> load into real-space -> galaxy-map
+# open/close to re-plot the last saved route). See step_connection_recovery.
+#
+# NOT a boot_route / classifier scene -- it is dispatched by the watch consumer,
+# not by an event route. NO parallel_tracks (honk would fight the menu input).
+# NO on_required_fail: best-effort recovery that logs; after it returns the live
+# loop re-classifies from the fresh in-game state (startup / arrival).
+steps = [
+  { action = "connection_recovery" },
+]
