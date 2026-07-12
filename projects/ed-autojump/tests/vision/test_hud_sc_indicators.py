@@ -19,10 +19,12 @@ from ed_vision.hud_sc_indicators import (
     ScHudState,
     classify_hud_text,
     detect_align_warning,
+    detect_connection_error,
     detect_orbiting,
     detect_sc_assist_active,
     detect_sc_assist_engaged,
     detect_sco_malfunction,
+    is_connection_error_text,
     read_sc_hud,
 )
 
@@ -109,6 +111,44 @@ def test_sco_malfunction_detector():
     assert detect_sco_malfunction(f, ocr=lambda c: ["FSD (SCO) MALFUNCTIONED"]) is True
     assert detect_sco_malfunction(f, ocr=lambda c: ["ORBITING DESTINATION"]) is False
     assert detect_sco_malfunction(f, ocr=lambda c: []) is False
+
+
+# --------------------------------------------------------------------------
+# connection-error modal (operator 2026-07-12) — white-on-black CONNECTION
+# ERROR dialog. Keys on the invariant heading + a corroborating constant line;
+# the variable body message + code name (Mauve/Yellow/... Adder) are ignored.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text,expected", [
+    # both operator-observed screens (variable body + code name differ):
+    ("CONNECTION ERROR Could not connect to matchmaking server. "
+     "Error Code: Mauve Adder. Press OK to return to the main menu.", True),
+    ("CONNECTION ERROR Unrecoverable error on transaction server. "
+     "Error Code: Yellow Adder. Press OK to return to the main menu.", True),
+    # an unseen code name still fires (not keyed on the name):
+    ("CONNECTION ERROR Error Code: Orange Adder. "
+     "Press OK to return to the main menu.", True),
+    # heading + only the menu-prompt corroborator (Error Code line OCR-dropped):
+    ("CONNECTION ERROR Press OK to return to the main menu.", True),
+    # PRECISION: heading alone (no corroborator) must NOT fire — a false
+    # exit-to-menu on a healthy session is the costly error; the watch re-polls:
+    ("CONNECTION ERROR", False),
+    # normal HUD prompts never fire it:
+    ("ORBITING DESTINATION", False),
+    ("ALIGN WITH TARGET DESTINATION", False),
+    ("", False),
+])
+def test_is_connection_error_text(text, expected):
+    assert is_connection_error_text(text) is expected
+
+
+def test_connection_error_detector_injected_ocr():
+    f = _blank_frame()
+    mauve = ["CONNECTION ERROR", "Could not connect to matchmaking server.",
+             "Error Code: Mauve Adder.", "Press OK to return to the main menu."]
+    assert detect_connection_error(f, ocr=lambda c: mauve) is True
+    assert detect_connection_error(f, ocr=lambda c: ["ORBITING DESTINATION"]) is False
+    assert detect_connection_error(f, ocr=lambda c: []) is False
 
 
 # --------------------------------------------------------------------------
