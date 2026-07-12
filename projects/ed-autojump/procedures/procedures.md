@@ -36,6 +36,7 @@ the dispatch layer (see **Routing** below), never by a step.
 | **dock** | Station terminus. SC-assist to the named station → drop → close to <7.5 km → request docking → `Docked` → station-services macro. | 8 | yes | `dock_close_to_range` |
 | **dock_resume** | A NEW route plotted while DOCKED. Auto-launch → full throttle out → wait mass-lock clear → jump tail. Fires only from the docked state. | 9 | yes | `target_next_route` |
 | **route_complete_park** | Terminal park at a route-final SYSTEM/star. Throttle 0 → best-effort top-off → SC-assist the star → confirm orbiting → STOP. No jump tail. | 4 | yes | `nav_supercruise_star` |
+| **connection_recovery** | The real-time monitor OCR-detected the CONNECTION ERROR modal (a server drop). Press OK → main menu → re-enter in **Solo** (automatons can't play Open) → load into real-space → galaxy-map open/close to re-plot the saved route. Dispatched by the connection watch, not an event route. | 1 | no | — |
 
 ### Routing (how a procedure gets chosen)
 
@@ -57,6 +58,13 @@ Three dispatch layers decide which procedure runs — none of them is a step:
 
 The never-strand driver `redispatch_from_live_state` (`:1329`) re-classifies from
 scratch if a procedure aborts, so the bot never dead-ends.
+
+**Real-time scene monitor.** The dispatcher also PREEMPTS a running procedure
+mid-flight on a scene-invalidating event: an `FSDJump` (new system → arrival), a
+star-smack `SupercruiseExit` at a Star/Planet (→ `smack_recovery`), and a
+CONNECTION ERROR modal caught by a background CV/OCR watch daemon (→
+`connection_recovery`, dispatched on the main thread). Each aborts-and-hands-off
+at the running procedure's next poll — a scene handoff, never a retry flap.
 
 > **Quirk:** `_STATE_TO_PROC` (`boot_routes.py:137`) maps `EXPLORATION` /
 > `TRAVERSAL` / `REFUEL` / `PAUSE` / `RESUME` → `'fallback'` (legacy classifier).
