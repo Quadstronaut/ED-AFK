@@ -713,6 +713,38 @@ def cmd_run(args) -> int:
     set_debug_sink(_cv_sink)
     print(_cv_msg)
 
+    # OVERLAY SELF-TEST (operator 2026-07-12 "not seeing anything"): when CV boxes
+    # are ON, flash two hard-to-miss labeled rects at startup so the box channel is
+    # confirmed INDEPENDENT of scene/timing (the real read-boxes are 2s flashes
+    # tied to a reader running -- easy to miss). RAW is drawn at FIXED virtual
+    # coords (bypasses the screen->virtual transform); XFORM goes through the
+    # transform from a centre-screen rect. Diagnosis on the next run:
+    #   see BOTH   -> box channel + transform both work; real boxes just flash briefly.
+    #   see RAW only -> the transform is off -> run calibrate-overlay.
+    #   see NEITHER -> EDMCOverlay isn't rendering rects (only text). Tell me.
+    # 15s TTL so it can't be missed; one-shot, gone after that. Fail-soft.
+    if _cv_sink is not None and edmc is not None:
+        try:
+            edmc.send_once({"id": "edafk_selftest_raw", "shape": "rect",
+                            "color": "#ff00ff00", "fill": "",
+                            "x": 400, "y": 140, "w": 560, "h": 80, "ttl": 15})
+            edmc.send_once({"id": "edafk_selftest_raw_lbl",
+                            "text": "ED-AFK CV OVERLAY SELF-TEST -- RAW rect (box channel OK)",
+                            "color": "#ff00ff00", "size": "normal",
+                            "x": 402, "y": 120, "ttl": 15})
+            _vx, _vy, _vw, _vh = _cv_sink._transform.to_virtual((700, 430, 520, 120))
+            edmc.send_once({"id": "edafk_selftest_xf", "shape": "rect",
+                            "color": "#ffff2222", "fill": "",
+                            "x": _vx, "y": _vy, "w": _vw, "h": _vh, "ttl": 15})
+            edmc.send_once({"id": "edafk_selftest_xf_lbl",
+                            "text": "SELF-TEST -- TRANSFORMED rect (transform OK)",
+                            "color": "#ffff2222", "size": "normal",
+                            "x": _vx, "y": max(0, _vy - 18), "ttl": 15})
+            print("overlay: CV self-test flashed -- look for GREEN 'RAW' + RED "
+                  "'TRANSFORMED' boxes for ~15s (report which you see)")
+        except Exception as _e:  # noqa: BLE001 — self-test must never break a run
+            print(f"overlay: CV self-test send failed -- {type(_e).__name__}: {_e}")
+
     # Visited-systems log (default on; --no-visited-log disables). Passive
     # observer: appends each live FSDJump arrival to ~/Documents, never deleted.
     from ed_core.visited import VisitedSystemsLogger
