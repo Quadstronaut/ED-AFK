@@ -15,6 +15,7 @@
 </p>
 
 <p>
+  <a href="https://github.com/Quadstronaut/ED-AFK/releases/tag/v0.2.0"><img alt="release" src="https://img.shields.io/github/v/release/Quadstronaut/ED-AFK?include_prereleases&label=release&color=A42E2B"></a>
   <img alt="last commit" src="https://img.shields.io/github/last-commit/Quadstronaut/ED-AFK">
   <img alt="repo size" src="https://img.shields.io/github/repo-size/Quadstronaut/ED-AFK">
   <img alt="top language" src="https://img.shields.io/github/languages/top/Quadstronaut/ED-AFK">
@@ -44,6 +45,7 @@
 | **Platform** | Windows (PC *Elite Dangerous: Odyssey*) |
 | **Language** | Python 3.11+ |
 | **Status** | Alpha — working experiment, not a finished product |
+| **Latest release** | [**v0.2.0 — Jump Release**](https://github.com/Quadstronaut/ED-AFK/releases/tag/v0.2.0) · A→B jump + refuel + honk, tested ~24h live on Twitch (900+ jumps) |
 | **License (root)** | MIT |
 | **License (ed-autojump)** | AGPL-3.0-or-later |
 | **Shippable tool** | `ed-autojump` |
