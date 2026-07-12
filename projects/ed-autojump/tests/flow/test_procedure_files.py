@@ -70,6 +70,7 @@ def test_arrival_is_exactly_throttle_scoop_star():
     gate = next(s for s in arrival.steps if s.action == "star_distance_gate")
     assert gate.skip_to == "__end__"
     assert gate.required is False
+    assert gate.params["threshold_ls"] == 15.0     # operator 2026-07-12 (matches startup)
     star = next(s for s in arrival.steps if s.action == "nav_supercruise_star")
     assert star.required is True
     assert arrival.parallel_tracks == ("honk",)
