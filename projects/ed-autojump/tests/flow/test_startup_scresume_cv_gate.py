@@ -199,6 +199,66 @@ def test_gate_anchor_comes_from_gates_own_grab_not_the_confirm(monkeypatch):
     assert seen.get("row_y") == 451          # the gate frame's OWN anchor
 
 
+def test_gate_far_requires_two_agreeing_reads(monkeypatch):
+    """FAR CONFIRMATION (live 2026-07-11 23:43, session 234324): OCR ate the
+    leading "5." of "5.82Ls" -> a single 82.0 read verdicted FAR and
+    full-throttled into a star 5.82 Ls off the nose. A FAR first read whose
+    confirmation read disagrees (82.0 vs 5.82) must verdict CLOSE."""
+    monkeypatch.setattr(nr0, "read_row0_selected", _bright_row0)
+    vals = [82.0, 5.82]
+    monkeypatch.setattr(npr, "read_first_row_distance_ls",
+                        lambda frame, **kw: vals.pop(0))
+    logs = []
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None,
+                      navpanel_frame_grabber=lambda: object(),
+                      record=lambda n, p: logs.append((n, p)))
+    # threshold 10 = the live toml value; 82.0 reads FAR, 5.82 refutes it.
+    assert STEP_REGISTRY["star_distance_gate"](ctx, threshold_ls=10.0) is True
+    assert any(n == "StarDistanceGate" and p.get("reason") == "far_unconfirmed"
+               for n, p in logs)
+
+
+def test_gate_far_confirmed_by_agreeing_second_read(monkeypatch):
+    """Two independent FAR reads that agree -> FAR stands (False)."""
+    monkeypatch.setattr(nr0, "read_row0_selected", _bright_row0)
+    vals = [504.0, 496.0]
+    monkeypatch.setattr(npr, "read_first_row_distance_ls",
+                        lambda frame, **kw: vals.pop(0))
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None,
+                      navpanel_frame_grabber=lambda: object())
+    assert STEP_REGISTRY["star_distance_gate"](ctx) is False
+
+
+def test_gate_far_with_unreadable_confirmation_forces_close(monkeypatch):
+    """FAR first read + unreadable second read -> CLOSE (fail-closed: the
+    dangerous verdict never stands on one read)."""
+    monkeypatch.setattr(nr0, "read_row0_selected", _bright_row0)
+    vals = [504.0, None]
+    monkeypatch.setattr(npr, "read_first_row_distance_ls",
+                        lambda frame, **kw: vals.pop(0))
+    logs = []
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None,
+                      navpanel_frame_grabber=lambda: object(),
+                      record=lambda n, p: logs.append((n, p)))
+    assert STEP_REGISTRY["star_distance_gate"](ctx) is True
+    assert any(p.get("reason") == "far_unconfirmed" for _, p in logs)
+
+
+def test_gate_close_verdict_needs_only_one_read(monkeypatch):
+    """CLOSE is the safe verdict — no confirmation read is spent on it."""
+    monkeypatch.setattr(nr0, "read_row0_selected", _bright_row0)
+    calls = {"n": 0}
+
+    def counting(frame, **kw):
+        calls["n"] += 1
+        return 3.0
+    monkeypatch.setattr(npr, "read_first_row_distance_ls", counting)
+    ctx = StepContext(sender=FakeSender(), sleeper=lambda s: None,
+                      navpanel_frame_grabber=lambda: object())
+    assert STEP_REGISTRY["star_distance_gate"](ctx) is True
+    assert calls["n"] == 1
+
+
 def test_gate_row0_lost_on_own_grab_forces_close(monkeypatch):
     """If the gate's own frame can no longer confirm a bright row 0 (float/wash
     between the confirm and the grab), NO anchor is trustworthy: CLOSE lane,
