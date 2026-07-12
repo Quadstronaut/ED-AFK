@@ -931,6 +931,22 @@ def test_docked_clears_witchspace_failsafe():
     assert r._in_witchspace is False
 
 
+def test_location_clears_witchspace_failsafe():
+    """W4c: a game QUIT mid-hyperspace emits a Hyperspace StartJump with NO
+    following FSDJump, then LoadGame + Location (the ship reverts to its last
+    stable system). Location must clear the latch or, on relaunch, the backlog
+    leaves _in_witchspace True and the interpreter WitchspacePauses EVERY step
+    forever -- the bot never takes its first action (live 2026-07-12: relaunch
+    after a quit mid-jump at Phroea Eaec, journal 173639 line 1535 StartJump ->
+    1552 Location, no FSDJump between; session 040709 froze startup at
+    set_throttle)."""
+    r = _wc_runner()
+    r._in_witchspace = True
+    r._on_tail_event(_ev("Location", docked=False,
+                         star_system="Phroea Eaec JO-V c17-0"))
+    assert r._in_witchspace is False
+
+
 def test_make_context_wires_in_witchspace():
     """W7: the context built by FlowRunner must expose in_witchspace() as a live
     supplier reflecting the runner's _in_witchspace latch — not a frozen
