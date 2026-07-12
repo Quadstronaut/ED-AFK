@@ -819,6 +819,58 @@ def step_engage_supercruise(
     return False
 
 
+def step_connection_recovery(
+    ctx: StepContext,
+    *,
+    menu_settle_s: float = 2.0,
+    nav_gap_s: float = 0.6,
+    load_settle_s: float = 5.0,
+    load_wait_s: float = 90.0,
+    replot_gap_s: float = 1.5,
+) -> bool:
+    """Recover from a CONNECTION ERROR modal (operator-verified 2026-07-12).
+
+    The real-time monitor's connection watch dispatches this after OCR-detecting
+    the CONNECTION ERROR dialog. The bot CANNOT play Open (automatons), so it
+    re-enters SOLO. Operator's verified manual key sequence, replayed with the
+    preset's UI binds (all validated present in ED-AFK.4.2.binds):
+
+      UI_Select (OK -> main menu) -> UI_Select (CONTINUE) -> UI_Right x2
+      (-> Solo mode) -> UI_Select (load into REAL-space, regardless of the
+      pre-drop location) -> [LoadGame] -> GalaxyMapOpen then UI_Back
+      (re-plots the last SAVED route).
+
+    Menu presses are blind and paced by settle waits (exactly like the
+    launcher's MenuNavigator); the LoadGame journal event is the real re-entry
+    gate. The pacing values are CONSERVATIVE + tunable and want a live tuning
+    pass. After this returns the live loop re-classifies from the fresh in-game
+    state. input_exclusive: owns input for the whole macro."""
+    # 1. OK -> main menu
+    _press(ctx, "UI_Select")
+    ctx.sleeper(menu_settle_s)
+    # 2. CONTINUE (resume the last commander/session)
+    _press(ctx, "UI_Select")
+    ctx.sleeper(menu_settle_s)
+    # 3. move the mode selector RIGHT to Solo (Open -> Private -> Solo)
+    _press(ctx, "UI_Right")
+    ctx.sleeper(nav_gap_s)
+    _press(ctx, "UI_Right")
+    ctx.sleeper(nav_gap_s)
+    # 4. load into the game (arrives in normal/real-space)
+    _press(ctx, "UI_Select")
+    ctx.log("ConnectionRecoveryLoading", {})
+    # 5. gate the re-entry on the LoadGame journal event (pace only if unwired)
+    if ctx.event_waiter is not None:
+        ctx.event_waiter("LoadGame", load_wait_s)
+    ctx.sleeper(load_settle_s)   # real-space settle before any further input
+    # 6. re-plot the last SAVED route: open the galaxy map, then close it
+    _press(ctx, "GalaxyMapOpen")
+    ctx.sleeper(replot_gap_s)
+    _press(ctx, "UI_Back")
+    ctx.log("ConnectionRecoveryReplotted", {})
+    return True
+
+
 # ---- register all shared steps into the core merged table -----------------
 register_step("press", step_press)
 register_step("wait", step_wait)
@@ -836,3 +888,6 @@ register_step("pitch_compass", step_pitch_compass)
 register_step("hold_alignment", step_hold_alignment)
 register_step("orient_widget_ring", step_orient_widget_ring)
 register_step("engage_supercruise", step_engage_supercruise)
+# connection_recovery owns input for its whole menu macro (input_exclusive) so
+# the heat watchdog + the connection watch pause while it drives the main menu.
+register_step("connection_recovery", step_connection_recovery, input_exclusive=True)
