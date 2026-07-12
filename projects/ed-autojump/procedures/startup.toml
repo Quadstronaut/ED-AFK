@@ -63,7 +63,7 @@ backoff_s = 2.0
 
 steps = [
   { action = "set_throttle", pct = 0 },
-  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 10.0 },
+  { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 15.0 },
   { action = "set_throttle", pct = 100 },
   { action = "engage_supercruise", required = true, escape_vector_abort = true },
   { action = "nav_supercruise_star", required = true },

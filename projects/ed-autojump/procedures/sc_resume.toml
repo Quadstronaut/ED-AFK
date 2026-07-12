@@ -44,6 +44,8 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
+    # This routine assumes the majority of cases - if it does not work you've found an edge case, o7 cmdr
+  { action = "set_throttle", pct = 0 },
   { action = "star_distance_gate", skip_to = "target_next_route", threshold_ls = 10.0 },
   { action = "nav_supercruise_star", required = true },
   { action = "wait_sc_assist_orbiting" },

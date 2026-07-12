@@ -356,7 +356,7 @@ def test_startup_rewired_shape():
         assert gone not in actions
     gate = proc.steps[1]
     assert gate.skip_to == "target_next_route"      # FAR lane vault
-    assert gate.params["threshold_ls"] == 10.0      # operator retuned from 100
+    assert gate.params["threshold_ls"] == 15.0      # operator retuned (100 -> 10 -> 15)
     # Boot-smack override watch rides SC entry (operator wire-in, run 233422).
     assert proc.steps[3].params.get("escape_vector_abort") is True
     assert proc.parallel_tracks == ("honk",)
@@ -371,15 +371,18 @@ def test_sc_resume_rewired_shape():
     (operator: near-star resume needs the pace), hop lock, 75% orient,
     100% jump."""
     proc, actions = _shape("sc_resume")
+    # OPERATOR 2026-07-12: a leading set_throttle 0 now reads the gate at ZERO
+    # throttle (same no-drift-toward-a-maybe-near-star rationale as startup).
     assert actions == [
-        "star_distance_gate", "nav_supercruise_star", "wait_sc_assist_orbiting",
-        "wait", "target_next_route", "set_throttle", "orient_compass",
-        "orient_widget_ring", "set_throttle", "engage_jump_clearance",
+        "set_throttle", "star_distance_gate", "nav_supercruise_star",
+        "wait_sc_assist_orbiting", "wait", "target_next_route", "set_throttle",
+        "orient_compass", "orient_widget_ring", "set_throttle",
+        "engage_jump_clearance",
     ]
     for gone in ("nav_panel_target", "sc_assist_orbit",
                  "engage_jump", "hold_alignment", "engage_supercruise"):
         assert gone not in actions
-    assert proc.steps[0].skip_to == "target_next_route"
+    assert proc.steps[1].skip_to == "target_next_route"     # gate now at index 1
     assert proc.parallel_tracks == ("honk",)
     # LIVE FIX 2026-07-06 (run 010444 starsmack): same gate re-anchor as
     # startup — no retry may bypass the clear-of-star gate into the burn.
@@ -398,6 +401,10 @@ def test_gate_throttle_order_per_scene():
     hundred_i = next(i for i, s in enumerate(proc.steps)
                      if s.action == "set_throttle" and s.params["pct"] == 100)
     assert 1 < hundred_i < actions.index("engage_supercruise")
-    _, actions = _shape("sc_resume")
-    assert actions[0] == "star_distance_gate"
-    assert actions.index("star_distance_gate") < actions.index("set_throttle")
+    # OPERATOR 2026-07-12: sc_resume now ALSO reads the gate at zero throttle --
+    # set_throttle 0 first, THEN the gate (no drift toward a maybe-near star
+    # during the read), matching startup. Supersedes the old "gate first, no
+    # throttle before it" invariant.
+    proc, actions = _shape("sc_resume")
+    assert actions[0] == "set_throttle" and proc.steps[0].params["pct"] == 0
+    assert actions[1] == "star_distance_gate"
