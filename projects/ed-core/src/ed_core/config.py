@@ -300,9 +300,14 @@ class VisionConfig:
     align_samples: int = 7
     # Widget-ring FINE alignment (additive after orient_compass). ON by default
     # (operator decision 2026-06-03). Needs the HUD mouse widget in "point"
-    # mode. widget_crop is the 1080p centre rect (x, y, w, h).
+    # mode. widget_crop is the 1080p centre rect (x, y, w, h). WIDENED 2026-07-12
+    # (operator: the target reticle lands "literally just outside" the old
+    # 900x600 box after the coarse compass pass, so the fine reader saw nothing
+    # and degraded): 1200x680 centred on (960,540). The reader derives the widget
+    # anchor from the crop centre (adaptive), so this size is a free knob;
+    # validated for no false rings on the milky-way + compass HUD.
     widget_ring_alignment: bool = True
-    widget_crop: tuple[int, int, int, int] = (510, 240, 900, 600)
+    widget_crop: tuple[int, int, int, int] = (360, 200, 1200, 680)
     # What a widget MISS does (operator decision 2026-06-06 -> 2026-07-12):
     #   "required"   (DEFAULT, operator 2026-07-12) — the widget is MANDATORY:
     #                 the launch preflight HALTS loudly and refuses to fly until

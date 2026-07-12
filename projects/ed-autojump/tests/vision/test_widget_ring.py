@@ -43,11 +43,22 @@ def _ring(img: np.ndarray, cx: int, cy: int, r: int, thickness: int = 3) -> np.n
 # 1. crop-size guard
 # ---------------------------------------------------------------------------
 
-def test_crop_size_guard_raises():
+def test_crop_too_small_raises():
+    """ADAPTIVE reader (operator 2026-07-12): the widget anchor is the crop
+    CENTRE, so any centred crop works and the exact-900x600 guard is gone. Only a
+    crop too small to hold the 120x120 widget search box is rejected."""
     reader = WidgetRingReader()
-    bad = np.zeros((720, 1280, 3), dtype=np.uint8)  # 1280×720, not 900×600
+    tiny = np.zeros((80, 80, 3), dtype=np.uint8)     # < 2*WIDGET_SUB_ROI_HALF (120)
     with pytest.raises(WidgetRingResolutionError):
-        reader.read(bad)
+        reader.read(tiny)
+
+
+def test_adaptive_accepts_wider_crop():
+    """A WIDENED crop (the new config widget_crop, to catch a reticle just
+    outside the old 900x600 box) must NOT raise -- it is read like any other."""
+    reader = WidgetRingReader()
+    wide = np.zeros((680, 1200, 3), dtype=np.uint8)  # the new default crop size
+    assert reader.read(wide).found is False          # no ring drawn, but no error
 
 
 # ---------------------------------------------------------------------------

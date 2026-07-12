@@ -140,10 +140,19 @@ class WidgetRingReader:
         if frame is None or getattr(frame, "size", 0) == 0:
             return None
 
-        h0 = int(self.WIDGET_CY0 - self.WIDGET_SUB_ROI_HALF)
-        h1 = int(self.WIDGET_CY0 + self.WIDGET_SUB_ROI_HALF)
-        w0 = int(self.WIDGET_CX0 - self.WIDGET_SUB_ROI_HALF)
-        w1 = int(self.WIDGET_CX0 + self.WIDGET_SUB_ROI_HALF)
+        # ADAPTIVE (operator 2026-07-12): the widget dot is the NOSE = SCREEN
+        # centre = the crop centre, whatever the crop size. Derive the anchor
+        # from the actual frame so the crop can be WIDENED (config widget_crop)
+        # to catch a target reticle that sits JUST OUTSIDE the old 900x600 crop
+        # after the coarse compass pass (live: the ring was literally just past
+        # the crop edge, so the fine reader saw nothing and degraded).
+        ch, cw = frame.shape[:2]
+        cx0, cy0 = cw / 2.0, ch / 2.0
+
+        h0 = int(cy0 - self.WIDGET_SUB_ROI_HALF)
+        h1 = int(cy0 + self.WIDGET_SUB_ROI_HALF)
+        w0 = int(cx0 - self.WIDGET_SUB_ROI_HALF)
+        w1 = int(cx0 + self.WIDGET_SUB_ROI_HALF)
         box = frame[h0:h1, w0:w1]
         if box.size == 0:
             return None
@@ -163,7 +172,7 @@ class WidgetRingReader:
                 continue
             cx = float(centroids[lbl][0]) + w0
             cy = float(centroids[lbl][1]) + h0
-            d2 = (cx - self.WIDGET_CX0) ** 2 + (cy - self.WIDGET_CY0) ** 2
+            d2 = (cx - cx0) ** 2 + (cy - cy0) ** 2
             if best_d2 is None or d2 < best_d2:
                 best_d2 = d2
                 best = (cx, cy)
@@ -250,10 +259,17 @@ class WidgetRingReader:
         import cv2
         import numpy as np
 
-        # 1. crop-size guard (cheap, every call) — backstop for the preflight.
-        if frame is None or frame.shape[:2] != (self.CROP_H, self.CROP_W):
+        # 1. crop guard (cheap, every call). ADAPTIVE (operator 2026-07-12): the
+        # crop is now a config knob (widget_crop) so it can be widened to catch a
+        # reticle just outside the old 900x600 box. The widget anchor is the crop
+        # CENTRE (nose), so any centred crop works; only a crop too small to hold
+        # the widget search box is rejected. Ring sizing (Hough radii, absolute
+        # px) is resolution-independent, so it is unchanged by a wider crop.
+        _min = 2 * self.WIDGET_SUB_ROI_HALF
+        if (frame is None or getattr(frame, "ndim", 0) < 2
+                or min(frame.shape[:2]) < _min):
             raise WidgetRingResolutionError(
-                f"widget-ring crop must be {self.CROP_W}×{self.CROP_H}, got "
+                f"widget-ring crop must be centred and >= {_min}px each side, got "
                 f"{None if frame is None else frame.shape[:2]}"
             )
 
