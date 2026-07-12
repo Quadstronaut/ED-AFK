@@ -200,6 +200,21 @@ register_step("engage_jump", step_engage_jump)
 # imported above and registered there. Re-exported here for callers.
 
 
+def _hud_sco_malfunction(ctx: StepContext) -> bool:
+    """True iff the center HUD shows FSD (SCO) MALFUNCTIONED -- the device-damaged
+    drive briefly refused to spool (NOT an obstruction). Reads the injected
+    hud_grabber (UNWIRED None -> False). Fail-soft: any grab/OCR error -> False,
+    so an unreadable HUD degrades to today's obstruction get-around."""
+    grabber = getattr(ctx, "hud_grabber", None)
+    if grabber is None:
+        return False
+    try:
+        from ed_vision.hud_sc_indicators import detect_sco_malfunction
+        return bool(detect_sco_malfunction(grabber()))
+    except Exception:  # noqa: BLE001 -- no HUD read -> treat as a real obstruction
+        return False
+
+
 def _hud_align_warning(ctx: StepContext) -> bool:
     """True iff the center HUD shows ALIGN WITH TARGET DESTINATION -- a LIVE jump
     charge that ED is HOLDING because the ship is off-target. Reads the injected
@@ -258,6 +273,7 @@ def step_engage_jump_clearance(
     max_charge_live_polls: int = 300,  # PHROEA FIX 2026-07-12 — wedged-FSD hard cap (~240s) for a STILL-LIVE charge
     align_hold_check_poll: int = 8,  # PHROEA NO-Q 2026-07-12 — charging polls w/o commit before the first ALIGN HUD check
     max_align_holds: int = 3,        # bounded in-place re-aligns per attempt
+    malfunction_recovery_s: float = 3.0,  # HEGIO 2026-07-12 — beat for a MALFUNCTIONED FSD to recover before the re-press
     max_clear_attempts: int = 3,
     max_sc_entry_polls: int = 25,  # G19: realspace obscured -> SC-entry wait ceiling (~20s @0.8s)
     clear_burn_s: float = 7.0,   # post-orbit-engage settle pacing (D3: was the straight-burn duration)
@@ -461,6 +477,21 @@ def step_engage_jump_clearance(
             ctx.log("EngageJumpClearanceAborted",
                     {"reason": "abort", "attempt": attempt})
             return False
+
+        # --- FSD (SCO) MALFUNCTION discriminator (operator 2026-07-12, HEGIO
+        # NV-P C5-1 frame): a no-charge edge is normally treated as an
+        # obstruction and gets the SC-assist ORBIT get-around below. But when the
+        # HUD shows FSD (SCO) MALFUNCTIONED the DRIVE briefly refused to spool --
+        # NOT an obstruction -- and we are ALREADY oriented to the next jump. So
+        # do NOT orbit-assist a body that isn't in the way: wait a recovery beat
+        # and let the NEXT attempt re-press the SAME jump. If the malfunction
+        # outlasts max_clear_attempts the required-fail retry ladder + strand
+        # guard keep re-pressing; the drive recovers on its own timescale.
+        # Fail-soft: no HUD read -> falls through to the get-around (today's path).
+        if _hud_sco_malfunction(ctx):
+            ctx.log("EngageJumpClearanceScoMalfunction", {"attempt": attempt})
+            ctx.sleeper(malfunction_recovery_s)
+            continue
 
         # --- C4 MOVE (D3 FIX): SC-assist ORBIT get-around, THROTTLE FAIL-
         # CLOSED. The old pitch-away-then-forward-burn could ram a jump

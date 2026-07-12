@@ -63,6 +63,13 @@ class ScHudState(str, Enum):
     # tests/fixtures/smack/smack_align_escape_vector_startup_1080.png +
     # repo-root smack_align_escape_vector.png.
     ESCAPE_VECTOR = "escape_vector"
+    # FSD (SCO) MALFUNCTIONED — the device-damaged / Supercruise-Overcharge FSD
+    # malfunction prompt (operator 2026-07-12, HEGIO NV-P C5-1 frame): a jump
+    # engage where the drive briefly refused to spool. Same center band; the
+    # MALFUNCTION token discriminates. Read by engage_jump_clearance to tell a
+    # damaged-drive no-charge (keep re-pressing, we're already oriented) from a
+    # real obstruction (SC-assist orbit get-around).
+    MALFUNCTION = "malfunction"
     NONE = "none"            # no SC-assist HUD prompt detected (fail-closed)
 
 
@@ -107,6 +114,12 @@ def classify_hud_text(text: str) -> ScHudState:
     tokens (ORBITING / ALIGN / ACTIVE) are mutually exclusive across the prompts,
     so a match on any one is unambiguous."""
     norm = " ".join((text or "").upper().split())
+    # FSD (SCO) MALFUNCTIONED — checked FIRST: MALFUNCTION is exclusive to this
+    # prompt (no other center-band text contains it), so a match is unambiguous
+    # regardless of any co-occurring token. Covers OCR clipping (MALFUNCTIONED ->
+    # MALFUNCTIONE) since it keys on the MALFUNCTION substring.
+    if "MALFUNCTION" in norm:                      # FSD (SCO) MALFUNCTIONED
+        return ScHudState.MALFUNCTION
     if "ORBITING" in norm or "RBITING" in norm:    # ORBITING DESTINATION
         return ScHudState.ORBITING
     # ALIGN WITH ESCAPE VECTOR must be checked BEFORE the target-destination
@@ -226,3 +239,14 @@ def detect_align_escape_vector(frame: Any, *, region_frac=HUD_REGION_FRAC,
     watches this to override a boot-smacked start into smack_recovery."""
     return read_sc_hud(frame, region_frac=region_frac,
                        ocr=ocr).state is ScHudState.ESCAPE_VECTOR
+
+
+def detect_sco_malfunction(frame: Any, *, region_frac=HUD_REGION_FRAC,
+                           ocr: Optional[Callable[[Any], Any]] = None) -> bool:
+    """True iff FSD (SCO) MALFUNCTIONED is showing -- the device-damaged /
+    Supercruise-Overcharge FSD malfunction (operator 2026-07-12). At the
+    no-charge jump edge, engage_jump_clearance uses this to tell a damaged drive
+    that briefly refused to spool (keep re-pressing the same jump -- we are
+    already oriented) from a real star obstruction (SC-assist orbit get-around)."""
+    return read_sc_hud(frame, region_frac=region_frac,
+                       ocr=ocr).state is ScHudState.MALFUNCTION

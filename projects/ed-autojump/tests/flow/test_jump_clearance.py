@@ -194,6 +194,39 @@ def test_no_align_warning_does_not_realign(monkeypatch):
     assert called["n"] == 0                             # never re-aligned
 
 
+def test_sco_malfunction_skips_orbit_and_represses(monkeypatch):
+    """Operator 2026-07-12 (FSD (SCO) MALFUNCTIONED frame): a no-charge edge with
+    the malfunction prompt on the HUD is the DEVICE-DAMAGED drive briefly
+    refusing to spool -- NOT an obstruction. engage must NOT orbit-assist a body
+    that isn't in the way (we are already oriented to the next jump); it waits a
+    recovery beat and re-presses the SAME jump each attempt."""
+    import ed_vision.hud_sc_indicators as hud_mod
+    monkeypatch.setattr(hud_mod, "detect_sco_malfunction", lambda frame, **k: True)
+    sender = FakeSender()
+    ctx = _ctx(sender, ["idle"])          # no charge ever -> obscured edge
+    ctx.hud_grabber = lambda: object()
+    assert STEP_REGISTRY["engage_jump_clearance"](
+        ctx, max_jump_polls=2, max_clear_attempts=3,
+        malfunction_recovery_s=0.0) is False
+    acts = sender.actions()
+    assert "UI_Right" not in acts          # NO orbit get-around
+    assert acts.count("Hyperspace") == 3   # re-pressed each attempt (no orbit between)
+    assert acts.count("SetSpeed100") == 3
+
+
+def test_no_malfunction_still_orbits_on_obscured(monkeypatch):
+    """Regression guard: with NO malfunction prompt (a real obstruction), the
+    no-charge edge still runs the SC-assist orbit get-around as before."""
+    import ed_vision.hud_sc_indicators as hud_mod
+    monkeypatch.setattr(hud_mod, "detect_sco_malfunction", lambda frame, **k: False)
+    sender = FakeSender()
+    ctx = _ctx(sender, ["idle"])
+    ctx.hud_grabber = lambda: object()
+    STEP_REGISTRY["engage_jump_clearance"](
+        ctx, max_jump_polls=2, max_clear_attempts=1)
+    assert "UI_Right" in sender.actions()  # orbit get-around still fires
+
+
 def test_charge_dropped_goes_to_move_edge():
     """Charge seen then dropped without commit -> grace poll -> C4 move
     (D3: SC-assist orbit get-around)."""

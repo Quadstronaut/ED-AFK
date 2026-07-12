@@ -22,6 +22,7 @@ from ed_vision.hud_sc_indicators import (
     detect_orbiting,
     detect_sc_assist_active,
     detect_sc_assist_engaged,
+    detect_sco_malfunction,
     read_sc_hud,
 )
 
@@ -44,6 +45,11 @@ WHOLE = (0.0, 0.0, 1.0, 1.0)   # the on-disk fixtures are already cropped to the
     ("ALIGN WITH ESCAPE VECTOR", ScHudState.ESCAPE_VECTOR),
     ("ALIGN WITH ESCAPE VECTOH", ScHudState.ESCAPE_VECTOR),
     ("CHARGING ESCAPE VECTOR", ScHudState.ESCAPE_VECTOR),
+    # FSD (SCO) MALFUNCTIONED (operator 2026-07-12) -- MALFUNCTION token is
+    # exclusive to this prompt; keys on the substring so an OCR-clipped
+    # 'MALFUNCTIONE' (trailing D dropped by the region edge) still classifies:
+    ("FSD (SCO) MALFUNCTIONED", ScHudState.MALFUNCTION),
+    ("FSD SCO MALFUNCTIONE", ScHudState.MALFUNCTION),
     # observed live OCR garble must still classify:
     ("ORBITINGPES(INATION", ScHudState.ORBITING),      # DESTINATION garbled
     ("SUPERCRUIS ASSIST ACTIVE", ScHudState.ACTIVE),   # SUPERCRUISE clipped
@@ -98,6 +104,13 @@ def test_engaged_is_active_or_orbiting():
     assert detect_sc_assist_engaged(f, ocr=lambda c: []) is False
 
 
+def test_sco_malfunction_detector():
+    f = _blank_frame()
+    assert detect_sco_malfunction(f, ocr=lambda c: ["FSD (SCO) MALFUNCTIONED"]) is True
+    assert detect_sco_malfunction(f, ocr=lambda c: ["ORBITING DESTINATION"]) is False
+    assert detect_sco_malfunction(f, ocr=lambda c: []) is False
+
+
 # --------------------------------------------------------------------------
 # real crops — WinRT-gated
 # --------------------------------------------------------------------------
@@ -142,3 +155,17 @@ def test_real_active_detector():
     assert detect_sc_assist_active(img, region_frac=WHOLE) is True
     assert detect_orbiting(img, region_frac=WHOLE) is False
     assert detect_sc_assist_engaged(img, region_frac=WHOLE) is True
+
+
+@pytest.mark.skipif(not _winrt_available(), reason="WinRT OCR not available")
+def test_real_sco_malfunction_full_frame():
+    """Operator 2026-07-12 (HEGIO NV-P C5-1): the FSD (SCO) MALFUNCTIONED prompt
+    read off a FULL 1080p frame via the DEFAULT center-band region (NOT a
+    pre-cropped WHOLE crop) -- confirms the region actually captures the wider
+    malfunction text live (it runs past the ALIGN prompt's width)."""
+    cv2 = pytest.importorskip("cv2")
+    img = cv2.imread(str(FIXTURES / "hud_sco_malfunctioned_full.png"))
+    assert img is not None, "missing fixture hud_sco_malfunctioned_full.png"
+    read = read_sc_hud(img)   # DEFAULT region — the live full-frame center band
+    assert read.state is ScHudState.MALFUNCTION, f"got {read.state} ({read.text!r})"
+    assert detect_sco_malfunction(img) is True
