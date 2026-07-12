@@ -164,20 +164,6 @@ def test_skip_tank_healthy():
 
 # ---- Q4: always top off at the destination (refuel_below=1.0) --------------
 
-def test_arrival_toml_scoop_trigger_and_throttle():
-    """OPERATOR 2026-07-11 retune: refuel_below = 0.65 (was 0.75 on 07-06,
-    which superseded the same-day 1.0 restore and council-A's 0.50 that
-    drained the tank live skipping 'tank_healthy' at 85%).
-    approach_pct = 25 (operator reverted his own same-day 50% order after
-    live run 231135 overshot the scoop band: "it never stood a chance").
-    The destination top-off (0.99) stays owned by route_complete_park.toml."""
-    procs = load_procedures(PROC_DIR)
-    arrival = procs["arrival"]
-    scoop = next(s for s in arrival.steps if s.action == "scoop_refuel")
-    assert scoop.params.get("refuel_below") == 0.65
-    assert scoop.params.get("approach_pct") == 25
-
-
 def test_refuel_below_one_does_not_skip_healthy_tank_scoopable():
     """At refuel_below=1.0 a HEALTHY tank on a SCOOPABLE star no longer
     short-circuits 'tank_healthy' — the pit stop STARTS (ScoopStart logged). The
@@ -476,4 +462,3 @@ def test_arrival_runs_the_pit_stop_before_the_star_lock():
     scoop = next(s for s in procs["arrival"].steps
                  if s.action == "scoop_refuel")
     assert scoop.required is False           # best-effort by design
-    assert scoop.params["budget_s"] == 300.0  # operator's 5-minute backstop

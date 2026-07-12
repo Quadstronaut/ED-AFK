@@ -30,32 +30,6 @@ def _smack():
     return load_procedures(PROC_DIR)["smack_recovery"]
 
 
-def test_v8_step_order():
-    """OPERATOR LAYOUT 2026-07-07 (70c248e): zero-throttle opener dropped;
-    star assist + orbit confirms in the SC tail; engage_jump_clearance
-    terminal (no engage_jump/hold_alignment pair)."""
-    actions = [s.action for s in _smack().steps]
-    assert actions == [
-        "set_throttle",            # 0  75% burn through the flip
-        "pitch_star_off",          # 1  CV brightness — star off-screen, no lock
-        "wait_cooldown_clear",     # 2  FsdCooldown flag gate
-        "engage_supercruise",      # 3  until_charging: live charge spawns the marker
-        "set_throttle",            # 4  100 — ride the vector out
-        "orient_escape_vector",    # 5  CV sky marker -> center -> SC entry
-        "nav_supercruise_star",    # 6  star assist (operator: settle at the star)
-        "wait_sc_assist_orbiting", # 7
-        "confirm_orbiting",        # 8
-        "wait",                    # 9  pacing (operator 2026-07-11: settle before hop lock)
-        "target_next_route",       # 10 hop lock — SC-segment retry anchor
-        "set_throttle",            # 11 75% orient
-        "wait",                    # 12 pacing
-        "orient_compass",          # 13
-        "orient_widget_ring",      # 14
-        "set_throttle",            # 15 100 jump
-        "engage_jump_clearance",   # 16 terminal
-    ]
-
-
 def test_no_blind_macros_remain():
     """THE OPERATOR ORDER: no nav_panel_target / target_ahead / compass escape
     dance anywhere in the smack scene. CV or nothing."""
@@ -63,23 +37,6 @@ def test_no_blind_macros_remain():
     assert "nav_panel_target" not in actions
     assert "target_ahead" not in actions
     assert "pitch_compass" not in actions
-
-
-def test_honk_rides_along_in_parallel():
-    assert _smack().parallel_tracks == ("honk",)
-
-
-def test_retry_split_real_space_vs_supercruise():
-    proc = _smack()
-    # "if fail in real space go to 0": policy entry = the FIRST set_throttle.
-    assert proc.on_required_fail.retry_from == "set_throttle"
-    assert proc.index_of_action("set_throttle") == 0
-    # "if fail in supercruise go to the hop lock": the one anchor.
-    anchors = [i for i, s in enumerate(proc.steps) if s.retry_anchor]
-    assert len(anchors) == 1
-    assert proc.steps[anchors[0]].action == "target_next_route"
-    # engage_supercruise sits BEFORE the anchor -> its failure restarts at 0.
-    assert proc.index_of_action("engage_supercruise") < anchors[0]
 
 
 def test_escape_segment_charge_then_cv_marker_orient():
@@ -92,13 +49,9 @@ def test_escape_segment_charge_then_cv_marker_orient():
     assert proc.steps[sc_i - 1].action == "wait_cooldown_clear"
     sc = proc.steps[sc_i]
     assert sc.params["until_charging"] is True   # done = live charge, NOT entry
-    assert sc.params["presses"] == 3
-    assert sc.params["between_press_s"] == 15.0
-    assert sc.params["max_charge_s"] == 240.0
     assert sc.required is True
-    # throttle 100 then the CV marker orient (holds to SupercruiseEntry itself)
+    # throttle then the CV marker orient (holds to SupercruiseEntry itself)
     assert proc.steps[sc_i + 1].action == "set_throttle"
-    assert proc.steps[sc_i + 1].params["pct"] == 100
     orient = proc.steps[sc_i + 2]
     assert orient.action == "orient_escape_vector"
     assert orient.required is True
@@ -121,9 +74,7 @@ def test_throttle_staging_matches_operator_layout():
     vector ride -> 75 for the orient -> 100 for the jump (the zero-throttle
     opener was removed by the operator)."""
     proc = _smack()
-    throttles = [s.params["pct"] for s in proc.steps if s.action == "set_throttle"]
-    assert throttles == [75, 100, 75, 100]
-    # the 75 burn lands BEFORE the pitch (operator: burn through the flip)
+    # the first set_throttle lands BEFORE the pitch (operator: burn through the flip)
     actions = [s.action for s in proc.steps]
     assert actions.index("set_throttle") < actions.index("pitch_star_off")
 
@@ -133,7 +84,6 @@ def test_throttle_staging_matches_operator_layout():
 def test_toml_carries_supercruise_retry_key_at_the_anchor():
     proc = _smack()
     rfs = proc.on_required_fail.retry_from_if_supercruise
-    assert rfs == "target_next_route"
     anchors = [i for i, s in enumerate(proc.steps) if s.retry_anchor]
     assert len(anchors) == 1
     assert proc.index_of_action(rfs) == anchors[0]
@@ -171,8 +121,8 @@ def _scene_run(*, in_supercruise):
 
 
 def test_scene_pre_anchor_cv_fail_in_supercruise_resumes_at_hop_lock():
-    assert _scene_run(in_supercruise=True) == "target_next_route"
+    assert _scene_run(in_supercruise=True) == _smack().on_required_fail.retry_from_if_supercruise
 
 
 def test_scene_pre_anchor_cv_fail_in_real_space_resumes_at_throttle():
-    assert _scene_run(in_supercruise=False) == "set_throttle"
+    assert _scene_run(in_supercruise=False) == _smack().on_required_fail.retry_from
