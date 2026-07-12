@@ -193,28 +193,59 @@ def read_target_panel_km(
     (never falls back to guessing pytesseract on this dim, narrow crop — the
     nav-panel READ layer's own ratified default is WinRT-first, and this crop
     has not been validated against the pytesseract path at all)."""
+    # CV-debug overlay: illustrate the READ VALUE at every return site (operator
+    # 2026-07-12 "illustrate all OCR/CV reads on the edoverlay"). NO named
+    # grabber owns the right-side target panel, so compute the SCREEN rect from
+    # this module's own region fraction * frame w/h (mirrors read_sc_hud's
+    # rect math) and flash a BOX. Teal when km<7.5 (docking gate met), red when
+    # unread (km None), white when read-but-still-far. Fully fail-soft: the box
+    # is decoration and can never change the return value or raise.
+    def _flash(km: Optional[float]) -> None:
+        try:
+            from ed_vision.debug_overlay import publish_read
+            f = region_frac
+            try:
+                import numpy as np  # type: ignore
+                fh, fw = np.asarray(frame).shape[:2]
+                rect = (int(f[0] * fw), int(f[1] * fh),
+                        int((f[2] - f[0]) * fw), int((f[3] - f[1]) * fh))
+            except Exception:  # noqa: BLE001 — bad frame -> no rect, publish inert
+                rect = None
+            verdict = ("hit" if (km is not None and km < DOCKING_RANGE_KM)
+                       else "miss" if km is None else None)
+            publish_read("target_dist", rect=rect, verdict=verdict,
+                         label=(f"{km:.1f}km" if km is not None else "unread"))
+        except Exception:  # noqa: BLE001 — overlay is decoration, never the read
+            pass
+
     if ocr is None:
         try:
             from ed_vision import ocr_winrt
             if not ocr_winrt.available():
+                _flash(None)
                 return None
             ocr = ocr_winrt.ocr_detailed
         except Exception:  # noqa: BLE001
+            _flash(None)
             return None
 
     crop = _crop_frac(frame, region_frac)
     if crop is None:
+        _flash(None)
         return None
     try:
         lines = ocr(crop)
     except Exception:  # noqa: BLE001 — OCR engine failure -> fail-closed.
+        _flash(None)
         return None
 
     for ln in (lines or []):
         text = getattr(ln, "text", ln)
         km = parse_station_distance_km(_normalize_ocr_distance_text(text))
         if km is not None:
+            _flash(km)
             return km
+    _flash(None)
     return None
 
 

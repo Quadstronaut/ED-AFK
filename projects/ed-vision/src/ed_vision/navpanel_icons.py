@@ -614,13 +614,28 @@ def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
     PURE over the frame; never raises (any error -> abstain)."""
     none = {"action": "abstain", "verdict": NONE, "kind": "", "score": 0.0,
             "glyph": None, "cy": -1}
+    # Lazy, guarded import (mirrors widget_ring's self-publish): a broken
+    # overlay import must NOT alter this pure fn's return, so it is fetched
+    # OUTSIDE the classify try/except -- publish_read is itself fail-soft.
+    try:
+        from .debug_overlay import publish_read
+    except Exception:  # noqa: BLE001 — overlay optional; never alter the read
+        def publish_read(*_a, **_k):  # type: ignore
+            return None
     try:
         loc = _locate_selected_cell(frame)
         if loc is None:
+            # no selected band / bar / glyph -> nothing to box; re-flash any
+            # prior nav_icon box red (no-op until one exists).
+            publish_read("nav_icon", verdict="miss", label="no glyph")
             return none
         cell = loc["cell"]
         verdict, score = classify_icon_scored(cell)
         reg = classify_icon_kind(cell, registry)
+        # Located glyph bbox -> full-frame overlay box. cx/gcy are the glyph
+        # CENTRE (see _locate_selected_cell), gw/gh its size -> top-left rect.
+        _rect = (loc["cx"] - loc["gw"] // 2, loc["gcy"] - loc["gh"] // 2,
+                 loc["gw"], loc["gh"])
         if verdict == STAR:
             action = "park"          # confident star -> veto (catastrophe guard)
         elif reg.get("action") == "dock" and reg.get("score", 0.0) >= KIND_MATCH_MIN:
@@ -628,7 +643,17 @@ def selected_destination_icon(frame: Any, registry: Any = None) -> dict:
         elif verdict == NON_STAR:
             action = "dock"          # a non-star body at a route destination = dockable
         else:
+            # located a glyph but classified NOTHING (NONE/unreadable) -> abstain;
+            # flash the located cell RED with the weak score.
+            publish_read("nav_icon", rect=_rect, verdict="miss",
+                         label=f"abstain {verdict} {float(score):.2f}")
             return none              # NONE / unreadable glyph -> abstain (name fallback)
+        # Confident classification -> HIT; label carries the action + STAR/
+        # NON_STAR verdict + registry kind + correlation score.
+        _kind = reg.get("kind", "")
+        publish_read("nav_icon", rect=_rect, verdict="hit",
+                     label=f"{action} {verdict} {float(score):.2f}"
+                           + (f" {_kind}" if _kind else ""))
         return {"action": action, "verdict": verdict, "kind": reg.get("kind", ""),
                 "score": round(float(score), 4),
                 "glyph": (loc["cx"], loc["gcy"], loc["gw"], loc["gh"]),
@@ -657,11 +682,33 @@ def selected_row_kind_confirmed(frame: Any, registry: Any = None) -> dict:
     Returns {"action":"park","kind":"","score":0.0} (abstain shape) when the
     row/glyph cannot be located at all. PURE; never raises."""
     none = {"action": "park", "kind": "", "score": 0.0}
+    # Lazy, guarded import (see selected_destination_icon) -- kept OUT of the
+    # classify try so a broken overlay import can't change the returned verdict.
+    try:
+        from .debug_overlay import publish_read
+    except Exception:  # noqa: BLE001 — overlay optional; never alter the read
+        def publish_read(*_a, **_k):  # type: ignore
+            return None
     try:
         loc = _locate_selected_cell(frame)
         if loc is None:
+            publish_read("nav_icon", verdict="miss", label="no glyph")
             return none
-        return classify_icon_kind(loc["cell"], registry)
+        kind = classify_icon_kind(loc["cell"], registry)
+        # Located glyph bbox -> full-frame overlay box (cx/gcy = glyph CENTRE).
+        _rect = (loc["cx"] - loc["gw"] // 2, loc["gcy"] - loc["gh"] // 2,
+                 loc["gw"], loc["gh"])
+        # HIT == a confident, POSITIVE dock-kind POI (the only ASSIST-vetoing
+        # outcome); park/abstain, star, system, planet all read "not a POI".
+        _pos = (kind.get("action") == "dock"
+                and float(kind.get("score", 0.0)) >= KIND_MATCH_MIN
+                and bool(kind.get("kind")))
+        publish_read("nav_icon", rect=_rect,
+                     verdict="hit" if _pos else "miss",
+                     label=f"{kind.get('action', '')} "
+                           f"{kind.get('kind', '') or '-'} "
+                           f"{float(kind.get('score', 0.0)):.2f}")
+        return kind
     except Exception:               # noqa: BLE001 — pure fn, fail to abstain
         return none
 

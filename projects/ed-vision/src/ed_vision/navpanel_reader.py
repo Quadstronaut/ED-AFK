@@ -234,9 +234,22 @@ def read_first_row_distance_ls(
         if crop.size == 0:
             return None
         lines = read_nav_panel_lines(crop)
+        ls = parse_first_row_distance_ls(lines)
+        # Illustrate the row-0 distance read on the overlay (operator 2026-07-12:
+        # "all OCR/CV reads illustrated"). This reader owns its own crop coords —
+        # the DISTANCE column, which NO named grabber covers — so flash a box at
+        # the computed crop rect carrying the read value: the Ls the false-FAR
+        # smack gate turns on. hit=read a distance, miss=top row unreadable.
+        from .debug_overlay import publish_read
+        publish_read(
+            "nav_dist",
+            rect=(x0, y0, x1 - x0, y1 - y0),
+            verdict="hit" if ls is not None else "miss",
+            label=f"{ls:.1f}Ls" if ls is not None else "unread",
+        )
+        return ls
     except Exception:  # noqa: BLE001 — perception fail-soft
         return None
-    return parse_first_row_distance_ls(lines)
 
 
 def _system_prefix_match(norm_line: str, norm_system: str, fuzzy: float) -> Optional[str]:
@@ -462,4 +475,17 @@ class NavPanelReader:
 
     def read(self, frame: Any, current_system: Optional[str],
              scanned: Iterable[str]) -> Optional[NavBody]:
-        return next_unexplored(self.parse(frame, current_system), scanned)
+        rows = self.parse(frame, current_system)
+        result = next_unexplored(rows, scanned)
+        # Illustrate the NAVIGATION-list OCR read on the overlay. A NAMED
+        # 'navpanel' grabber already outlined this region, so re-flash THAT box
+        # (rect=None) with the outcome + value: the picked body's name when one
+        # was selected, else the parsed current-system row count. hit=we read
+        # rows, miss=nothing current-system parsed out of the panel.
+        from .debug_overlay import publish_read
+        if result is not None:
+            _label = result.name
+        else:
+            _label = f"{len(rows)} rows"
+        publish_read("navpanel", verdict="hit" if rows else "miss", label=_label)
+        return result
