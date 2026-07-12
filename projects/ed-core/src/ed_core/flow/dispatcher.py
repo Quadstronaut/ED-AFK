@@ -94,16 +94,29 @@ class _TailHub:
         that outlived its join window polls into silence and exits on its
         own key-release backstop rather than KeyError-ing)."""
         with self._lock:
-            for ev in self._tail.step():
-                if self._on_event is not None:
-                    self._on_event(ev)
-                for q in self._queues.values():
-                    q.append(ev)
+            self._pump_locked()
             pending = self._queues.get(handle)
             if pending is None:
                 return []
             self._queues[handle] = []
             return pending
+
+    def pump(self) -> None:
+        """Pump the tail once and broadcast — no handle, nothing consumed
+        from any queue. Lets should_abort() deliver preempt-class journal
+        events (Star drop) MID-STEP: before this, events were only consumed
+        inside wait-steps' event_waiter or by a live honk track, so a smack
+        during a sleeper-only step sat unread while the scene kept flying
+        the smacked ship (live 2026-07-11 23:43, session 234324)."""
+        with self._lock:
+            self._pump_locked()
+
+    def _pump_locked(self) -> None:
+        for ev in self._tail.step():
+            if self._on_event is not None:
+                self._on_event(ev)
+            for q in self._queues.values():
+                q.append(ev)
 
 
 class FlowRunner:
@@ -511,7 +524,23 @@ class FlowRunner:
         """Abort signal for the CURRENT procedure's contexts: operator abort
         OR scene preemption. run_procedure polls this before every step and
         every in-step loop consults it, so a preempt lands at the next poll
-        — cooperative, key-release-safe, no thread killing."""
+        — cooperative, key-release-safe, no thread killing.
+
+        HUB PUMP FIRST (operator "ship them" 2026-07-11): journal events used
+        to be consumed only inside wait-steps' event_waiter or by a live honk
+        track — a SupercruiseExit@Star during a sleeper-only step (orient) sat
+        UNREAD in the tail while sc_resume kept flying the smacked ship (live
+        23:43:43, session 234324; the D2 always-recover route never saw the
+        event). Pumping here makes THIS poll the delivery point: the event
+        routes through _on_tail_event -> _record_event_time -> _preempt, and
+        the very same call returns True. run_live's queued routing (e.g.
+        _route_sc_exit) still fires after the preempted scene returns —
+        pumping only moves lines from the file into the queues."""
+        if self._hub is not None:
+            try:
+                self._hub.pump()
+            except Exception:  # noqa: BLE001 — pump is best-effort, never fatal
+                pass
         return self._should_abort() or self._preempt is not None
 
     # ---- exclusive-input guard (heat watchdog pauses) ----------------------
