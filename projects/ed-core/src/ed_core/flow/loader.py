@@ -96,7 +96,11 @@ def validate_procedure(proc: Procedure, known_actions: Iterable[str]) -> list[st
         # A skip_to that matches no step would silently fall through to a
         # one-step advance at runtime (interpreter), defeating the skip — catch
         # the typo loudly, same as retry_from below.
-        if step.skip_to is not None and proc.index_of_action(step.skip_to) is None:
+        # "__end__" is the reserved skip-to-END sentinel (interpreter): a
+        # non-required False finishes the procedure with no landing step. Not a
+        # real action, so exempt it from the matches-a-step check.
+        if (step.skip_to is not None and step.skip_to != "__end__"
+                and proc.index_of_action(step.skip_to) is None):
             errors.append(
                 f"{proc.name}: step {i} skip_to {step.skip_to!r} matches no step"
             )
