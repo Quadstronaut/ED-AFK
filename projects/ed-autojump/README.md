@@ -4,28 +4,34 @@ An assistive exploration harness for Elite Dangerous: Odyssey, and the first
 tool in the ED-AFK monorepo. It flies a plotted route end to end — honk on
 arrival, scoop fuel at scoopable stars, orient the ship, jump, and dock at the
 end — performing the sustained, timing-critical piloting that a player's hands
-or input hardware may not be able to. Optional game launch via MinEdLauncher.
-FSS and DSS scanning remain framework-only stubs.
+or input hardware may not be able to. `ed-core`'s **real-time scene monitor**
+preempts mid-flight to recover from a fresh-system arrival, a star-smack drop,
+and even a server-drop **CONNECTION ERROR** screen (clear it → re-enter in Solo
+→ re-plot the route). Optional game launch via MinEdLauncher. FSS and DSS
+scanning remain framework-only stubs.
 
 See the [repo-root README](../../README.md) for the **why** — the accessibility
 motivation, the credit owed to AbleGamers / SpecialEffect / the adaptive-gaming
 field, and the honest Terms-of-Service disclaimer. This file is the operator's
 manual: setup, calibration, and the CLI.
 
-> **Status: alpha.** The flight loop (arrival / startup / sc_resume /
-> smack_recovery / route_complete_park), the docking lane (`dock` /
-> `dock_resume`), the parallel honk track, the danger filter, Spansh
-> auto-plotting, and MinEdLauncher launch all **ship on `master`** and are
-> exercised by a large offline unit + replay suite. But large parts are **not
-> live-tested** (the fuel-scoop pit-stop and several flows are explicitly
-> marked so), and there are **open defects that can strand or crash the ship** —
-> the `dock` lane now has the `dock_approach` step (defect #1 closed on master),
-> `sc_resume` can throttle a star-parked ship into the star, and
-> `smack_recovery` can mis-flip. The historical per-step audit was
+> **Status: alpha — but the jump loop is live-validated.** The 11 scene
+> procedures (`startup`, `arrival`, `traversal`, `smack_recovery`,
+> `exploration`, `sc_resume`, `dock`, `dock_resume`, `route_complete_park`,
+> `honk`, `connection_recovery`), the danger filter, Spansh auto-plotting, and
+> MinEdLauncher launch all **ship on `master`** and are covered by a large
+> offline unit + replay suite. The **steady-state jump loop is live-validated
+> over hundreds of consecutive jumps** — including a cross-galaxy run toward
+> Colonia. But **docking and the rarer recovery paths are still under live
+> validation**, the fuel-scoop pit-stop is explicitly **not live-tested**, and
+> there are **open edges that can strand a run** — `sc_resume` can throttle a
+> star-parked ship into the star, and `smack_recovery` can mis-flip. The
+> historical per-step audit was
 > [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md) — **STALE (frozen
-> 2026-06-08, pre-C-series)**; current truth is the C1–C4 ratified specs in
-> [`docs/superpowers/specs/`](../../docs/superpowers/specs/) and the live step lists
-> in `procedures/*.toml`. `calibration/README.md` and `calibration/overnight-runbook.md`
+> 2026-06-08, pre-C-series)**; current truth is the C-series ratified specs in
+> [`docs/superpowers/specs/`](../../docs/superpowers/specs/), the canonical action
+> reference `procedures/procedures.md`, and the live step lists in
+> `procedures/*.toml`. `calibration/README.md` and `calibration/overnight-runbook.md`
 > cover what to validate in-game.
 
 ## Quick start
@@ -98,10 +104,11 @@ ed-autojump calibrate-compass     # auto-locates the disc, prints a [vision] blo
 #   paste the printed [vision] block (enabled=true + region=[...]) into config.toml
 ```
 
-> **License note:** the bundled compass model is **AGPL-3.0** (Ultralytics),
-> unlike the rest of this MIT package. See `THIRD_PARTY_NOTICES.md` →
-> "Bundled ML model" before redistributing a build that includes the weights.
-> The `opencv` backend needs no model and avoids this entirely.
+> **License note:** the bundled compass model (from `ed-vision`) carries
+> **AGPL-3.0** weights (Ultralytics), which is why this shipped distribution is
+> AGPL-3.0-or-later. See `THIRD_PARTY_NOTICES.md` → "Bundled ML model" before
+> redistributing a build that includes the weights. The `opencv` backend needs
+> no model and avoids this entirely.
 
 With `[vision].enabled = true` and a calibrated `region`, `run --engage-keys`
 aligns before every jump and logs an `Align` outcome (offset, in_front,
@@ -196,9 +203,9 @@ projects/ed-autojump/
     cli.py                # entry point (registered as `ed-autojump`)
     session_audit.py      # pure functions for safety asserts on recorded sessions
     binds/                # bundled ED-AFK.4.2.binds preset
-    data/                 # bundled constants (fsd_modules.json, receivetext_catalog.json)
-    executor/             # step executor / interpreter
-    flow/                 # flow steps (arrival, startup, dock, smack, etc.)
+    data/                 # bundled constants (fsd_modules.json, fuel_scoops.json)
+    executor/             # step executor / interpreter glue
+    flow/                 # boot_routes (domain event-routes/classifiers), steps, dispatcher wiring
     fsd/                  # fuel math + danger list (coriolis-data constants)
   tests/
     fixtures/journals/    # anonymized real-journal samples
@@ -214,26 +221,31 @@ projects/ed-autojump/
 ## Capability status
 
 Honest state on `master`. "Shipped" means wired into the live path and covered
-by the offline suite; it does **not** mean live-proven. The historical per-step
-audit is [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md) — **STALE
-(frozen 2026-06-08, pre-C-series)**; see [`docs/superpowers/specs/`](../../docs/superpowers/specs/)
-(C1–C4 ratified specs) and `procedures/*.toml` (live step lists) for current truth.
+by the offline suite; "live-validated" means proven in-game at scale. The
+historical per-step audit is [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGASHEET.md)
+— **STALE (frozen 2026-06-08, pre-C-series)**; see
+[`docs/superpowers/specs/`](../../docs/superpowers/specs/) (C-series ratified specs),
+`procedures/procedures.md` (canonical action reference), and `procedures/*.toml`
+(live step lists) for current truth.
 
 | Capability | Status |
 |---|---|
 | Journal / Status / NavRoute readers, in-memory FSM | shipped |
 | Bundled binds preset + StartPreset swap/restore | shipped |
 | Honk (parallel discovery-scan track) | shipped |
-| Jump + escape + route-safety danger filter | shipped |
+| Steady-state jump loop (`arrival` / `traversal` + escape + danger filter) | **live-validated — hundreds of consecutive jumps** |
+| Real-time scene monitor (FSDJump / star-smack / connection-error preempts + never-strand re-dispatch) | shipped |
+| `connection_recovery` (server-drop modal → Solo re-enter → re-plot) | shipped — under live validation |
+| `exploration` in-system unexplored body tour | shipped |
 | Fuel scoop (`scoop_refuel`) | shipped — **NOT live-tested** |
 | EDDN publisher (opt-in) | shipped |
 | EDHM detect + vision calibration | shipped |
-| Nav-compass + widget-ring alignment (fail-closed) | shipped |
-| Orchestrator main loop + panic + Spansh + doctor | shipped |
+| Nav-compass + widget-ring alignment (fail-closed) | shipped — used every jump |
+| Main loop + panic + Spansh + doctor | shipped |
 | MinEdLauncher launch + main-menu / private-group nav | shipped |
-| Docking lane (`dock` / `dock_resume`) + Starport Services | shipped — `dock_approach` step merged on master; **not yet live-tested end-to-end** |
-| `sc_resume` fast-resume lane | shipped — **can ram a star** (defect #2) |
-| `smack_recovery` exclusion-zone escape | shipped — **can mis-flip** (defect #3) |
+| Docking lane (`dock` / `dock_resume`) + Starport Services | shipped — **under live validation** |
+| `sc_resume` fast-resume lane | shipped — **can ram a star** (open edge) |
+| `smack_recovery` exclusion-zone escape | shipped — **can mis-flip** (open edge) |
 | FSS keyboard sweep / FSS CV-assisted | framework stub — not built |
 | DSS 6-direction surface scan | framework stub — not built |
 | Ships without SC-assist / Advanced Docking Computer | unsupported |
@@ -288,10 +300,13 @@ See `THIRD_PARTY_NOTICES.md` at repo root for full attribution.
 
 **AGPL-3.0-or-later** (see `LICENSE`).
 
-The bot's own code began as MIT-style work, but the distribution bundles the
-nav-compass detection model (`src/ed_autojump/vision/model/compass.*`), whose
-weights are **AGPL-3.0** (Ultralytics). AGPL is viral over the combined work,
-so the whole package is licensed AGPL-3.0 to stay honest and compliant. In
+The bot's own code began as MIT-style work, but the shipped distribution
+bundles the nav-compass detection model (from `ed-vision`:
+`ed-vision/src/ed_vision/model/compass.onnx` / `compass.pt`), whose weights are
+**AGPL-3.0** (Ultralytics). AGPL is viral over the combined work, so the whole
+package is licensed AGPL-3.0 to stay honest and compliant. The colour-free
+OpenCV compass fallback needs no weights, so a build that ships without the
+model does not attach this obligation. In
 practice that means: use it freely, and if you fork it or run it as a service
 for others, share your source too. See `THIRD_PARTY_NOTICES.md` for the full
 attribution chain.

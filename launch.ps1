@@ -1,13 +1,26 @@
 <#
 .SYNOPSIS
-    Game-like launcher for ED-AFK.
+    Game-like launcher for ED-AFK -- the menu front-end to the ed-autojump CLI.
 
-    A main menu (Jump / Combat / Explore / Trade / Settings / Quit) declares your
-    INTENT on entry. Only "Jump" is live today -- it runs the ed-autojump loop we
-    have been building. Combat / Explore / Trade are Soon(TM) placeholders.
+    A main menu (Jump / Scenes / Explore / Combat / Trade / Settings / Quit)
+    declares your INTENT on entry:
+      Jump     runs the full ed-autojump loop -- the steady-state A->B jump
+               loop plus its real-time recovery paths (new-system arrival,
+               star-smack, connection-error). This is the live-validated core.
+      Scenes   one-shot: drive EXACTLY ONE named procedure (arrival,
+               smack_recovery, dock, ...) with the full live wiring, then exit.
+      Explore  a persistent ON/off TOGGLE of the in-system body-tour
+               exploration program (persisted to .env), NOT a launcher.
+      Combat / Trade are Soon(TM) placeholders (empty Phase-1 scaffolds).
 
-    Picking Jump focuses the Elite window, counts down, and starts the bot so its
-    keypresses land in the game instead of wherever your mouse last was.
+    Picking Jump (or a Scene) focuses the Elite window, counts down, and starts
+    the bot so its keypresses land in the game instead of wherever your mouse
+    last was. It does NOT launch the game or plot a route -- you do that.
+
+    ALPHA: the jump loop is live-validated over hundreds of consecutive jumps;
+    docking and the rarer recovery paths are still under live validation.
+    LEARNING PURPOSES ONLY -- automating the live game violates the Elite
+    Dangerous Terms of Service.
 
     Run  .\launch.ps1 -Help  for a plain-English guide.
 #>
@@ -46,40 +59,69 @@ function Show-FriendlyHelp {
 
 WHAT THIS DOES
   You fly Elite Dangerous into a system and plot a route. Then this runs the
-  robot that presses the keys to dodge the star, honk, scoop fuel, and jump --
-  over and over -- so you do not have to sit there.
+  robot that presses the keys to fly the loop -- on arrival at a star it idles
+  the throttle, optionally scoops fuel, honks the scanner, locks the next hop,
+  clears the geometry, orients on the nav-compass, and jumps -- over and over,
+  so you do not have to sit there. At the end of a route it parks or docks.
 
-  IT DOES NOT launch the game or click menus. YOU start ED and get in the
-  cockpit yourself. This only does the jumping.
+  A real-time monitor PREEMPTS the loop to recover from mid-flight events: a
+  fresh system arrival, a star-smack (dropped out of supercruise into a star),
+  and a server-drop CONNECTION ERROR screen (it clears the modal, re-enters in
+  Solo, and re-plots your route).
+
+  IT DOES NOT launch the game or plot a route. YOU start ED, get in the
+  cockpit, and plot a route yourself. This only flies it.
+
+  ALPHA: the jump loop is live-validated over hundreds of consecutive jumps;
+  docking and the rarer recovery paths are still under live validation, so
+  expect the occasional open edge. LEARNING PURPOSES ONLY -- automating the
+  live game violates the Elite Dangerous Terms of Service.
 
 THE MENU
   E D - A F K
-    Jump        <- the only live action today: runs the jump loop
-    Combat      Soon(TM)
-    Explore     Soon(TM)
-    Trade       Soon(TM)
-    Settings    <- knobs (see below)
+    Jump        runs the full jump loop (arrival / traversal / recovery)
+    Scenes      one-shot: run ONE named procedure with full wiring, then exit
+    Explore     [ON]/[off] toggle of the in-system body-tour program (.env)
+    Combat      Soon(TM)   (empty scaffold)
+    Trade       Soon(TM)   (empty scaffold)
+    Settings    knobs (see below)
     Quit
 
-  Arrow keys move; Enter selects; Q quits. Picking Jump focuses Elite, counts
-  down 5..1, and starts the bot. KEEP ELITE IN FRONT after that -- if you click
-  away, the next keypress misses. Ctrl+C in this terminal stops a run.
+  Arrow keys move; Enter selects (on Explore, Enter flips the toggle); Q quits.
+  Picking Jump or a Scene focuses Elite, counts down 5..1, and starts the bot.
+  KEEP ELITE IN FRONT after that -- if you click away, the next keypress
+  misses. Ctrl+C in this terminal stops a run.
 
-SETTINGS  (RUN group -- all live today)
-  Monitor-Only    log only; the bot reports what it WOULD do, sends no keys.
-                  OFF by default == the bot actually flies.
-  Record session  save a JSONL log of the run (ON by default).
-  Log systems     append every visited system to ~/Documents (ON by default).
-  Duration        1h / 6h / 12h / Infinite. Infinite is a ~1-year stand-in;
-                  ED will not last that long -- a real unbounded loop comes later.
-  Calibrate       run calibrate-compass so the bot can orient via the nav-compass.
+SCENES  (one-shot -- drive a single procedure, full live wiring, then exit)
+  Runs the cli `run --scene <name>` mode: no classifier, no event loop, just
+  that one procedure. Handy for testing a recovery path on command. The
+  procedures live as editable TOML under projects\ed-autojump\procedures\:
+    startup  sc_resume  arrival  traversal  smack_recovery
+    exploration  dock  dock_resume  route_complete_park  honk
+
+SETTINGS  (RUN + VISION groups -- all live today)
+  RUN
+    Monitor-Only    log only; the bot reports what it WOULD do, sends no keys
+                    (--no-engage-keys). OFF by default == the bot actually flies.
+    Record session  save a JSONL log of the run, incl. CV frame captures
+                    (ON by default -- OPERATOR ORDER: no blind runs).
+    Log systems     append every visited system to ~/Documents (ON by default).
+    Duration        1h / 6h / 12h / Infinite. Infinite is a ~1-year stand-in;
+                    ED will not last that long -- a real unbounded loop is later.
+    Calibrate       run calibrate-compass so the bot can orient via nav-compass.
+  VISION
+    CV debug overlay  flash a labeled box in-game everywhere the CV/OCR reads
+                      (compass, widget, HUD prompts, nav panel). Persisted to
+                      .env (ED_AUTOJUMP_OVERLAY_CV_DEBUG); needs [overlay].enabled.
 
 DO THIS FIRST  (or the ship will not move!)
   1. ONE TIME:  .\launch.ps1 install-binds   -- adds the "ED-AFK" keyboard
      preset to Elite. Then in ED > Controls, pick "ED-AFK".
   2. Calibrate compass (Settings > Calibrate, or .\launch.ps1 calibrate-compass)
-     and set [vision].enabled = true in config.toml -- else the bot jumps BLIND.
-  3. Be IN THE GAME, in your ship, with a route plotted in the Galaxy Map.
+     and set [vision].enabled = true in config.toml -- else the bot jumps BLIND
+     and, failing closed, never throttles forward or fires the jump.
+  3. Optional: .\launch.ps1 calibrate-overlay to tune the in-game overlay boxes.
+  4. Be IN THE GAME, in your ship, with a route plotted in the Galaxy Map.
 
 HOW TO RUN
   .\launch.ps1            the menu
@@ -90,7 +132,7 @@ HOW TO RUN
 THE SEED FLAGS  (just set the menu's starting values)
   -DurationHours N   nearest preset (default 6 -> "6h").
   -Infinite          start on "Infinite".
-  -Monitor           start with Monitor-Only ON (log only).
+  -Monitor           start with Monitor-Only ON (log only, --no-engage-keys).
   -NoRecord          start with Record OFF.
   -NoVisitedLog      start with the visited-systems log OFF.
   -Yes               skip the menu + confirm; Jump straight from the flags.
@@ -98,8 +140,9 @@ THE SEED FLAGS  (just set the menu's starting values)
 
 PASS-THROUGH (advanced; skips the menu + focus)
     .\launch.ps1 doctor
-    .\launch.ps1 calibrate-compass
     .\launch.ps1 install-binds
+    .\launch.ps1 calibrate-compass
+    .\launch.ps1 calibrate-overlay
 
 ===================================================================
 
