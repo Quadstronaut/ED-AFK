@@ -11,10 +11,10 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 2503,
+    "count": 2631,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-07-11T22:46:11Z",
+    "last_seen": "2026-07-12T05:15:28Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
