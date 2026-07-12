@@ -250,3 +250,86 @@ def detect_sco_malfunction(frame: Any, *, region_frac=HUD_REGION_FRAC,
     already oriented) from a real star obstruction (SC-assist orbit get-around)."""
     return read_sc_hud(frame, region_frac=region_frac,
                        ocr=ocr).state is ScHudState.MALFUNCTION
+
+
+# --------------------------------------------------------------------------
+# CONNECTION ERROR modal (operator 2026-07-12) — NOT an SC-assist HUD prompt.
+# A full-screen black dialog with white text that ED throws on a server drop.
+# Its own region + a standalone bool detector (it shares neither the HUD center
+# band nor the ScHudState mutual-exclusion). The real-time scene monitor polls
+# this from ANY scene and preempts into connection_recovery on a hit.
+# --------------------------------------------------------------------------
+
+# Region pinned from the operator's Mauve/Yellow-Adder screenshots (1920x1080):
+# heading "CONNECTION ERROR" ~y0.42, "Error Code:" line ~y0.49, "Press OK to
+# return to the main menu." ~y0.53, OK button ~y0.59. This box spans the text
+# block (x0.28-0.70, y0.38-0.64) and stays clear of the top-left overlay HUD
+# text. The modal background is pure black, so a generous crop adds no OCR noise.
+# Re-pin if a live full-frame capture of the dialog differs. 1920x1080 reference.
+CONNECTION_ERROR_REGION_FRAC = (0.28, 0.38, 0.70, 0.64)   # (x0, y0, x1, y1)
+
+
+def is_connection_error_text(text: str) -> bool:
+    """True iff OCR'd text is the CONNECTION ERROR modal.
+
+    Keys on the invariant heading (CONNECTION + ERROR) AND a corroborating
+    constant line (ERROR CODE or MAIN MENU). The VARIABLE parts -- the body
+    message and the code name (Mauve/Yellow/... Adder) -- are never matched.
+    PRECISION-FIRST: the heading alone will NOT fire. A false positive exits a
+    HEALTHY session to the main menu (costly); a false negative just leaves the
+    already-stuck bot where it is and the watch loop re-polls (cheap)."""
+    norm = " ".join((text or "").upper().split())
+    heading = "CONNECTION" in norm and "ERROR" in norm
+    corroborator = "MAIN MENU" in norm or "ERROR CODE" in norm
+    return heading and corroborator
+
+
+def detect_connection_error(
+    frame: Any,
+    *,
+    region_frac=CONNECTION_ERROR_REGION_FRAC,
+    ocr: Optional[Callable[[Any], Any]] = None,
+) -> bool:
+    """True iff the CONNECTION ERROR modal is on screen. OCR-based, fail-soft (a
+    bad frame / missing OCR / unreadable region all -> False). `ocr` is injected
+    for tests; defaults to WinRT ocr_detailed."""
+    if ocr is None:
+        try:
+            from ed_vision import ocr_winrt
+            if not ocr_winrt.available():
+                return False
+            ocr = ocr_winrt.ocr_detailed
+        except Exception:  # noqa: BLE001
+            return False
+
+    crop = _crop_frac(frame, region_frac)
+    if crop is None:
+        return False
+    try:
+        lines = ocr(crop)
+    except Exception:  # noqa: BLE001 — OCR engine failure -> fail-closed (no false alarm).
+        return False
+
+    text = " ".join(getattr(ln, "text", ln) for ln in (lines or []))
+    hit = is_connection_error_text(text)
+    # CV-debug overlay box (illustrate every read). Global sink; inert unless the
+    # VISION toggle is on. Guarded exactly like read_sc_hud's flash.
+    try:
+        import numpy as np  # type: ignore
+        from .debug_overlay import get_debug_sink
+        sink = get_debug_sink()
+        if sink is not None:
+            fh, fw = np.asarray(frame).shape[:2]
+            rect = (int(region_frac[0] * fw), int(region_frac[1] * fh),
+                    int((region_frac[2] - region_frac[0]) * fw),
+                    int((region_frac[3] - region_frac[1]) * fh))
+            sink.box("connection_error", rect,
+                     "hit" if hit else None,
+                     label="CONNECTION ERROR" if hit else "no-conn-err")
+    except Exception as e:  # noqa: BLE001 — overlay is decoration, never the read
+        try:
+            from .debug_overlay import warn_once
+            warn_once("connection_error_flash", "connection_error", e)
+        except Exception:  # noqa: BLE001
+            pass
+    return hit
