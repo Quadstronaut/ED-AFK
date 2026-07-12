@@ -547,12 +547,16 @@ def cmd_run(args) -> int:
         # CONNECTION-ERROR watch (operator 2026-07-12): the SAME bare full-frame
         # grab, polled by the dispatcher's connection-watch daemon for the
         # CONNECTION ERROR modal (a server drop -- no journal event, so CV/OCR is
-        # the only signal). WinRT-gated (the detector OCRs the dialog text);
-        # unwired -> the watch thread never starts, no regression.
-        if _navpanel_icon_full_frame is not None and _ocr.available():
+        # the only signal). NOT WinRT-gated, unlike the OCR consumers above:
+        # operator "make sure that shit fires every time I use launch.ps1" -- the
+        # watch must start on EVERY keyed run. detect_connection_error fail-softs
+        # to False without OCR (Win11 always has WinRT), so an OCR hiccup only
+        # makes the watch inert, never crashes it. Same posture as
+        # escape_vector_grabber (also not OCR-gated).
+        if _navpanel_icon_full_frame is not None:
             connection_grabber = _navpanel_icon_full_frame
             print("vision: connection-error watch ON "
-                  "(CONNECTION ERROR modal -> Solo re-entry recovery)")
+                  "(every keyed run -> CONNECTION ERROR modal -> Solo re-entry)")
         if nav_panel_reader is not None:
             print(f"exploration: nav-panel identity targeting ON "
                   f"(region={tuple(cfg.exploration.nav_panel_region)}) "
