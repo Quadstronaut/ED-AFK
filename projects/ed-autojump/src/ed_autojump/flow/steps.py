@@ -200,6 +200,55 @@ register_step("engage_jump", step_engage_jump)
 # imported above and registered there. Re-exported here for callers.
 
 
+def _hud_align_warning(ctx: StepContext) -> bool:
+    """True iff the center HUD shows ALIGN WITH TARGET DESTINATION -- a LIVE jump
+    charge that ED is HOLDING because the ship is off-target. Reads the injected
+    hud_grabber (UNWIRED None -> False, today's behaviour). Fail-soft: any
+    grab/OCR error -> False (no re-align, never fatal)."""
+    grabber = getattr(ctx, "hud_grabber", None)
+    if grabber is None:
+        return False
+    try:
+        from ed_vision.hud_sc_indicators import detect_align_warning
+        return bool(detect_align_warning(grabber()))
+    except Exception:  # noqa: BLE001 -- no HUD read -> no re-align
+        return False
+
+
+def _realign_hold_charge(ctx: StepContext, committed_fn) -> None:
+    """Nudge the ship toward the locked target while the jump charge is LIVE,
+    HOLDING the charge (operator ruling 2026-07-12, Phroea Eaec NO-Q e5-9: "not
+    aligning after engaging jump"). Compass align ONLY (yaw/pitch) -- NEVER
+    re-presses Hyperspace or touches throttle, either of which cancels a live
+    charge. Tighter tol (0.12) than the loose coarse pass (config 0.32) that let
+    the ship engage off-target once the widget-ring fine pass degraded. Aborts
+    the instant the held charge commits (the jump fires) or supercruise is lost.
+    No compass wiring -> no-op (the charge is simply waited out, today's path)."""
+    reader = getattr(ctx, "compass_reader", None)
+    grab = getattr(ctx, "frame_grabber", None)
+    if reader is None or grab is None:
+        return
+    from ed_core.executor.align import align_to_target
+
+    def _abort():
+        if ctx.should_abort():
+            return "abort"
+        if committed_fn():
+            return "committed"           # the held charge fired -- stop nudging
+        st = ctx.status_supplier()
+        if st is not None and not getattr(st, "in_supercruise", True):
+            return "supercruise_lost"
+        return None
+
+    align_to_target(
+        reader, ctx.sender, capture=grab,
+        align_tol=0.12, deadzone=0.08,      # tighter than the loose coarse pass
+        max_iters=15, timeout_s=30.0,
+        clock=ctx.clock, sleeper=ctx.sleeper,
+        abort_check=_abort,
+    )
+
+
 def step_engage_jump_clearance(
     ctx: StepContext,
     *,
@@ -207,6 +256,8 @@ def step_engage_jump_clearance(
     max_jump_polls: int = 12,
     max_charge_polls: int = 75,  # LIVE FIX 2026-07-06 — 75*0.8s = the 60s slow-charge NOTICE line (no longer the give-up)
     max_charge_live_polls: int = 300,  # PHROEA FIX 2026-07-12 — wedged-FSD hard cap (~240s) for a STILL-LIVE charge
+    align_hold_check_poll: int = 8,  # PHROEA NO-Q 2026-07-12 — charging polls w/o commit before the first ALIGN HUD check
+    max_align_holds: int = 3,        # bounded in-place re-aligns per attempt
     max_clear_attempts: int = 3,
     max_sc_entry_polls: int = 25,  # G19: realspace obscured -> SC-entry wait ceiling (~20s @0.8s)
     clear_burn_s: float = 7.0,   # post-orbit-engage settle pacing (D3: was the straight-burn duration)
@@ -324,6 +375,7 @@ def step_engage_jump_clearance(
         no_charge_polls = 0
         charging_polls = 0
         poll_i = 0
+        align_holds = 0        # in-place ALIGN re-aligns done this attempt
         while True:
             if ctx.should_abort():
                 ctx.log("EngageJumpClearanceAborted",
@@ -337,6 +389,22 @@ def step_engage_jump_clearance(
             if st is not None and getattr(st, "fsd_charging", False):
                 charge_seen = True
                 charging_polls += 1
+                # ALIGN-HOLD re-align (operator ruling 2026-07-12, Phroea Eaec
+                # NO-Q e5-9): a live charge that won't commit shows ALIGN WITH
+                # TARGET DESTINATION -- the ship engaged off-target (widget-ring
+                # fine pass degraded -> loose coarse tol). Re-align to the target
+                # IN PLACE, HOLDING the charge; NEVER orbit-assist a body that
+                # isn't there (deep space). Bounded: the HUD is read at most
+                # max_align_holds times, spaced so a genuinely wedged charge
+                # still falls through to the charge_stuck backstop below.
+                if (align_holds < max_align_holds
+                        and charging_polls >= align_hold_check_poll * (align_holds + 1)
+                        and _hud_align_warning(ctx)):
+                    align_holds += 1
+                    ctx.log("EngageJumpClearanceAlignHold",
+                            {"attempt": attempt, "hold": align_holds})
+                    _realign_hold_charge(ctx, _is_hyperspace_committed)
+                    continue   # re-check commit at the loop top; align settled
                 if charging_polls >= charge_ceiling:
                     # A STILL-LIVE charge is a PENDING jump, not a stuck one
                     # (Phroea Eaec IB-N d7-8 ram, live 2026-07-12): a struggling

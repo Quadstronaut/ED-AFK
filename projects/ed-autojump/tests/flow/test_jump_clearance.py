@@ -130,6 +130,70 @@ def test_charge_stuck_fails_without_getaround():
                and p.get("reason") == "charge_stuck" for k, p in logs)
 
 
+def test_align_warning_triggers_realign_holding_charge(monkeypatch):
+    """Operator ruling 2026-07-12 (Phroea NO-Q e5-9, 'not aligning after
+    engaging jump'): a LIVE charge that won't commit because the ship is
+    off-target shows ALIGN WITH TARGET DESTINATION (the widget-ring degraded ->
+    the ship engaged on the loose coarse tol). engage must re-align to the
+    target IN PLACE (compass, tighter tol) while HOLDING the charge -- NO orbit
+    get-around (nothing to orbit in deep space), NO jump re-press (that cancels
+    a live charge) -- and commit once aligned."""
+    import ed_autojump.flow.steps as steps_mod  # noqa: F401
+    import ed_vision.hud_sc_indicators as hud_mod
+    import ed_core.executor.align as align_mod
+
+    sender = FakeSender()
+    state = {"committed": False}
+    rig = _FsdRig(["idle"] + ["charging"] * 200)   # charge stays live
+    monkeypatch.setattr(hud_mod, "detect_align_warning", lambda frame, **k: True)
+
+    called = {"n": 0}
+
+    def fake_align(reader, sender_, *, capture, abort_check=None, **kw):
+        called["n"] += 1
+        state["committed"] = True        # aligned -> the held charge commits
+        return SimpleNamespace(aligned=True, iterations=3, reason="aligned")
+
+    monkeypatch.setattr(align_mod, "align_to_target", fake_align)
+
+    ctx = StepContext(
+        sender=sender, sleeper=rig.sleep,
+        status_supplier=rig.status,
+        in_witchspace=lambda: state["committed"],   # commit signal
+        hud_grabber=lambda: object(),
+        compass_reader=object(),
+        frame_grabber=lambda: object(),
+        ship_supplier=lambda: "mandalay",
+    )
+    assert STEP_REGISTRY["engage_jump_clearance"](ctx) is True
+    assert called["n"] >= 1                            # re-aligned in place
+    assert "UI_Right" not in sender.actions()          # NO orbit get-around
+    assert sender.actions().count("Hyperspace") == 1   # charge HELD, not re-pressed
+    assert "SetSpeedZero" not in sender.actions()      # throttle never dropped
+
+
+def test_no_align_warning_does_not_realign(monkeypatch):
+    """HUD reads NONE (a genuine slow-but-aligned charge, not off-target): no
+    re-align, the charge is simply waited out to the commit (regression guard so
+    the ALIGN gate only fires on the ALIGN prompt)."""
+    import ed_vision.hud_sc_indicators as hud_mod
+    import ed_core.executor.align as align_mod
+
+    sender = FakeSender()
+    monkeypatch.setattr(hud_mod, "detect_align_warning", lambda frame, **k: False)
+    called = {"n": 0}
+    monkeypatch.setattr(align_mod, "align_to_target",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    # charge 90 polls (past the ChargeSlow line) then commit -- must be waited
+    # out, never re-aligned.
+    ctx = _ctx(sender, ["idle"] + ["charging"] * 90 + ["jump"])
+    ctx.hud_grabber = lambda: object()
+    ctx.compass_reader = object()
+    ctx.frame_grabber = lambda: object()
+    assert STEP_REGISTRY["engage_jump_clearance"](ctx) is True
+    assert called["n"] == 0                             # never re-aligned
+
+
 def test_charge_dropped_goes_to_move_edge():
     """Charge seen then dropped without commit -> grace poll -> C4 move
     (D3: SC-assist orbit get-around)."""
