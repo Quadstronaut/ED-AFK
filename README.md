@@ -74,18 +74,26 @@ that turns that feed into decisions and decisions into synthetic input.
 ## ⚙️ What it does
 
 The engine watches the external data source, decides what state the world is
-in, and runs the procedure that matches. Concretely, for the *Elite Dangerous*
-fixture it flies a repetitive multi-jump loop: on arrival at a star it idles
-the throttle, optionally scoops fuel, locks the next route hop, clears the
-geometry, orients, and jumps; at the end of a route it parks or docks.
+in, and runs the procedure that matches. For the *Elite Dangerous* fixture it
+flies a repetitive multi-jump loop **and recovers from the things that go wrong
+along the way**: on arrival at a star it idles the throttle, optionally scoops
+fuel, locks the next route hop, clears the geometry, orients (nav-compass coarse
++ mouse-widget fine), and jumps; at the end of a route it parks or docks. A
+**real-time scene monitor** preempts the running procedure to recover from
+mid-flight events — a fresh system arrival, a star-smack drop back into normal
+space, or a server-drop **CONNECTION ERROR** screen (which it clears and
+re-enters the game in Solo, then re-plots the route). The discovery-scanner
+honk, an FSD-malfunction wait-and-refire, an obstruction get-around, and a
+never-strand re-dispatch all live in the same loop.
 
-Be clear about maturity: this is **alpha** software. The architecture is real
-and the offline test coverage is real, but **large parts of the loop are
-unit-tested and replay-tested only** — exercised against recorded data and
-fakes, not proven in sustained live operation. There are open defects that can
-strand the controlled process. No marketing claims are made here; the honest
-status is that this is a working experiment, not a finished product. The combat
-and trading packages are Phase-1 scaffolds that register nothing yet.
+Maturity, honestly: this is **alpha** software, but the core is no longer
+paper-only. The steady-state jump loop is **live-validated over hundreds of
+consecutive jumps** — including a cross-galaxy run toward Colonia — while the
+offline suite covers the engine, routing, and step library against recorded data
+and fakes. Docking and the rarer recovery paths are still under active live
+validation, there are open edges that can occasionally strand a run, and the
+combat and trading packages are Phase-1 scaffolds that register nothing yet. No
+finished-product claims — a working experiment that now actually flies.
 
 ---
 
@@ -184,8 +192,8 @@ calls exactly one function that sends DirectInput keystrokes to the game.
 flowchart LR
     journal[Player Journal tail] --> dispatcher
     status[Status.json reader] --> dispatcher
-    cv[compass + HUD-widget CV] --> dispatcher
-    dispatcher{{Dispatcher: event maps to procedure}} --> interpreter
+    cv[CV/OCR perception<br/>compass · widget · HUD prompts · nav panel] --> dispatcher
+    dispatcher{{Dispatcher: event maps to procedure<br/>+ real-time preempts}} --> interpreter
     interpreter[Interpreter: runs ordered steps, fails closed] --> steps[Step library: one function per primitive]
     steps --> keys[DirectInput keys]
     keys --> game([Elite Dangerous])
@@ -198,11 +206,12 @@ any failed required step aborts the run **without ever throttling forward or
 firing the jump**. That fail-closed contract is deliberate: when alignment is
 not positively confirmed, the engine stops rather than guessing.
 
-Maturity caveat, restated where it belongs: this runtime path is **alpha**.
-Most of it is validated by **unit tests and replayed recordings only** — the
-journal tail, dispatcher routing, and interpreter step-walking are exercised
-against recorded event logs and fakes, not against a guaranteed-reliable live
-session. Treat live behavior as unproven.
+Maturity caveat, restated where it belongs: this runtime is **alpha**, but the
+jump loop is now proven at scale — **hundreds of consecutive live jumps**, not
+just replayed recordings. The journal tail, dispatcher routing, interpreter
+step-walking, and the CV/OCR perception layer are also covered by an offline
+unit + replay suite. Docking and the rarer recovery paths remain under live
+validation; treat those as still-proving, and expect the occasional open edge.
 
 ---
 
