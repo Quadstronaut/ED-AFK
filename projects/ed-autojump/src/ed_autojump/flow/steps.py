@@ -1920,7 +1920,9 @@ def _confirm_row0_selected(ctx: StepContext, *, settle_s: float = 0.25,
 
 def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
                             settle_s: float = 0.4,
-                            panel_focus_action: str = "FocusLeftPanel") -> bool:
+                            panel_focus_action: str = "FocusLeftPanel",
+                            far_agree_ratio: float = 1.5,
+                            regrab_gap_s: float = 0.3) -> bool:
     """CLEAR-OF-STAR CV DISTANCE GATE (operator 2026-07-05) — the CV
     replacement for the blind nav_panel_target max_rows=3 lock-speed gate (#28
     died with the blind flow). Used by startup.toml / sc_resume.toml as
@@ -1940,7 +1942,12 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
 
     FAIL-CLOSED: no grabber / bad frame / unreadable top row -> True (run the
     get-around; never blind-throttle at a maybe-near star). The only False is
-    a POSITIVE far reading. Presses: open panel -> grab -> close panel."""
+    a CONFIRMED far reading: FAR requires TWO independent grabs whose anchored
+    reads BOTH clear the threshold AND agree within `far_agree_ratio` (live
+    2026-07-11 23:43, session 234324: OCR ate the leading "5." of "5.82Ls" ->
+    a single read of 82.0 verdicted FAR and full-throttled into a star 5.82 Ls
+    off the nose — FAR is the dangerous verdict, so FAR alone gets confirmed;
+    CLOSE never needs to be). Presses: open panel -> grab x2 -> close panel."""
     grabber = getattr(ctx, "navpanel_frame_grabber", None)
     if grabber is None:
         ctx.log("StarDistanceGate", {"verdict": "close", "reason": "no_grabber"})
@@ -1972,10 +1979,13 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
             ctx.log("StarDistanceGate", {"verdict": "close",
                                          "reason": "row0_unconfirmed"})
             return True                              # fail-closed: get-around
+        frame2 = None
         try:
             frame = grabber()
-        except Exception:  # noqa: BLE001 — grab failure -> frame None -> unreadable
-            frame = None
+            sl(regrab_gap_s)
+            frame2 = grabber()               # FAR-confirmation frame (below)
+        except Exception:  # noqa: BLE001 — grab failure -> None -> fail closed
+            pass
         finally:
             s.press(panel_focus_action); sl(settle_s)   # ALWAYS close the panel
     except KeyError:
@@ -1984,44 +1994,61 @@ def step_star_distance_gate(ctx: StepContext, *, threshold_ls: float = 100.0,
     # Frame capture DEFAULT ON (operator order 2026-07-06): every CV read
     # dumps its frame so a bad verdict is diagnosable offline, always — dumped
     # BEFORE any verdict-bearing read of it.
-    if frame is not None and ctx.frame_sink is not None:
-        ctx.frame_sink(f"stargate_{int(ctx.clock())}", frame)
-    # SAME-FRAME ANCHOR (live G8, session 090913 2026-07-11): the confirm's
-    # row_y belongs to the confirm's OWN grab — the panel floats with head/
-    # ship attitude (header_y 448->418 in ~1 s live), so applying it to THIS
-    # grab put the crop a full row down and read 474 Ls for a 1.60 Ls star
-    # (false FAR -> burn lane). Re-read row 0 on the gate's own frame; the
-    # confirm above keeps press authority (pin/recovery), this read presses
-    # nothing. Row 0 not bright on THIS frame -> no anchor is trustworthy ->
-    # CLOSE lane.
-    row_y = None
-    if frame is not None:
+    t0 = int(ctx.clock())
+    for tag, fr in (("a", frame), ("b", frame2)):
+        if fr is not None and ctx.frame_sink is not None:
+            ctx.frame_sink(f"stargate_{t0}_{tag}", fr)
+
+    def _anchored_ls(fr):
+        """SAME-FRAME ANCHOR (live G8, session 090913): re-read row 0 on THIS
+        frame (the panel floats between grabs), then the tilt-shifted distance
+        crop anchored on it. (row_y, ls); (None, None) on any miss — presses
+        nothing, always fail-soft."""
+        if fr is None:
+            return None, None
         try:
             from ed_vision.navpanel_row0 import read_row0_selected
-            own = read_row0_selected(frame)
-            if own.state == "bright":
-                row_y = own.row_y
-        except Exception:  # noqa: BLE001 — fail-soft; row_y stays None
-            row_y = None
+            own = read_row0_selected(fr)
+            if own.state != "bright":
+                return None, None
+            from ed_vision.navpanel_reader import read_first_row_distance_ls
+            return own.row_y, read_first_row_distance_ls(fr, row_y=own.row_y)
+        except Exception:  # noqa: BLE001 — perception fail-soft
+            return None, None
+
+    row_y, ls = _anchored_ls(frame)
     if row_y is None:
         ctx.log("StarDistanceGate", {"verdict": "close",
                                      "reason": "row0_moved"})
         return True                                  # fail-closed: get-around
-    try:
-        from ed_vision.navpanel_reader import read_first_row_distance_ls
-        ls = read_first_row_distance_ls(frame, row_y=row_y)
-    except Exception as exc:  # noqa: BLE001 — perception error -> fail closed
-        ctx.log("StarDistanceGate", {"verdict": "close",
-                                     "reason": "read_error",
-                                     "err": type(exc).__name__})
-        return True
     if ls is None:
         ctx.log("StarDistanceGate", {"verdict": "close", "reason": "unreadable"})
         return True
-    verdict = "close" if ls < threshold_ls else "far"
-    ctx.log("StarDistanceGate", {"verdict": verdict, "ls": round(ls, 2),
-                                 "threshold_ls": threshold_ls, "row_y": row_y})
-    return ls < threshold_ls
+    if ls < threshold_ls:
+        # CLOSE is the SAFE verdict — one read suffices, no confirmation.
+        ctx.log("StarDistanceGate", {"verdict": "close", "ls": round(ls, 2),
+                                     "threshold_ls": threshold_ls, "row_y": row_y})
+        return True
+    # FAR CONFIRMATION (operator "ship them", live 2026-07-11 23:43): FAR is
+    # the verdict that sends full throttle at a maybe-near star, and a single
+    # OCR value-corruption ("5.82Ls" read as 82.0) produced it once already.
+    # FAR stands ONLY when the second, independently-grabbed-and-anchored
+    # read ALSO clears the threshold AND the two values agree within
+    # far_agree_ratio. Anything else -> CLOSE lane (the get-around is always
+    # safe at any distance).
+    row_y2, ls2 = _anchored_ls(frame2)
+    if (ls2 is not None and ls2 >= threshold_ls
+            and max(ls, ls2) <= far_agree_ratio * min(ls, ls2)):
+        ctx.log("StarDistanceGate", {"verdict": "far", "ls": round(ls, 2),
+                                     "ls2": round(ls2, 2),
+                                     "threshold_ls": threshold_ls,
+                                     "row_y": row_y, "row_y2": row_y2})
+        return False
+    ctx.log("StarDistanceGate", {"verdict": "close", "reason": "far_unconfirmed",
+                                 "ls": round(ls, 2),
+                                 "ls2": None if ls2 is None else round(ls2, 2),
+                                 "threshold_ls": threshold_ls})
+    return True
 
 
 def step_wait_sc_assist_orbiting(ctx: StepContext, *, poll_s: float = 1.0,
