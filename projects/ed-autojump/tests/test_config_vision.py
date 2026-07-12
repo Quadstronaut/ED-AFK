@@ -14,6 +14,9 @@ def test_defaults_are_safe_and_off():
     # `enabled`/`region`, so this default only matters once vision is on.
     assert cfg.vision.widget_ring_alignment is True
     assert cfg.vision.widget_crop == (510, 240, 900, 600)
+    # WIDGET REQUIRED by default (operator 2026-07-12): a launch preflight miss
+    # HALTS loudly rather than silently degrading to compass-only.
+    assert cfg.vision.widget_ring_on_miss == "required"
 
 
 def test_toml_overrides_vision(tmp_path):
@@ -41,3 +44,20 @@ def test_toml_overrides_vision(tmp_path):
     assert cfg.vision.timeout_s == 30.0
     assert cfg.vision.widget_ring_alignment is False  # explicitly turned off
     assert cfg.vision.widget_crop == (0, 0, 1280, 720)  # list coerced to tuple
+
+
+def test_widget_ring_on_miss_required_loads(tmp_path):
+    """The new 'required' mode loads (validation accepts it)."""
+    toml = tmp_path / "config.toml"
+    toml.write_text('[vision]\nwidget_ring_on_miss = "required"\n', encoding="utf-8")
+    cfg = load_config(toml)
+    assert cfg.vision.widget_ring_on_miss == "required"
+
+
+def test_widget_ring_on_miss_rejects_garbage(tmp_path):
+    """A typo must refuse to launch, not silently pick a behavior."""
+    import pytest
+    toml = tmp_path / "config.toml"
+    toml.write_text('[vision]\nwidget_ring_on_miss = "sometimes"\n', encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_config(toml)

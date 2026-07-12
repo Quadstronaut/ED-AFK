@@ -567,7 +567,7 @@ def cmd_run(args) -> int:
             from ed_vision.capture import build_widget_vision
             from ed_vision.widget_ring import verify_widget_rendered
             widget_ring_reader, widget_frame_grabber = build_widget_vision(cfg)
-            degrade = cfg.vision.widget_ring_on_miss != "fail_closed"
+            mode = cfg.vision.widget_ring_on_miss
             missing = (widget_ring_reader is None
                        or widget_frame_grabber is None)
             undetected = (not missing and not verify_widget_rendered(
@@ -577,18 +577,38 @@ def cmd_run(args) -> int:
                        if missing else
                        "mouse widget not detected — enable the HUD mouse "
                        "widget in 'point' mode (see ED-AFK preset)")
-                if degrade:
-                    print(f"WARNING: {why}. Widget-ring fine pass DISABLED "
-                          f"for this run — jumps proceed compass-only. "
-                          f"([vision].widget_ring_on_miss='fail_closed' to "
-                          f"gate jumps on it instead.)", file=sys.stderr)
-                    cfg.vision.widget_ring_alignment = False
-                    widget_ring_reader = None
-                    widget_frame_grabber = None
-                else:
+                if mode == "required":
+                    # OPERATOR 2026-07-12: WIDGET REQUIRED — do NOT fly without
+                    # the fine-alignment widget. A launch-time HALT, LOUD, so the
+                    # operator makes the widget visible and relaunches. Nothing is
+                    # constructed yet at this point (overlay/runner/listener are
+                    # all below), so returning here leaks nothing. Rationale: live
+                    # session 071916 flew a whole run compass-only with the
+                    # loosened align_tol -> every FSD engage misaligned.
+                    bar = "!" * 66
+                    for ln in (bar,
+                               f"  HALT: {why}.",
+                               "  Widget-ring fine alignment is REQUIRED "
+                               "([vision].widget_ring_on_miss = 'required').",
+                               "  The bot will NOT fly without it -- enable the "
+                               "HUD mouse widget in",
+                               "  'point' mode (ED-AFK preset), then relaunch.",
+                               bar):
+                        print(ln, file=sys.stderr)
+                        print(ln)
+                    return 3
+                if mode == "fail_closed":
                     print(f"WARNING: {why}. widget_ring_on_miss='fail_closed' "
                           f"— the required fine step gates every jump until "
                           f"the widget is detectable.", file=sys.stderr)
+                else:   # "degrade"
+                    print(f"WARNING: {why}. Widget-ring fine pass DISABLED "
+                          f"for this run — jumps proceed compass-only. "
+                          f"([vision].widget_ring_on_miss='required' to HALT "
+                          f"until the widget is visible instead.)", file=sys.stderr)
+                    cfg.vision.widget_ring_alignment = False
+                    widget_ring_reader = None
+                    widget_frame_grabber = None
             else:
                 print(f"vision: widget-ring FINE pass ON "
                       f"(crop={tuple(cfg.vision.widget_crop)})")

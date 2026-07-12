@@ -303,14 +303,21 @@ class VisionConfig:
     # mode. widget_crop is the 1080p centre rect (x, y, w, h).
     widget_ring_alignment: bool = True
     widget_crop: tuple[int, int, int, int] = (510, 240, 900, 600)
-    # What a widget MISS does (operator decision 2026-06-06, GitHub issue #1):
-    #   "degrade"     (default) — fine pass is skipped (compass-only) and the
-    #                 jump proceeds. If we're genuinely off-target the FSD
-    #                 charge aborts and autorecovery maneuvers fix it.
-    #   "fail_closed" — never jump on an unconfirmed fine-orient: preflight
-    #                 warns and the required fine step fails per jump until
-    #                 the widget is detectable.
-    widget_ring_on_miss: str = "degrade"
+    # What a widget MISS does (operator decision 2026-06-06 -> 2026-07-12):
+    #   "required"   (DEFAULT, operator 2026-07-12) — the widget is MANDATORY:
+    #                 the launch preflight HALTS loudly and refuses to fly until
+    #                 the operator makes the mouse widget visible. Chosen after
+    #                 live session 071916 flew a whole run compass-only: with
+    #                 align_tol loosened (the widget owns jump-time precision) a
+    #                 silent "degrade" left every FSD engage misaligned. Halt >
+    #                 silent trap.
+    #   "degrade"    — fine pass skipped (compass-only) and the jump proceeds.
+    #                 If we're genuinely off-target the FSD charge aborts and
+    #                 autorecovery maneuvers fix it. (GitHub issue #1 default.)
+    #   "fail_closed" — never jump on an unconfirmed fine-orient: preflight warns
+    #                 and the required fine step fails per jump until the widget
+    #                 is detectable (flies but never jumps).
+    widget_ring_on_miss: str = "required"
 
 
 @dataclass
@@ -504,10 +511,10 @@ def load_config(path: str | Path | None = None, *, environ=None) -> Config:
     _load_dotenv(base_dir, environ)
     _apply_env_overrides(cfg, environ)
 
-    if cfg.vision.widget_ring_on_miss not in ("degrade", "fail_closed"):
+    if cfg.vision.widget_ring_on_miss not in ("required", "degrade", "fail_closed"):
         # A typo here would silently pick one behavior — refuse to launch.
         raise ValueError(
-            f"[vision].widget_ring_on_miss must be 'degrade' or 'fail_closed', "
-            f"got {cfg.vision.widget_ring_on_miss!r}"
+            f"[vision].widget_ring_on_miss must be 'required', 'degrade', or "
+            f"'fail_closed', got {cfg.vision.widget_ring_on_miss!r}"
         )
     return cfg
