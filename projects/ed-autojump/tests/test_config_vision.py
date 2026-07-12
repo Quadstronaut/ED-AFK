@@ -13,7 +13,9 @@ def test_defaults_are_safe_and_off():
     # 1080p centre crop. Note: compass alignment itself is still gated by
     # `enabled`/`region`, so this default only matters once vision is on.
     assert cfg.vision.widget_ring_alignment is True
-    assert cfg.vision.widget_crop == (510, 240, 900, 600)
+    # WIDENED 2026-07-12: 1200x680 centred (catches a reticle just outside the
+    # old 900x600 box); the reader derives its anchor from the crop centre.
+    assert cfg.vision.widget_crop == (360, 200, 1200, 680)
     # WIDGET REQUIRED by default (operator 2026-07-12): a launch preflight miss
     # HALTS loudly rather than silently degrading to compass-only.
     assert cfg.vision.widget_ring_on_miss == "required"
