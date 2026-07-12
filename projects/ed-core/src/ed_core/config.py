@@ -282,6 +282,11 @@ class VisionConfig:
     # Dot measured 6 px on live orient frames = 0.086 normalized diameter;
     # 0.20 = 0.12 + ~0.93 dot. Invariant deadzone*sqrt(2) <= align_tol still
     # holds (0.113 <= 0.20); the widget ring owns fine alignment after.
+    # NOTE: THE LIVE KNOB IS config.toml [vision] align_tol — the merge order
+    # (defaults -> config.toml -> config.local.toml -> env) means this default
+    # only applies when the TOML omits the key. Both layers set 0.20 now
+    # (2026-07-11: two edits here, 0.20 and an operator 3, changed nothing
+    # live because config.toml:87 held 0.12 the whole time).
     align_tol: float = 0.20
     deadzone: float = 0.08
     gain: float = 2.0
