@@ -52,6 +52,27 @@ TOL = 0.15
 
 
 # ---------------------------------------------------------------------------
+# Cyan-purity-weighted pick (dense/bright-field fix, 2026-07-12)
+# ---------------------------------------------------------------------------
+
+def test_purity_weighting_picks_bright_dot_over_dim_halo():
+    """A LARGE DIM cyan halo (ambient bloom in a bright/dense field) must NOT beat
+    a SMALL BRIGHT real dot. Ranking eligible blobs by area ALONE picks the halo
+    (a wrong steer -> the ALIGN-hold the operator had to nudge live); ranking by
+    area x cyan-purity (b-r) picks the dot. The real dot is bright + strongly blue
+    (b-r=255 here); the bloom halo is dim + weakly blue (b-r=35)."""
+    frame = _blank(SIZE)                                  # 100x100, centre (50,50)
+    # dim, LARGER halo offset from centre -- wins on area, loses on purity
+    cv2.circle(frame, (68, 62), 6, (90, 90, 55), thickness=-1)   # b-r = 35
+    # bright, SMALLER real dot at the calibrated centre
+    cv2.circle(frame, (50, 50), 4, CYAN_BGR, thickness=-1)       # b-r = 255
+    read = CyanDotReader(use_ring_detect=False).read(frame)      # fixed centre
+    assert read.found is True
+    # picks the CENTRE dot (offset ~0), NOT the offset halo (~+0.7)
+    assert abs(read.offset_x) < 0.25 and abs(read.offset_y) < 0.25
+
+
+# ---------------------------------------------------------------------------
 # Position tests (filled dot)
 # ---------------------------------------------------------------------------
 
