@@ -143,6 +143,19 @@ def run_procedure(
         # touches the required-fail / retry_from / retry_anchor / abort
         # machinery below.
         if not ok and not step.required and step.skip_to is not None:
+            if step.skip_to == "__end__":
+                # SKIP-TO-END (2026-07-12): a non-required False FINISHES the
+                # procedure cleanly (completed, not aborted) with no terminal
+                # step to land on. arrival's FAR distance gate uses it to skip
+                # the SC-assist get-around and hand straight off to the
+                # orchestrator's traversal branch — arrival has no onward step
+                # (the jump lives in traversal), and a `wait` terminal is
+                # forbidden there (no blind-pacing regression). Reserved sentinel
+                # name, whitelisted in loader.validate_procedure.
+                ctx.log("StepSkipped",
+                        {"procedure": proc.name, "from": step.action,
+                         "to": "__end__", "from_index": i, "to_index": n})
+                break
             target = proc.index_of_action(step.skip_to)
             if target is not None:
                 ctx.log("StepSkipped",

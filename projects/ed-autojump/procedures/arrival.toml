@@ -36,12 +36,27 @@ parallel_tracks = ["honk"]   # honk fires every system, no matter what (step 2)
 # bad frames are now absorbed IN-STEP (nav_supercruise_star re-reads the row
 # and the label in place within ONE panel open), so the procedure-level retry
 # only covers pose/state disturbances; one re-settle pass, then abort loudly.
-retry_from = "scoop_refuel"
+retry_from = "set_throttle"
 max_retries = 1
 backoff_s = 2.0
 
 steps = [
+  # Set throttle to 0 in case commander didn't enable hyperspace dethrottle
   { action = "set_throttle", pct = 0 },
+  # If fuel level is less than refuel_below percent, approach star at approach_pct percent until full
+  # approach_pct must be a speed preset, arbitrary numbers will crash the bot.
   { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.65, full_epsilon = 0.2 },
+  # CLEAR-OF-STAR DISTANCE GATE (operator 2026-07-12): a FAR arrival star
+  # (>=100 Ls, confirmed by two agreeing reads) does NOT obstruct the onward
+  # jump, so skip the SC-assist get-around entirely -- arrival returns and the
+  # orchestrator branches straight to traversal (orient + jump direct), instead
+  # of SC-assisting a star 700 Ls away. CLOSE / any unreadable / crash -> fall
+  # through to nav_supercruise_star exactly as before (the gate is fail-closed
+  # to CLOSE on every non-confirmed-far path; a confirmed FAR is its ONLY False).
+  # Evaluated AFTER scoop so a low-fuel approach that already flew the ship to
+  # the star is correctly re-read as CLOSE. FAR -> skip_to "__end__" finishes
+  # arrival with no landing step (a `wait` terminal is forbidden here), and the
+  # orchestrator then branches to traversal (orient + jump direct).
+  { action = "star_distance_gate", skip_to = "__end__" },
   { action = "nav_supercruise_star", required = true },
 ]

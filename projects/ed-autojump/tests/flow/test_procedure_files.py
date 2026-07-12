@@ -55,16 +55,27 @@ def test_arrival_is_exactly_throttle_scoop_star():
     retry_from==scoop."""
     arrival = load_procedures(PROC_DIR)["arrival"]
     assert [s.action for s in arrival.steps] == [
-        "set_throttle", "scoop_refuel", "nav_supercruise_star"]
+        "set_throttle", "scoop_refuel", "star_distance_gate",
+        "nav_supercruise_star"]
     scoop = next(s for s in arrival.steps if s.action == "scoop_refuel")
     # OPERATOR 2026-07-11 retune: 0.65 (was 0.75 on 07-06; council-A's 0.50
     # drained the tank live). Destination top-off (0.99) stays in
     # route_complete_park.toml.
     assert scoop.params.get("refuel_below") == 0.65
+    # DISTANCE GATE (operator 2026-07-12): a FAR arrival star (>=100 Ls, two
+    # agreeing reads) skips the SC-assist get-around via skip_to="__end__" (the
+    # skip-to-END sentinel -- arrival finishes with no landing step, then the
+    # orchestrator branches to traversal). Non-required so its confirmed-far
+    # False fires the forward hop (a fail-closed True falls through to assist).
+    gate = next(s for s in arrival.steps if s.action == "star_distance_gate")
+    assert gate.skip_to == "__end__"
+    assert gate.required is False
     star = next(s for s in arrival.steps if s.action == "nav_supercruise_star")
     assert star.required is True
     assert arrival.parallel_tracks == ("honk",)
-    assert arrival.on_required_fail.retry_from == "scoop_refuel"
+    # OPERATOR retry_from = set_throttle (re-settle the post-scoop pose the
+    # SC-assist grab relies on before the gate + assist re-run).
+    assert arrival.on_required_fail.retry_from == "set_throttle"
     # OPERATOR 2026-07-06 (run 085221, "we do shit once"): transient reads are
     # absorbed IN-STEP; the procedure retry is ONE re-settle pass, then abort.
     assert arrival.on_required_fail.max_retries == 1

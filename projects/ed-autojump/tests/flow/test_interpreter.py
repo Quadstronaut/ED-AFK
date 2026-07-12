@@ -26,6 +26,22 @@ def test_runs_steps_in_order_to_completion():
     assert result.completed is True and result.aborted is False
 
 
+def test_skip_to_end_finishes_cleanly_without_running_later_steps():
+    """SKIP-TO-END (2026-07-12): a non-required step returning False with
+    skip_to='__end__' finishes the procedure CLEANLY (completed, not aborted)
+    and runs no later step -- arrival's FAR distance gate skips the SC-assist
+    get-around and hands off with no terminal landing step."""
+    calls = []
+    proc = Procedure(
+        name="p",
+        steps=(Step("a"), Step("b", skip_to="__end__"), Step("c")),
+    )
+    result = run_procedure(proc, StepContext(sender=FakeSender()),
+                           registry=_registry(calls, {"b"}))   # b -> False -> end
+    assert calls == ["a", "b"]                 # c NEVER ran
+    assert result.completed is True and result.aborted is False
+
+
 def test_required_failure_aborts_without_running_later_steps():
     calls = []
     proc = Procedure(
