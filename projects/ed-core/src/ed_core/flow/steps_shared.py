@@ -879,10 +879,37 @@ def step_connection_recovery(
     gate. The pacing values are CONSERVATIVE + tunable and want a live tuning
     pass. After this returns the live loop re-classifies from the fresh in-game
     state. input_exclusive: owns input for the whole macro."""
+    def _abort() -> bool:
+        # PANIC-INTERRUPTIBLE (council 2026-07-12): the operator's panic hotkey
+        # must be able to stop the macro mid-menu, not press its whole body into
+        # a dead client. should_abort is the runner's combined stop/preempt gate.
+        cb = getattr(ctx, "should_abort", None)
+        try:
+            return bool(cb and cb())
+        except Exception:  # noqa: BLE001 — a gate error must not block the abort path
+            return False
+
+    def _notify(ok: bool) -> None:
+        # Tell the runner whether we actually got back IN-GAME; it re-arms the
+        # never-strand re-dispatch on success and leaves a loud strand on failure
+        # (council 2026-07-12: recovery had no post-recovery handoff -> STRAND).
+        fn = getattr(ctx, "connection_recovery_notify", None)
+        if fn is not None:
+            try:
+                fn(bool(ok))
+            except Exception:  # noqa: BLE001
+                pass
+
     # 1. OK -> main menu
+    if _abort():
+        _notify(False)
+        return False
     _press(ctx, "UI_Select")
     ctx.sleeper(menu_settle_s)
     # 2. CONTINUE (resume the last commander/session)
+    if _abort():
+        _notify(False)
+        return False
     _press(ctx, "UI_Select")
     ctx.sleeper(menu_settle_s)
     # 2b. MODE-BUTTON READINESS GATE (operator 2026-07-12, STUB): the mode
@@ -894,6 +921,9 @@ def step_connection_recovery(
     # wired for a one-function fill-in. See ed-connection-error-screens memory.
     _wait_mode_buttons_ready(ctx, max_s=mode_ready_wait_s)
     # 3. move the mode selector RIGHT to Solo (Open -> Private -> Solo)
+    if _abort():
+        _notify(False)
+        return False
     _press(ctx, "UI_Right")
     ctx.sleeper(nav_gap_s)
     _press(ctx, "UI_Right")
@@ -901,15 +931,29 @@ def step_connection_recovery(
     # 4. load into the game (arrives in normal/real-space)
     _press(ctx, "UI_Select")
     ctx.log("ConnectionRecoveryLoading", {})
-    # 5. gate the re-entry on the LoadGame journal event (pace only if unwired)
+    # 5. FAIL-CLOSED re-entry gate (council 2026-07-12): the step used to discard
+    # the LoadGame result and `return True` unconditionally -- so a recovery that
+    # never left the menu (Solo still grayed) reported clean SUCCESS, cleared the
+    # latch, blind-pressed the galaxy map into the dead menu, and stranded. Now we
+    # gate on LoadGame and, on a TIMEOUT, log loudly + DO NOT press the map + tell
+    # the runner recovery FAILED (no re-arm; the watch stays able to re-fire).
+    reached_game = True
     if ctx.event_waiter is not None:
-        ctx.event_waiter("LoadGame", load_wait_s)
+        reached_game = bool(ctx.event_waiter("LoadGame", load_wait_s))
+    if not reached_game:
+        ctx.log("ConnectionRecoveryLoadTimeout", {"waited_s": load_wait_s})
+        _notify(False)
+        return False
+    if _abort():
+        _notify(False)
+        return False
     ctx.sleeper(load_settle_s)   # real-space settle before any further input
     # 6. re-plot the last SAVED route: open the galaxy map, then close it
     _press(ctx, "GalaxyMapOpen")
     ctx.sleeper(replot_gap_s)
     _press(ctx, "UI_Back")
     ctx.log("ConnectionRecoveryReplotted", {})
+    _notify(True)
     return True
 
 

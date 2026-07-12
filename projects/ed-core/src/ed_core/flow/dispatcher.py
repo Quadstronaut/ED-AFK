@@ -311,6 +311,12 @@ class FlowRunner:
         # recovery; cleared when recovery returns (a still-down server then
         # re-triggers on the next tick).
         self._connection_error_seen: bool = False
+        # Recovery outcome, set by step_connection_recovery via
+        # ctx.connection_recovery_notify: True once it is back IN-GAME. The
+        # main-thread consumer re-arms the never-strand re-dispatch on True and
+        # leaves a loud strand on False (council 2026-07-12 #1: recovery armed no
+        # post-recovery scene handoff -> STRAND even after a clean recovery).
+        self._connection_recovered: bool = False
         # OPERATOR WIRE-IN 2026-07-06: a step saw ALIGN WITH ESCAPE VECTOR
         # (boot-smack state). Latched by ctx.escape_vector_notify; consumed by
         # boot_routes' startup override, which hands off to smack_recovery.
@@ -676,6 +682,12 @@ class FlowRunner:
             self._escape_vector_seen = True
             self._preempt = "escape_vector"
         ctx.escape_vector_notify = _escape_vector_notify
+
+        def _connection_recovery_notify(ok: bool) -> None:
+            # step_connection_recovery reports whether it got back IN-GAME; the
+            # main-thread consumer re-arms the never-strand handoff on success.
+            self._connection_recovered = bool(ok)
+        ctx.connection_recovery_notify = _connection_recovery_notify
         return ctx
 
     # ---- running procedures ----------------------------------------------
@@ -1147,7 +1159,17 @@ class FlowRunner:
         while not stop.is_set():
             if self._should_abort():
                 return
-            self._heat_tick()
+            try:
+                self._heat_tick()
+            except Exception as exc:  # noqa: BLE001 — council 2026-07-12 #6: a
+                # transient tick error (a non-KeyError from sender.press, a bad
+                # status read) must NOT kill the daemon and disable heat
+                # protection for the rest of a 24h run. Log once, keep ticking.
+                if self.record is not None:
+                    try:
+                        self.record("HeatWatchdogTickError", {"error": repr(exc)})
+                    except Exception:  # noqa: BLE001
+                        pass
             self.sleeper(tick_s)
 
     def heat_guard(self) -> None:
@@ -1187,7 +1209,12 @@ class FlowRunner:
         proc at its next poll -- a drop obsoletes EVERY scene, so unlike
         star_smack there is NO scene allow-list) + a recovery flag for the
         main-thread consumer. This thread NEVER presses keys."""
-        if self.input_exclusive() or self._connection_error_seen:
+        # NOT gated on input_exclusive (council 2026-07-12 #4, unlike the heat
+        # tick): a CONNECTION ERROR can strike DURING a long input_exclusive
+        # engage_jump_clearance (~240s), and this tick only READS a frame + sets a
+        # latch -- it never presses keys, and the full-screen modal is not a panel
+        # frame the OCR would false-match. Only the once-per-episode debounce gates it.
+        if self._connection_error_seen:
             return
         grab = self._connection_grabber
         if grab is None:
@@ -1252,11 +1279,32 @@ class FlowRunner:
                 self.focus_reassert()
             except Exception:  # noqa: BLE001 — focus is best-effort, never fatal
                 pass
+        self._connection_recovered = False
         try:
             self._run("connection_recovery")
         finally:
-            # Cleared AFTER recovery: a still-present modal re-latches next tick.
             self._connection_error_seen = False
+        if self._connection_recovered:
+            # Back IN-GAME -> resume flight by RE-CLASSIFYING from the fresh live
+            # state (council 2026-07-12 #1: recovery armed no successor, so even a
+            # clean recovery stranded -- classify_startup is one-shot and no
+            # journal route fires at a static reconnect). Arm the never-strand
+            # driver to fire on the very next idle tick.
+            self._needs_redispatch = True
+            self._redispatch_attempts = 0
+            self._redispatch_next_t = 0.0
+            if self.record is not None:
+                self.record("ConnectionRecoveryDone", {"resumed": True})
+        else:
+            # Did NOT reach in-game (Solo grayed pre-auth / server still down; the
+            # readiness detector is a STUB awaiting operator frames). A LOUD strand
+            # beats a silent one or blind galaxy-map presses into a dead menu; the
+            # watch stays able to re-fire if the modal reappears.
+            print("[CONNECTION-ERROR] recovery did NOT reach in-game "
+                  "(mode buttons likely still grayed) -- strand, awaiting frames",
+                  flush=True)
+            if self.record is not None:
+                self.record("ConnectionRecoveryStranded", {})
 
     # ---- never-strand re-dispatch (workstream A, 2026-07-07 council) ------
     def _maybe_redispatch(self) -> None:
@@ -1393,7 +1441,10 @@ class FlowRunner:
                 # right after it returns (previously a waiter swallowed it
                 # and the arrival flow never ran).
                 events = self._hub.poll(main_handle)
-                if not events:
+                # A pending connection-error diverts to the recovery branch even
+                # if stale pre-drop events are still queued -- routing them would
+                # press flight keys INTO the modal (council 2026-07-12 #3).
+                if not events or self._connection_error_seen:
                     self._caught_up = True
                     if self._connection_error_seen:
                         # A server drop obsoletes classify/redispatch -- the

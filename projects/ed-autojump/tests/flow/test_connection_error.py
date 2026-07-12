@@ -14,7 +14,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ed_autojump.flow.dispatcher import FlowRunner
+from ed_core.flow.context import StepContext
 from ed_core.flow.model import Procedure, Step
+from ed_core.flow.steps_shared import step_connection_recovery
 from tests.flow import FakeSender
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
@@ -70,17 +72,19 @@ def test_connection_tick_debounced_while_pending(monkeypatch):
     assert calls == []                # neither grabber nor detector consulted
 
 
-def test_connection_tick_skips_when_input_exclusive(monkeypatch):
-    """A UI macro owns input -> the watch does not grab (a mid-panel grab is
-    garbage and a preempt would abort the macro)."""
-    calls = []
-    monkeypatch.setattr(_DETECT, lambda f: calls.append(1) or True)
+def test_connection_tick_fires_even_during_input_exclusive(monkeypatch):
+    """COUNCIL #4: a CONNECTION ERROR can strike DURING a long input_exclusive
+    engage_jump_clearance (~240s). The tick only READS a frame + latches (never
+    presses keys) and a full-screen modal is not a panel frame, so it must NOT be
+    gated on input_exclusive -- it fires and latches."""
+    monkeypatch.setattr(_DETECT, lambda f: True)
     r = _runner()
     r._connection_grabber = lambda: object()
+    r._running_proc = "traversal"
     with r._exclusive_input():
         r._connection_tick()
-    assert calls == []
-    assert r._connection_error_seen is False
+    assert r._connection_error_seen is True
+    assert r._preempt == "connection_error"
 
 
 def test_connection_tick_no_grabber_is_noop(monkeypatch):
@@ -138,3 +142,62 @@ def test_connection_recovery_procedure_registered_and_valid():
     assert "connection_recovery" in procs
     assert validate_procedure(
         procs["connection_recovery"], known_actions=STEP_REGISTRY.keys()) == []
+
+
+# ---- council 2026-07-12 fixes: post-recovery handoff + fail-closed re-entry --
+
+def _recovery_ctx(sender, *, load_result=True, abort=False):
+    notified = []
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None,
+        event_waiter=(None if load_result is None else (lambda name, t: load_result)),
+        should_abort=(lambda: abort),
+        record=lambda k, p: None,
+    )
+    ctx.connection_recovery_notify = notified.append
+    return ctx, notified
+
+
+def test_recovery_success_arms_redispatch():
+    """COUNCIL #1 (BLOCKER): a clean recovery used to strand -- classify_startup is
+    one-shot and no journal route fires at a static reconnect. On success the
+    consumer must ARM the never-strand re-dispatch so flight resumes."""
+    sender = FakeSender()
+    procs = {"connection_recovery": Procedure(
+        name="connection_recovery", steps=(Step("connection_recovery"),))}
+    r = _runner(procs, sender)
+    r._connection_error_seen = True
+    r._maybe_recover_connection()
+    assert r._connection_recovered is True       # step got back in-game (no waiter -> assume)
+    assert r._needs_redispatch is True           # <- the fix: handoff armed
+    assert r._connection_error_seen is False
+
+
+def test_step_recovery_loadgame_timeout_fails_closed():
+    """COUNCIL #2 (BLOCKER): on a LoadGame timeout (Solo still grayed) the step
+    used to return True + blind-press the galaxy map into the dead menu. Now it
+    returns False, notifies failure, and presses NO map keys."""
+    sender = FakeSender()
+    ctx, notified = _recovery_ctx(sender, load_result=False)
+    assert step_connection_recovery(ctx) is False
+    assert notified == [False]
+    assert "GalaxyMapOpen" not in sender.actions()
+    assert "UI_Back" not in sender.actions()
+
+
+def test_step_recovery_success_replots_and_notifies():
+    sender = FakeSender()
+    ctx, notified = _recovery_ctx(sender, load_result=True)
+    assert step_connection_recovery(ctx) is True
+    assert notified == [True]
+    assert "GalaxyMapOpen" in sender.actions() and "UI_Back" in sender.actions()
+
+
+def test_step_recovery_panic_aborts_early():
+    """COUNCIL (panic finding): the operator panic hotkey must interrupt the
+    macro -- it must NOT press its whole body into a dead client."""
+    sender = FakeSender()
+    ctx, notified = _recovery_ctx(sender, abort=True)
+    assert step_connection_recovery(ctx) is False
+    assert notified == [False]
+    assert sender.actions() == []                # nothing pressed under panic
