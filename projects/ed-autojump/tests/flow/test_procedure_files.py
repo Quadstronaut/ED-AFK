@@ -49,28 +49,22 @@ def test_arrival_does_not_orient_or_jump():
 
 
 def test_arrival_is_exactly_throttle_scoop_star():
-    """The new arrival contract (acceptance): the action list is EXACTLY
-    [set_throttle, scoop_refuel, nav_supercruise_star]; scoop refuel_below==1.0
-    (always top off); nav_supercruise_star required; parallel_tracks==(honk,);
-    retry_from==scoop."""
+    """Arrival contract (acceptance): the action list is EXACTLY
+    [set_throttle, scoop_refuel, nav_supercruise_star]; nav_supercruise_star
+    required; parallel_tracks==(honk,); retry_from==set_throttle.
+
+    star_distance_gate is DISABLED (operator commented it out on 2026-07-12
+    during live testing). If it is re-enabled, restore the gate assertions
+    below (skip_to=='__end__', required False, threshold_ls==15.0)."""
     arrival = load_procedures(PROC_DIR)["arrival"]
     assert [s.action for s in arrival.steps] == [
-        "set_throttle", "scoop_refuel", "star_distance_gate",
-        "nav_supercruise_star"]
+        "set_throttle", "scoop_refuel", "nav_supercruise_star"]
+    # arrival must NOT carry a live star_distance_gate step while it is disabled.
+    assert "star_distance_gate" not in {s.action for s in arrival.steps}
     scoop = next(s for s in arrival.steps if s.action == "scoop_refuel")
-    # OPERATOR 2026-07-11 retune: 0.65 (was 0.75 on 07-06; council-A's 0.50
-    # drained the tank live). Destination top-off (0.99) stays in
-    # route_complete_park.toml.
-    assert scoop.params.get("refuel_below") == 0.65
-    # DISTANCE GATE (operator 2026-07-12): a FAR arrival star (>=100 Ls, two
-    # agreeing reads) skips the SC-assist get-around via skip_to="__end__" (the
-    # skip-to-END sentinel -- arrival finishes with no landing step, then the
-    # orchestrator branches to traversal). Non-required so its confirmed-far
-    # False fires the forward hop (a fail-closed True falls through to assist).
-    gate = next(s for s in arrival.steps if s.action == "star_distance_gate")
-    assert gate.skip_to == "__end__"
-    assert gate.required is False
-    assert gate.params["threshold_ls"] == 15.0     # operator 2026-07-12 (matches startup)
+    # OPERATOR 2026-07-12 retune: refuel_below 0.69 (0.65 on 07-11, 0.75 on 07-06).
+    # Destination top-off (0.99) stays in route_complete_park.toml.
+    assert scoop.params.get("refuel_below") == 0.69
     star = next(s for s in arrival.steps if s.action == "nav_supercruise_star")
     assert star.required is True
     assert arrival.parallel_tracks == ("honk",)

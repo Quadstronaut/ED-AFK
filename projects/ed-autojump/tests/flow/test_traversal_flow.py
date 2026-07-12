@@ -22,15 +22,24 @@ from tests.flow import FakeSender
 
 PROC_DIR = Path(__file__).resolve().parents[2] / "procedures"
 
-# The operator-verbatim action order (OPERATOR LAYOUT 2026-07-07, 70c248e).
+# The operator-verbatim action order (OPERATOR LAYOUT 2026-07-12, live-tuned).
+# NOTE the throttle profile: full burn after the target lock, then EASE TO 75 for
+# the orient window (operator anti-coast: at full throttle the ship drifts into
+# the arrival star during a slow orient and star-smacks), then back to full for
+# the jump.
 EXPECTED_ACTIONS = [
-    "wait_sc_assist_orbiting",  # 0  CV orbit settle from the prior scene
-    "wait",                     # 1  operator pacing (3s)
-    "target_next_route",        # 2  lock next hop — RETRY ANCHOR via retry_from
-    "set_throttle",             # 3  full burn
-    "orient_compass",           # 4  coarse align
-    "orient_widget_ring",       # 5  fine align
-    "engage_jump_clearance",    # 6  TERMINAL jump + clearance loop
+    "wait",                     # 0  operator pacing (3.33s) pre-orbit settle
+    "wait_sc_assist_orbiting",  # 1  CV orbit settle from the prior scene
+    "confirm_orbiting",         # 2  CV confirm the orbit acquired
+    "wait",                     # 3  operator pacing (13.0s)
+    "target_next_route",        # 4  lock next hop — RETRY ANCHOR via retry_from
+    "set_throttle",             # 5  full burn (100)
+    "wait",                     # 6  operator pacing (3.33s)
+    "set_throttle",             # 7  ease to 75 for orient (anti coast-into-star)
+    "orient_compass",           # 8  coarse align
+    "orient_widget_ring",       # 9  fine align
+    "set_throttle",             # 10 back to full for the jump
+    "engage_jump_clearance",    # 11 TERMINAL jump + clearance loop
 ]
 
 
@@ -55,8 +64,8 @@ def test_step_order_is_operator_verbatim():
 # ---- AC-3: required flags --------------------------------------------------
 
 def test_required_flags_match_the_contract():
-    """AC-3 (INV-2): exactly the four gates are required; both waits and
-    set_throttle are non-required."""
+    """AC-3 (INV-2): exactly the four gates are required; the pacing waits, the
+    CV orbit settle/confirm and every throttle step are non-required."""
     proc = _traversal()
     assert {s.action for s in proc.steps if s.required} == {
         "target_next_route",
@@ -64,32 +73,38 @@ def test_required_flags_match_the_contract():
         "orient_widget_ring",
         "engage_jump_clearance",
     }
-    # the orbit settle, the pacing wait and the throttle tolerate failure
-    # (must NOT gate the lane).
+    # the orbit settle/confirm, the pacing waits and the throttle steps tolerate
+    # failure (must NOT gate the lane).
     non_required = [s.action for s in proc.steps if not s.required]
-    assert non_required == ["wait_sc_assist_orbiting", "wait", "set_throttle"]
+    assert non_required == [
+        "wait", "wait_sc_assist_orbiting", "confirm_orbiting", "wait",
+        "set_throttle", "wait", "set_throttle", "set_throttle",
+    ]
 
 
 # ---- AC-4: operator literals -----------------------------------------------
 
 def test_operator_literal_params_preserved():
-    """AC-4 (INV-3): the pacing wait (3s -> 5s @38c4568, -> 7s operator
-    2026-07-11 "slower pc will definitely not perform as well") and
-    throttle=100 are byte-faithful to the operator's authored values."""
+    """AC-4 (INV-3): the operator's authored pacing waits and throttle profile
+    are byte-faithful. Three pacing waits (3.33s pre-orbit, 13.0s post-confirm,
+    3.33s pre-orient); the anti-coast throttle profile 100 -> 75 (orient) -> 100
+    (jump)."""
     proc = _traversal()
-    assert proc.steps[1].action == "wait" and proc.steps[1].params["s"] == 7.0
-    assert proc.steps[3].action == "set_throttle" and proc.steps[3].params["pct"] == 100
+    waits = [s.params["s"] for s in proc.steps if s.action == "wait"]
+    assert waits == [3.33, 13.0, 3.33]
+    throttles = [s.params["pct"] for s in proc.steps if s.action == "set_throttle"]
+    assert throttles == [100, 75, 100]
 
 
 # ---- AC-5: no extra waits / no hold_alignment / no honk --------------------
 
-def test_exactly_one_wait_no_tail_no_parallel():
-    """AC-5 (INV-1): one pacing wait (operator 2026-07-07 layout);
+def test_pacing_waits_no_tail_no_parallel():
+    """AC-5 (INV-1): three operator pacing waits (2026-07-12 live layout);
     engage_jump_clearance is terminal (no hold_alignment after it); no
     parallel honk track."""
     proc = _traversal()
     waits = [s for s in proc.steps if s.action == "wait"]
-    assert len(waits) == 1
+    assert len(waits) == 3
     # engage_jump_clearance is the last step -> nothing (no hold_alignment) after.
     assert proc.steps[-1].action == "engage_jump_clearance"
     assert "hold_alignment" not in {s.action for s in proc.steps}
@@ -100,13 +115,13 @@ def test_exactly_one_wait_no_tail_no_parallel():
 # ---- AC-6: retry policy ----------------------------------------------------
 
 def test_retry_policy_anchors_on_target_next_route():
-    """AC-6 (INV-5): the retry lane resumes at target_next_route (index 2),
-    3 retries, 2.0s backoff."""
+    """AC-6 (INV-5): the retry lane resumes at target_next_route (index 4 in the
+    2026-07-12 layout), 3 retries, 2.0s backoff."""
     proc = _traversal()
     assert proc.on_required_fail.retry_from == "target_next_route"
     assert proc.on_required_fail.max_retries == 3
     assert proc.on_required_fail.backoff_s == 2.0
-    assert proc.index_of_action("target_next_route") == 2
+    assert proc.index_of_action("target_next_route") == 4
 
 
 # ---- AC-7: no retry_anchor / no SC override --------------------------------
@@ -199,13 +214,13 @@ def _scene_run(*, orient_fail_mode):
 
 def test_scene_orient_fail_once_retries_at_target_next_route():
     """AC-10 (INV-5): a single orient_compass miss records a ProcedureRetry that
-    resumes at target_next_route (index 2) — proving the retry lane resolves on a
+    resumes at target_next_route (index 4) — proving the retry lane resolves on a
     real interpreter run — and the procedure then completes."""
     result, records = _scene_run(orient_fail_mode="once")
     retries = [p for k, p in records if k == "ProcedureRetry"]
     assert len(retries) == 1
     assert retries[0]["resume_at"] == "target_next_route"
-    assert retries[0]["resume_index"] == 2
+    assert retries[0]["resume_index"] == 4
     # one miss, then the lane recovers and finishes the jump.
     assert result.completed is True
     assert result.aborted is False
