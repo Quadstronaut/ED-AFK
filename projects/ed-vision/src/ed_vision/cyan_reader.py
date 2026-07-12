@@ -196,17 +196,32 @@ class CyanDotReader:
         )
 
         best_label = -1
-        best_area = -1
+        best_score = -1.0
         # Oversized blobs are NEVER the dot (true dots are <=~100 px; glare
         # orbs run 350-880) — skip them so the next-largest REAL component
         # can win, or fail to not_found, which the consumers' transient-miss
         # damping absorbs. A wrong steer at scenery wrecks the pose.
         max_area = _MAX_AREA_FRAC * radius * radius
+        # CYAN-PURITY-WEIGHTED pick (dense/bright-field fix 2026-07-12). In high
+        # ambient light the compass bloom fragments into a halo blob LARGER than
+        # the crisp dot but only WEAKLY blue; ranking by area ALONE then steers at
+        # the halo (live: a 173px halo b-r=21 beat the 140px real dot b-r=32 ->
+        # mag 0.55 vs 0.08, in_front flipped -> an ALIGN-hold the operator had to
+        # nudge). The real dot is bright AND strongly blue, so weight area by mean
+        # cyan purity (b-r) and pick the max. This only RE-RANKS eligible blobs --
+        # it never drops the sole faint blob, so found/not-found and the
+        # faint-behind reads are structurally unchanged (validated: glare fixtures
+        # stay not_found, position/hollow offsets byte-identical). b-r >= 12 on
+        # every mask pixel (the cyan gate), so the score is always positive.
+        bmr = b - r
         # Label 0 = background; skip it.
         for label in range(1, num_labels):
             area = int(stats[label, cv2.CC_STAT_AREA])
-            if _MIN_AREA <= area <= max_area and area > best_area:
-                best_area = area
+            if not (_MIN_AREA <= area <= max_area):
+                continue
+            score = area * float(bmr[labels == label].mean())
+            if score > best_score:
+                best_score = score
                 best_label = label
 
         if best_label == -1:
