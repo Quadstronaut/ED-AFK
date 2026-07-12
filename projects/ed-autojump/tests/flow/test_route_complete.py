@@ -464,7 +464,9 @@ def test_route_complete_overlay_uses_event_and_status_slots():
 #   dock-kind icon            -> DOCK
 #   park-kind icon (star/...)  -> PARK + RouteCompleteIconVetoStar (GLIESE class)
 #   None + grabber UNWIRED     -> name fallback = today's DOCK (no regression)
-#   None + grabber WIRED       -> fail-closed PARK + RouteCompleteDockKindAbstained
+#   None + grabber WIRED       -> DOCK on the game-grounded name (Status.Destination
+#                                 Body!=0 + station name) + RouteCompleteDockKindAbstainedNameDock
+#                                 (an abstain is "don't know", not a veto; only kind=='park' vetoes)
 # _destination_dock_kind is monkeypatched for the dock/park branches (the
 # perception is validated in the vision tests); the unwired/wired-abstain branches
 # exercise the REAL helper (grabber None / grabber-returns-None) without cv2.
@@ -517,17 +519,22 @@ def test_icon_router_unwired_falls_back_to_name_dock():
     assert any(n == "RouteCompleteIconUnwiredNameDock" for n, _ in records)
 
 
-def test_icon_router_wired_but_abstains_fails_closed_to_park():
-    """Grabber WIRED but the read abstains (here: returns a None frame) -> FAIL
-    CLOSED to PARK, never a blind dock; logged RouteCompleteDockKindAbstained."""
+def test_icon_router_wired_but_abstains_docks_on_game_grounded_name():
+    """Grabber WIRED but the read ABSTAINS (returns a None frame) -> DOCK on the
+    game-grounded name, NOT a fail-closed park. name_says_station already required
+    Status.Destination Body!=0 + a station name + not-local-star, so the game
+    itself says the destination is a non-star body; an abstain is "don't know",
+    not an "it's a star" veto (only kind=='park' vetoes). OPERATOR 2026-07-12:
+    targeted Jaques Station, icon abstained in the dense Colonia field, and the
+    bot PARKED on the star instead. Logged RouteCompleteDockKindAbstainedNameDock."""
     sender = FakeSender(); records = []
     r = _station_runner(sender, records)
     r._navpanel_icon_grabber = lambda: None      # wired, but yields no frame -> abstain
     _dispatch(r, _ev("FSDJump", body_type="Star", star_system="Destination Sys",
                    system_address=12345, timestamp=_ts(10)))
-    assert "SetSpeedZero" in sender.actions()             # fail-closed park
-    assert "SetSpeed50" not in sender.actions()           # NOT docked
-    assert any(n == "RouteCompleteDockKindAbstained" for n, _ in records)
+    assert "SetSpeed50" in sender.actions()               # DOCK ran (game-grounded name)
+    assert "SetSpeedZero" not in sender.actions()         # NOT parked
+    assert any(n == "RouteCompleteDockKindAbstainedNameDock" for n, _ in records)
 
 
 def test_destination_icon_is_star_unwired_abstains():

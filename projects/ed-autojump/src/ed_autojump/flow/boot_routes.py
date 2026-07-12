@@ -1011,10 +1011,15 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
     #   None + UNWIRED    -> NAME FALLBACK = today's behavior: name_says_station
     #                        -> DOCK. The off-pattern-star risk persists EXACTLY
     #                        as today until the grab is wired; zero regression.
-    #   None + WIRED      -> FAIL CLOSED = PARK. CV is active but could not read
-    #                        (no highlighted row / unreadable / raised): an
-    #                        ambiguous read never blind-drives a dock (the
-    #                        catastrophe guard). Logged RouteCompleteDockKindAbstained.
+    #   None + WIRED      -> DOCK on the game-grounded name (operator 2026-07-12).
+    #                        An abstain is "don't know", not an "it's a star" veto
+    #                        (that is kind=="park", preserved). name_says_station
+    #                        already required Status.Destination Body!=0 + a station
+    #                        name + not-local-star, so the game says it IS a non-star
+    #                        body -> trust it, same as the UNWIRED fallback; only a
+    #                        POSITIVE park verdict vetoes. Was fail-closed PARK,
+    #                        which parked the ship on the star at Jaques Station.
+    #                        Logged RouteCompleteDockKindAbstainedNameDock.
     # =====================================================================
     is_station = False
     if name_says_station:
@@ -1037,12 +1042,25 @@ def dispatch_route_complete(runner: Any, ev: Any) -> None:
                 runner.record("RouteCompleteIconUnwiredNameDock",
                               {"station": station_name})
         else:
-            # CV WIRED but abstained (no row / unreadable / raised) -> FAIL CLOSED
-            # park. An active CV that cannot positively read never blind-docks.
+            # CV WIRED but ABSTAINED (no confident icon read: a dense-field /
+            # noisy panel read, no highlighted row, unreadable, or raised). An
+            # abstain is "DON'T KNOW", NOT an "it's a star" veto -- that veto is
+            # the kind=="park" branch above, which is preserved. name_says_station
+            # here is game-grounded and STRONG: Status.Destination has Body!=0 + a
+            # station name + is NOT the local star (see the settle loop above), so
+            # the GAME ITSELF says the destination is a specific non-star body.
+            # Trust it and DOCK -- same as the UNWIRED name fallback; only a
+            # POSITIVE park verdict vetoes a dock. Parking on the star here loses
+            # a real dock, while a dock-approach at a game-confirmed non-star body
+            # fails soft (SC-assist + a docking request that is simply denied if
+            # it is not actually a station). OPERATOR 2026-07-12: targeted Jaques
+            # Station, the icon abstained in the dense Colonia field, and the bot
+            # PARKED on the star instead of docking -- the exact regression this
+            # branch used to cause.
+            is_station = True
             if runner.record is not None:
-                runner.record("RouteCompleteDockKindAbstained",
+                runner.record("RouteCompleteDockKindAbstainedNameDock",
                               {"name_station": station_name})
-            station_name = "station"
 
     if is_station:
         # Run the real dock flow (procedures/dock.toml): approach under SC
