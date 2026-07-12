@@ -45,7 +45,7 @@ steps = [
   { action = "set_throttle", pct = 0 },
   # If fuel level is less than refuel_below percent, approach star at approach_pct percent until full
   # approach_pct must be a speed preset, arbitrary numbers will crash the bot.
-  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.65, full_epsilon = 0.2 },
+  { action = "scoop_refuel", approach_pct = 25, standoff_frac = 0.80, rate_window_s = 2.0, budget_s = 300.0, refuel_below = 0.69, full_epsilon = 0.2 },
   # CLEAR-OF-STAR DISTANCE GATE (operator 2026-07-12): a FAR arrival star
   # (>=15 Ls -- operator threshold, matching startup; confirmed by two agreeing
   # reads) does NOT obstruct the onward jump, so skip the SC-assist get-around
@@ -58,6 +58,6 @@ steps = [
   # the star is correctly re-read as CLOSE. FAR -> skip_to "__end__" finishes
   # arrival with no landing step (a `wait` terminal is forbidden here), and the
   # orchestrator then branches to traversal (orient + jump direct).
-  { action = "star_distance_gate", skip_to = "__end__", threshold_ls = 15.0 },
+  # { action = "star_distance_gate", skip_to = "__end__", threshold_ls = 15.0 },
   { action = "nav_supercruise_star", required = true },
 ]

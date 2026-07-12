@@ -35,11 +35,14 @@
 #   wait    passive block on a journal edge — no input sent
 
 steps = [
+  { action = "wait", s = 7 },
   { action = "nav_supercruise_unexplored", skip_to = "target_next_route" },
-  { action = "set_throttle", pct = 75 },
+  { action = "set_throttle", pct = 25 },
   { action = "orient_compass" },
   { action = "orient_widget_ring", required = true },
   { action = "confirm_sc_assist_active" },
+  { action = "wait_sc_assist_orbiting" },
+  { action = "confirm_orbiting" },
   { action = "wait_body_scanned" },
   { action = "set_throttle", pct = 0, loop_to = "nav_supercruise_unexplored", loop_max = 128 },
   { action = "target_next_route" },
