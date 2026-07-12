@@ -830,6 +830,26 @@ class FlowRunner:
             # diagnostics tell a fresh hyperspace arrival from an N-minute
             # loiter — both scenes read in_supercruise=true.
             self._event_times["jump"] = self.clock()
+            # NEW-SYSTEM PREEMPT (Phroea Eaec IB-N d7-8 ram, live 2026-07-12,
+            # session 031503). A live FSDJump means the ship is now in a NEW
+            # system: every scene the running procedure was flying is obsolete
+            # and BLIND against the new arrival star. Flag the current run to
+            # abort at its next poll so run_live can dispatch _route_fsd_jump
+            # (the new system's arrival) instead of the stale scene grinding on
+            # -- the ram was traversal's engage-retry re-issuing SetSpeed100 4s
+            # AFTER the FSD-charge-stuck false-negative "lost" jump had actually
+            # committed and dropped the ship nose-on the new star. Unlike the
+            # star_smack preempt (gated on _PREEMPT_ON_SMACK), a new system
+            # obsoletes EVERY scene including smack_recovery -- once it jumps
+            # out, arrival owns the arrival. Backlog-safe: no procedure runs
+            # before catch-up, so _running_proc is None then (the same guard the
+            # star_smack preempt relies on) and a replayed jump never preempts.
+            if self._running_proc is not None:
+                self._preempt = "new_system"
+                if self.record is not None:
+                    self.record("PreemptRequested",
+                                {"procedure": self._running_proc,
+                                 "reason": "new_system"})
         # BUG C fix: widen preempt to Star OR Planet (INV5 — planet-smack coverage).
         # TWO-STAGE DESIGN: this preempt is CONSERVATIVE-WIDE (aborts the current
         # scene on ANY Star/Planet drop, including deliberate). The subsequent

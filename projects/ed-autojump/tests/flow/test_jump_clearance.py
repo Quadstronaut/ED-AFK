@@ -81,6 +81,19 @@ def test_healthy_charge_longer_than_old_window_commits():
     assert sender.actions() == ["SetSpeed100", "Hyperspace"]   # no move ever
 
 
+def test_slow_live_charge_past_old_default_still_commits():
+    """Phroea IB-N d7-8 ram (2026-07-12): a struggling drive spooled ~72s (90
+    charging polls, past the old 60s / 75-poll give-up) then committed. A
+    STILL-LIVE charge is a PENDING jump, not a stuck one -- it must be waited
+    out to the commit, never surrendered (charge_stuck) into the
+    on_required_fail throttle-retry that re-issued SetSpeed100 into the
+    just-arrived star. One attempt, no getaround, no re-press."""
+    sender = FakeSender()
+    ctx = _ctx(sender, ["idle"] + ["charging"] * 90 + ["jump"])
+    assert STEP_REGISTRY["engage_jump_clearance"](ctx) is True
+    assert sender.actions() == ["SetSpeed100", "Hyperspace"]   # no move, no retry
+
+
 def test_no_charge_is_the_obstructed_edge():
     """Press refused (no charge ever) -> C4 move (D3: SC-assist orbit
     get-around, NOT a pitch+burn) then re-press; ceiling after
