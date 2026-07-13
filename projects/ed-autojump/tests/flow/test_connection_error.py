@@ -351,3 +351,78 @@ def test_recovery_navigates_to_solo_by_sight(monkeypatch):
     assert notified == [True]
     assert sender.actions().count("UI_Right") == 2     # Open->Private->Solo, no overshoot
     assert "UI_Left" not in sender.actions()
+
+
+# ---- route re-plot: gate close on map-open, gate completion on a FRESH route ---
+# (operator 2026-07-13: after reload the ship is in real-space with the route no
+#  longer active; GalaxyMapOpen re-plots it, and it takes several seconds.)
+
+def _replot_ctx(sender, *, waiter, status=None, nav=None):
+    logs = []
+    notified = []
+    ctx = StepContext(
+        sender=sender, sleeper=lambda s: None, clock=lambda: 0.0,
+        event_waiter=waiter, should_abort=(lambda: False),
+        status_supplier=(status or (lambda: None)),
+        navroute_supplier=(nav or (lambda: None)),
+        record=lambda k, p: logs.append((k, p)),
+    )
+    ctx.connection_recovery_notify = notified.append
+    return ctx, logs, notified
+
+
+def test_recovery_replot_gates_on_map_open_and_navroute():
+    """Press GalaxyMapOpen, wait until the map is OPEN (GuiFocus 6) before
+    closing, then wait for the fresh NavRoute event -> route_plotted True."""
+    sender = FakeSender()
+    def waiter(name, t): return name in ("LoadGame", "NavRoute")
+    def status():                       # GuiFocus 6 only after the map is opened
+        return SimpleNamespace(
+            gui_focus=6 if "GalaxyMapOpen" in sender.actions() else 0)
+    ctx, logs, notified = _replot_ctx(sender, waiter=waiter, status=status)
+    assert step_connection_recovery(ctx) is True
+    assert notified == [True]
+    assert "GalaxyMapOpen" in sender.actions() and "UI_Back" in sender.actions()
+    rep = [p for k, p in logs if k == "ConnectionRecoveryReplotted"]
+    assert rep and rep[0]["route_plotted"] is True
+
+
+def test_recovery_replot_detects_fresh_route_via_navroute_file():
+    """NavRoute event missed, but NavRoute.json changes to a route DIFFERENT from
+    the stale pre-load one -> fresh-route gate still passes (not a stale false-pass)."""
+    sender = FakeSender()
+    def waiter(name, t): return name == "LoadGame"   # NavRoute event never fires
+    def nav():                          # stale [7] before close, fresh [42,99] after
+        if "UI_Back" in sender.actions():
+            return SimpleNamespace(route=[SimpleNamespace(system_address=42),
+                                          SimpleNamespace(system_address=99)])
+        return SimpleNamespace(route=[SimpleNamespace(system_address=7)])
+    ctx, logs, notified = _replot_ctx(sender, waiter=waiter, nav=nav)
+    assert step_connection_recovery(ctx) is True
+    rep = [p for k, p in logs if k == "ConnectionRecoveryReplotted"]
+    assert rep and rep[0]["route_plotted"] is True
+
+
+def test_recovery_replot_stale_route_does_not_false_pass():
+    """A STALE NavRoute.json that never changes (same addrs as pre-load) must NOT
+    count as a fresh plot -> route_plotted False (resuming on stale hops is wrong)."""
+    sender = FakeSender()
+    def waiter(name, t): return name == "LoadGame"
+    stale = lambda: SimpleNamespace(route=[SimpleNamespace(system_address=7)])
+    ctx, logs, notified = _replot_ctx(sender, waiter=waiter, nav=stale)
+    assert step_connection_recovery(ctx) is True     # best-effort completes
+    rep = [p for k, p in logs if k == "ConnectionRecoveryReplotted"]
+    assert rep and rep[0]["route_plotted"] is False   # stale never counts as fresh
+
+
+def test_recovery_replot_best_effort_when_route_never_plots():
+    """No NavRoute event and no fresh route -> route_plotted False but the step
+    still completes (notify True) after the bounded wait (nav computer may not
+    reach; proceed loudly rather than hang)."""
+    sender = FakeSender()
+    def waiter(name, t): return name == "LoadGame"   # LoadGame yes, NavRoute never
+    ctx, logs, notified = _replot_ctx(sender, waiter=waiter)
+    assert step_connection_recovery(ctx) is True
+    assert notified == [True]
+    rep = [p for k, p in logs if k == "ConnectionRecoveryReplotted"]
+    assert rep and rep[0]["route_plotted"] is False

@@ -872,6 +872,8 @@ def step_connection_recovery(
     load_settle_s: float = 5.0,
     load_wait_s: float = 90.0,
     replot_gap_s: float = 1.5,
+    map_open_wait_s: float = 10.0,     # bounded wait for the galaxy map to open (GuiFocus 6)
+    route_plot_wait_s: float = 25.0,   # bounded wait for the re-plotted route (fresh NavRoute)
 ) -> bool:
     """Recover from a CONNECTION ERROR modal (operator-verified 2026-07-12/13).
 
@@ -1100,15 +1102,76 @@ def step_connection_recovery(
         _notify(False)
         return False
 
-    # 6. re-plot the last SAVED route: open the galaxy map, then close it.
+    # 6. RE-PLOT the last saved route (operator 2026-07-13). After a reconnect the
+    # ship loads in real-space with the previously-plotted route NO LONGER active.
+    # Opening the galaxy map (GalaxyMapOpen = '*') auto-replots the last
+    # destination; the plot then takes SEVERAL SECONDS (and only fully plots if
+    # the nav computer can reach). Two gates the blind open->1.5s->close macro
+    # lacked: GATE THE CLOSE on the map actually being open (GuiFocus==6, so we
+    # never press close before it loads), and GATE COMPLETION on a FRESH NavRoute
+    # so the re-dispatch resumes traversal WITH a route -- otherwise it
+    # re-classifies to a no-route idle, which never-strand treats as legit and
+    # leaves alone (a permanent stall). Poll-COUNT bounds, not wall-clock, so the
+    # decision input stays the game signal (GuiFocus / NavRoute), never a timer.
     if _abort():
         _notify(False)
         return False
     ctx.sleeper(load_settle_s)   # real-space settle before any further input
+
+    # Pre-replot route addresses: a STALE pre-load NavRoute.json (the old route
+    # from before the drop) must NOT false-pass the fresh-route gate -- resuming
+    # on stale hops from a moved position is wrong. We wait for a route that
+    # DIFFERS from this (or the NavRoute event, which only the fresh plot fires).
+    nav = getattr(ctx, "navroute_supplier", None)
+
+    def _route_addrs():
+        if nav is None:
+            return None
+        cur = nav()
+        r = getattr(cur, "route", None) if cur is not None else None
+        return tuple(getattr(w, "system_address", None) for w in r) if r else ()
+
+    pre_addrs = _route_addrs()
+
     _press(ctx, "GalaxyMapOpen")
-    ctx.sleeper(replot_gap_s)
-    _press(ctx, "UI_Back")
-    ctx.log("ConnectionRecoveryReplotted", {"game_mode": gm})
+    # Wait until the map is OPEN (GuiFocus 6 = 'galaxy map'); no status wiring ->
+    # blind fixed-settle fallback. Poll-count bound (clock-agnostic).
+    sup = getattr(ctx, "status_supplier", None)
+    opened = False
+    if sup is not None and sup() is not None:
+        for _ in range(max(1, int(map_open_wait_s / max(poll_s, 0.01)))):
+            st = sup()
+            if st is not None and getattr(st, "gui_focus", None) == 6:
+                opened = True
+                break
+            ctx.sleeper(poll_s)
+    if not opened:
+        ctx.sleeper(replot_gap_s)
+    _press(ctx, "UI_Back")        # close ('`' bind) immediately once loaded
+
+    # Wait for a FRESH route: the NavRoute journal event OR NavRoute.json content
+    # that DIFFERS from pre_addrs. Best-effort, bounded -- the plot takes several
+    # seconds and may not fully complete (nav-computer range); proceed either way,
+    # loudly, so a re-dispatch with no route is diagnosable.
+    plotted = False
+    waiter = ctx.event_waiter
+    for _ in range(max(1, int(route_plot_wait_s / max(poll_s, 0.01)))):
+        if _abort():
+            _notify(False)
+            return False
+        if waiter is not None and waiter("NavRoute", poll_s):
+            plotted = True
+            break
+        cur_addrs = _route_addrs()
+        if cur_addrs and cur_addrs != pre_addrs:
+            plotted = True
+            break
+        if waiter is None and nav is None:
+            break                 # no signals wired at all -> best-effort exit
+        if waiter is None:
+            ctx.sleeper(poll_s)   # nav-only pacing (waiter already blocks poll_s)
+    ctx.log("ConnectionRecoveryReplotted",
+            {"game_mode": gm, "route_plotted": plotted})
     _notify(True)
     return True
 
