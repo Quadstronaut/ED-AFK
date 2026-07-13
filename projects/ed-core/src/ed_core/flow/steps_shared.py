@@ -835,6 +835,7 @@ def step_connection_recovery(
     *,
     menu_settle_s: float = 2.0,
     nav_gap_s: float = 1.0,            # OPERATOR 2026-07-13: the menu is SLOW -> >=1.0s between presses
+    mode_nav_steps: int = 6,           # bounded by-sight nav presses to reach the Solo card
     main_menu_wait_s: float = 30.0,    # bounded wait for the main menu to appear after OK (reconnect load)
     solo_confirm_s: float = 2.5,       # per-attempt window to see corner-black / LoadGame after pressing Solo
     solo_retry_gap_s: float = 2.0,     # wait between Solo re-presses while the modes are grayed/authenticating
@@ -951,14 +952,58 @@ def step_connection_recovery(
     _press(ctx, "UI_Select")
     ctx.sleeper(menu_settle_s)
 
-    # 3. Navigate to SOLO: OPEN (default) -> UI_Right -> PRIVATE -> UI_Right -> SOLO.
+    # 3. Navigate to SOLO. With the mode-highlight detector, drive the cursor to
+    # Solo BY SIGHT (deterministic -- can never blind-land on OPEN; works even
+    # while the cards are grayed, the highlight still moves, operator 2026-07-13).
+    # Blind fallback (detector unreadable AND cursor untouched): OPEN default ->
+    # UI_Right x2. If the detector MOVED the cursor then lost the read, we do NOT
+    # blind-press (overshoot risk) -- the corner-confirm + never-fly-Open net own
+    # safety from there.
     if _abort():
         _notify(False)
         return False
-    _press(ctx, "UI_Right")
-    ctx.sleeper(nav_gap_s)
-    _press(ctx, "UI_Right")
-    ctx.sleeper(nav_gap_s)
+
+    def _mode_idx() -> "int | None":
+        if not have_grab:
+            return None
+        try:
+            fr = grab()
+            if fr is None:
+                return None
+            if ctx.frame_sink is not None:
+                try:
+                    ctx.frame_sink(f"connrec_modeselect_{int(ctx.clock())}", fr)
+                except Exception:  # noqa: BLE001 — dump is best-effort
+                    pass
+            from ed_vision.hud_sc_indicators import highlighted_mode_index
+            return highlighted_mode_index(fr)
+        except Exception:  # noqa: BLE001 — read error -> blind
+            return None
+
+    from ed_vision.hud_sc_indicators import MODE_SOLO_INDEX
+    on_solo = False
+    moved = False
+    if have_grab:
+        for _ in range(max(1, mode_nav_steps)):
+            if _abort():
+                _notify(False)
+                return False
+            idx = _mode_idx()
+            if idx is None:
+                break                          # unreadable -> blind fallback (if untouched)
+            if idx == MODE_SOLO_INDEX:
+                on_solo = True
+                break
+            _press(ctx, "UI_Right" if idx < MODE_SOLO_INDEX else "UI_Left")
+            moved = True
+            ctx.sleeper(nav_gap_s)
+    if not on_solo and not moved:
+        # blind fallback: OPEN default -> Right x2 (operator: nav works even grayed).
+        _press(ctx, "UI_Right")
+        ctx.sleeper(nav_gap_s)
+        _press(ctx, "UI_Right")
+        ctx.sleeper(nav_gap_s)
+    ctx.log("ConnectionRecoveryModeNav", {"on_solo": on_solo, "by_sight": moved or on_solo})
 
     # 4. ENTER SOLO with a corner-black confirm + grayed-auth retry. A press on a
     # still-grayed Solo is a no-op; re-press (Solo stays highlighted -- Select

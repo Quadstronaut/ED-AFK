@@ -413,3 +413,69 @@ def all_corners_black(frame: Any, *, margin_frac: float = 0.012,
         return True
     except Exception:  # noqa: BLE001 — any frame/np problem -> not-confirmed (retry)
         return False
+
+
+# Reconnect mode-select layout (operator frames 2026-07-13, 1920x1080): five
+# horizontal cards Open / Private / Solo / Arena / Training span x 140..1780
+# (pitch ~328), highlight block in the card body y ~0.28..0.90. The HIGHLIGHTED
+# card renders a large SOLID bright-orange block; the rest are dim with only thin
+# orange text -- measured ~116k vs ~2-5k orange px (25x+). Fractions -> resolution
+# independent. 0=Open 1=Private 2=Solo 3=Arena 4=Training.
+MODE_SELECT_CARDS = 5
+MODE_SELECT_X_FRAC = (0.0729, 0.9271)     # 140/1920 .. 1780/1920
+MODE_SELECT_Y_FRAC = (0.28, 0.90)
+MODE_SOLO_INDEX = 2
+
+
+def _mode_orange_mask(bgr):
+    """Boolean mask of the ED solid-orange card-highlight fill. Keyed on the
+    bright-orange highlight block (strong R, mid G, low B, high R-B), NOT the thin
+    dim-orange text/underlines every card carries."""
+    import numpy as np  # type: ignore
+    b = bgr[:, :, 0].astype(np.int16)
+    g = bgr[:, :, 1].astype(np.int16)
+    r = bgr[:, :, 2].astype(np.int16)
+    return (r > 170) & (g > 60) & (g < 180) & (b < 90) & ((r - b) > 110)
+
+
+def highlighted_mode_index(frame, *, min_fill_frac: float = 0.06,
+                           dominance: float = 4.0) -> "int | None":
+    """Index (0-4) of the HIGHLIGHTED card on the reconnect mode-select screen, or
+    None when none clearly dominates (grayed with no solid highlight / not the
+    mode-select / unreadable). Lets connection_recovery drive the cursor to SOLO
+    BY SIGHT instead of a blind Right x2 -- so it can never blind-land on OPEN.
+
+    Splits the card row into 5 equal x-bands, measures each band's solid-orange
+    FILL FRACTION, and returns the argmax ONLY when it exceeds `min_fill_frac` AND
+    is >= `dominance` x the runner-up. Validated on the operator's real frames:
+    the highlighted card fills ~0.52 vs ~0.02 for the rest (a 22x margin), while
+    the LOADING screen (fill ~0) and the vertical MAIN MENU (top fill ~0.10 but
+    only ~2.4x the runner-up -> below dominance) both correctly return None. The
+    grayed/authenticating card is dimmer -- thresholds may want a nudge once a
+    grayed frame lands; a mis-read tends to fall UNDER dominance (-> None ->
+    blind fallback) rather than to a confident wrong index. Fail-soft: bad frame /
+    no numpy -> None."""
+    try:
+        import numpy as np  # type: ignore
+        arr = np.asarray(frame)
+        if arr.ndim < 3:
+            return None
+        h, w = arr.shape[:2]
+        y0 = int(MODE_SELECT_Y_FRAC[0] * h); y1 = int(MODE_SELECT_Y_FRAC[1] * h)
+        x0 = int(MODE_SELECT_X_FRAC[0] * w); x1 = int(MODE_SELECT_X_FRAC[1] * w)
+        if y1 <= y0 or x1 <= x0:
+            return None
+        mask = _mode_orange_mask(arr[y0:y1, x0:x1])
+        bw = x1 - x0
+        fills = [float(mask[:, int(k * bw / MODE_SELECT_CARDS):
+                             int((k + 1) * bw / MODE_SELECT_CARDS)].mean())
+                 for k in range(MODE_SELECT_CARDS)]
+        order = sorted(range(MODE_SELECT_CARDS), key=lambda k: fills[k], reverse=True)
+        top, second = order[0], order[1]
+        if fills[top] < min_fill_frac:
+            return None
+        if fills[top] < dominance * max(fills[second], 1e-6):
+            return None
+        return top
+    except Exception:  # noqa: BLE001 — any frame/np problem -> abstain (None)
+        return None
