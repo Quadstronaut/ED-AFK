@@ -2384,7 +2384,35 @@ def step_nav_supercruise_star(ctx: StepContext, *, settle_s: float = 0.4,
 
     Fail-soft / no regression: no detail grabber wired -> press blind (legacy).
     KeyError (unbound) -> False. A mid-macro emergency drop (out of
-    supercruise) -> False, the smack scene owns it."""
+    supercruise) -> False, the smack scene owns it.
+
+    ALREADY-ORBITING GUARD (operator 2026-07-12, LIVE: a bot that RESTARTED
+    already in supercruise ORBITING the arrival star ran this engage macro,
+    which TOGGLED the live SC-assist OFF, then hung on wait_sc_assist_orbiting
+    waiting for an ORBITING prompt that could never come). The center-HUD
+    ORBITING DESTINATION prompt is the DIRECT, unambiguous "assist is on and the
+    ship is orbiting" signal — read via hud_grabber, INDEPENDENT of the fragile
+    nav-panel DEACTIVATE label (the engage bar reads "DEACTIVATE SUPERCRUISE
+    ASSIST" when assist is on; OCR dropping the leading DEACTIVATE word misreads
+    it as plain SC ASSIST and the press turns assist OFF). Already orbiting =
+    the goal state is met: press NOTHING, succeed, before opening the panel at
+    all. hud_grabber unwired (getattr None) -> guard inert, exact legacy path;
+    a fresh hyperspace arrival is not yet orbiting (assist off) -> guard misses,
+    macro runs as before. Fail-soft: any grab/OCR error -> fall through to the
+    macro (a CV miss never blocks a real engage)."""
+    hud_grabber = getattr(ctx, "hud_grabber", None)
+    if hud_grabber is not None:
+        try:
+            from ed_vision.hud_sc_indicators import detect_orbiting
+            hud_frame = hud_grabber()
+            if hud_frame is not None and ctx.frame_sink is not None:
+                ctx.frame_sink(f"navstar_orbiting_{int(ctx.clock())}", hud_frame)
+            if detect_orbiting(hud_frame):
+                ctx.log("NavSupercruiseStarAlreadyOrbiting", {})
+                return True
+        except Exception as exc:  # noqa: BLE001 — a CV miss never blocks the engage
+            ctx.log("NavSupercruiseStarOrbitCheckError",
+                    {"err": type(exc).__name__})
     if not _ensure_cockpit_focus(ctx):
         return False
     grabber = getattr(ctx, "navpanel_detail_grabber", None)

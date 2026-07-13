@@ -255,6 +255,59 @@ def test_row_cv_error_assists(monkeypatch):
     assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
 
 
+# ---- already-orbiting HUD guard (operator 2026-07-12, restart-in-SC-orbit) ---
+
+def test_already_orbiting_hud_skips_macro_without_pressing(monkeypatch):
+    """OPERATOR LAW (LIVE 2026-07-12): a bot restarted already in supercruise
+    ORBITING the arrival star must NOT run the engage macro -- the macro toggles
+    the LIVE assist OFF, then wait_sc_assist_orbiting hangs on an ORBITING prompt
+    that can never come. The center-HUD ORBITING prompt = assist on = goal state;
+    press NOTHING, succeed, before opening the panel."""
+    import ed_vision.hud_sc_indicators as hud
+    monkeypatch.setattr(hud, "detect_orbiting", lambda frame: True)
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.hud_grabber = lambda: "hudframe"
+    assert step_nav_supercruise_star(ctx) is True
+    assert s.actions() == []   # panel never opened; nothing toggled
+
+
+def test_not_orbiting_hud_runs_macro_normally(monkeypatch):
+    """Fresh hyperspace arrival (assist OFF, not yet orbiting): detect_orbiting
+    False -> the guard misses and the engage macro runs exactly as before. No
+    regression; the guard only short-circuits a genuinely-already-orbiting ship."""
+    import ed_vision.hud_sc_indicators as hud
+    monkeypatch.setattr(hud, "detect_orbiting", lambda frame: False)
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.hud_grabber = lambda: "hudframe"        # no detail grabber -> blind macro
+    assert step_nav_supercruise_star(ctx) is True
+    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
+
+
+def test_orbit_guard_cv_error_falls_through_to_macro(monkeypatch):
+    """A hud_grabber / detector exception must NOT block the engage -- fall
+    through to the macro (fail-soft; a CV miss never strands the ship)."""
+    import ed_vision.hud_sc_indicators as hud
+    def boom(frame):
+        raise RuntimeError("orbit cv blew up")
+    monkeypatch.setattr(hud, "detect_orbiting", boom)
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    ctx.hud_grabber = lambda: "hudframe"
+    assert step_nav_supercruise_star(ctx) is True
+    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
+
+
+def test_orbit_guard_inert_without_hud_grabber():
+    """hud_grabber UNWIRED (getattr None) -> guard inert, exact legacy path.
+    (Belt-and-braces: every other test here leaves hud_grabber unset too.)"""
+    s = FakeSender()
+    ctx = StepContext(sender=s, sleeper=lambda _x: None)
+    assert step_nav_supercruise_star(ctx) is True
+    assert s.actions() == [OPEN, SEL, RIGHT, SEL, OPEN]
+
+
 def test_emergency_drop_returns_false():
     """Out of supercruise after the macro (mid-press smack drop) -> False."""
     class _St:
