@@ -787,10 +787,21 @@ def step_engage_supercruise(
                 ctx.log("EngageSupercruiseDone", {"reason": "watchdog",
                                                   "attempt": attempt + 1})
                 return False
-            # Press refused (no charge in its window) -> next press attempt.
-            if (not charge_seen and now - start > between_press_s
-                    and attempt + 1 < max(1, presses)):
-                ctx.log("EngageSupercruiseRetry", {"attempt": attempt + 1})
+            # Press refused/DROPPED — no charge started in its window. Break out
+            # of the wait so the for-loop RE-PRESSES (attempts remain) or, on the
+            # LAST attempt, exits fast to the presses_exhausted fail below. The
+            # gate is `presses > 1`, NOT `attempt+1 < presses`: the OLD condition
+            # exempted the final attempt, so a dropped press on the last try idled
+            # the ENTIRE max_charge_s watchdog (operator 2026-07-12: a smack SC
+            # engage sat ~4 min on the 240s watchdog when the keypress never
+            # registered — "make sure it actually fired, not wait forever"). A
+            # LIVE charge sets charge_seen and is EXEMPT (it keeps the full budget
+            # to complete). presses==1 keeps the exact legacy single-press watchdog
+            # (the FsdCharging flag is the game's own "it fired" signal — a dead
+            # press produces none, so no-charge-in-window IS "didn't fire").
+            if not charge_seen and now - start > between_press_s and max(1, presses) > 1:
+                ctx.log("EngageSupercruiseRetry",
+                        {"attempt": attempt + 1, "final": attempt + 1 >= max(1, presses)})
                 break
             if ctx.event_waiter("SupercruiseEntry", poll_s):
                 return True
@@ -819,66 +830,54 @@ def step_engage_supercruise(
     return False
 
 
-def _wait_mode_buttons_ready(ctx: StepContext, *, max_s: float,
-                             poll_s: float = 1.0) -> None:
-    """Poll until the main-menu game-mode buttons (Open/Private/Solo) are
-    clickable, up to max_s, then return. connection_recovery calls this before
-    the mode-select presses so it does not blind-press a GRAYED Solo (grayed
-    until the game authenticates with Frontier's servers after a reconnect;
-    operator 2026-07-12).
-
-    STUB TODAY: detect_mode_button_ready is not yet trained (returns True), so
-    this returns on the first poll -- live timing is UNCHANGED. The loop is wired
-    so a real enabled-vs-grayed detector gates the presses once operator frames
-    land. No grabber / no vision extras -> return immediately (blind behavior)."""
-    grab = getattr(ctx, "hud_grabber", None)
-    if grab is None:
-        return
-    try:
-        from ed_vision.hud_sc_indicators import detect_mode_button_ready
-    except Exception:  # noqa: BLE001 — no vision extras -> keep blind behavior
-        return
-    deadline = ctx.clock() + max_s
-    while True:
-        try:
-            frame = grab()
-            if frame is not None and detect_mode_button_ready(frame):
-                return
-        except Exception:  # noqa: BLE001 — read failure must not block recovery
-            return
-        if ctx.clock() >= deadline:
-            ctx.log("ConnectionRecoveryModeButtonsWaitTimeout", {"waited_s": max_s})
-            return
-        ctx.sleeper(poll_s)
-
-
 def step_connection_recovery(
     ctx: StepContext,
     *,
     menu_settle_s: float = 2.0,
-    nav_gap_s: float = 0.6,
+    nav_gap_s: float = 1.0,            # OPERATOR 2026-07-13: the menu is SLOW -> >=1.0s between presses
+    main_menu_wait_s: float = 30.0,    # bounded wait for the main menu to appear after OK (reconnect load)
+    solo_confirm_s: float = 2.5,       # per-attempt window to see corner-black / LoadGame after pressing Solo
+    solo_retry_gap_s: float = 2.0,     # wait between Solo re-presses while the modes are grayed/authenticating
+    solo_budget_s: float = 45.0,       # total budget for the Solo-entry confirm+retry loop
+    poll_s: float = 0.5,
     load_settle_s: float = 5.0,
     load_wait_s: float = 90.0,
     replot_gap_s: float = 1.5,
-    mode_ready_wait_s: float = 30.0,  # bounded wait for the mode buttons to un-gray (server auth); STUB detector reports ready now
 ) -> bool:
-    """Recover from a CONNECTION ERROR modal (operator-verified 2026-07-12).
+    """Recover from a CONNECTION ERROR modal (operator-verified 2026-07-12/13).
 
     The real-time monitor's connection watch dispatches this after OCR-detecting
     the CONNECTION ERROR dialog. The bot CANNOT play Open (automatons), so it
-    re-enters SOLO. Operator's verified manual key sequence, replayed with the
-    preset's UI binds (all validated present in ED-AFK.4.2.binds):
+    re-enters SOLO. Operator's verified manual sequence + on-screen frames
+    (2026-07-13), replayed with the preset's UI binds:
 
-      UI_Select (OK -> main menu) -> UI_Select (CONTINUE) -> UI_Right x2
-      (-> Solo mode) -> UI_Select (load into REAL-space, regardless of the
-      pre-drop location) -> [LoadGame] -> GalaxyMapOpen then UI_Back
-      (re-plots the last SAVED route).
+      OK (UI_Select) -> [LOADING GAME] -> main menu (CONTINUE default-highlighted)
+      -> CONTINUE (UI_Select) -> mode-select (OPEN default) -> UI_Right x2 -> SOLO
+      -> UI_Select (enter) -> [black rotating-ship load] -> cockpit (realspace)
+      -> GalaxyMapOpen + UI_Back (re-plot the last SAVED route).
 
-    Menu presses are blind and paced by settle waits (exactly like the
-    launcher's MenuNavigator); the LoadGame journal event is the real re-entry
-    gate. The pacing values are CONSERVATIVE + tunable and want a live tuning
-    pass. After this returns the live loop re-classifies from the fresh in-game
-    state. input_exclusive: owns input for the whole macro."""
+    TWO operator robustness upgrades over the blind 2026-07-12 macro:
+
+      * SLOW MENU: >=1.0s between menu keypresses (nav_gap_s) -- it is not snappy.
+
+      * GRAYED-AUTH + CORNER-BLACK CONFIRM: after a reconnect the Open/Private/Solo
+        cards stay GRAYED + non-responsive until the client re-authenticates with
+        Frontier ("wait a few seconds"). A press on a grayed Solo is a NO-OP. So we
+        PRESS Solo and CONFIRM it took by polling all_corners_black -- the loading
+        screen the select drops into is full black, every menu keeps a lit corner
+        -- re-pressing every solo_retry_gap_s until it transitions (or LoadGame
+        fires), bounded by solo_budget_s. The main-menu appearance after OK is
+        gated the same way (wait for a NON-black corner) so a slow reconnect load
+        can't make us press CONTINUE into the LOADING GAME screen.
+
+    NEVER-FLY-OPEN NET: after LoadGame, if the GameMode latch says a NON-Solo
+    mode, refuse to report success (the bot must not fly Open) -- the watch can
+    re-fire.
+
+    All CV is via ctx.connection_grabber (the always-on, non-OCR-gated full-frame
+    grab); UNWIRED -> the legacy blind timed macro, no regression (every unit test
+    without a grabber takes this path, exact same key sequence). LoadGame is the
+    real re-entry gate. input_exclusive: owns input for the whole macro."""
     def _abort() -> bool:
         # PANIC-INTERRUPTIBLE (council 2026-07-12): the operator's panic hotkey
         # must be able to stop the macro mid-menu, not press its whole body into
@@ -900,27 +899,59 @@ def step_connection_recovery(
             except Exception:  # noqa: BLE001
                 pass
 
-    # 1. OK -> main menu
+    grab = (getattr(ctx, "connection_grabber", None)
+            or getattr(ctx, "hud_grabber", None))
+    have_grab = grab is not None
+
+    def _corners_black(tag: str) -> "bool | None":
+        """True/False from all_corners_black, or None when there is no grabber /
+        the read failed (blind). Dumps every read (frame capture default on)."""
+        if not have_grab:
+            return None
+        try:
+            fr = grab()
+        except Exception:  # noqa: BLE001 — grab failure -> blind for this poll
+            return None
+        if fr is None:
+            return None
+        if ctx.frame_sink is not None:
+            try:
+                ctx.frame_sink(f"connrec_{tag}_{int(ctx.clock())}", fr)
+            except Exception:  # noqa: BLE001 — dump is best-effort
+                pass
+        try:
+            from ed_vision.hud_sc_indicators import all_corners_black
+            return bool(all_corners_black(fr))
+        except Exception:  # noqa: BLE001 — detector import/err -> blind
+            return None
+
+    # 1. OK -> main menu (through the black error-modal + LOADING GAME spinner).
+    if _abort():
+        _notify(False)
+        return False
+    _press(ctx, "UI_Select")
+    if have_grab:
+        # Wait for the MAIN MENU to appear: its corners are lit (the hangar),
+        # while the error modal + LOADING GAME are full black. Bounded; proceed on
+        # timeout (the LoadGame gate is the real authority for a stuck reconnect).
+        start = ctx.clock()
+        while ctx.clock() - start < main_menu_wait_s:
+            if _abort():
+                _notify(False)
+                return False
+            if _corners_black("mainmenu") is False:     # a lit corner -> menu is up
+                break
+            ctx.sleeper(poll_s)
+    ctx.sleeper(nav_gap_s)
+
+    # 2. CONTINUE (default-highlighted) -> the Open/Private/Solo mode-select.
     if _abort():
         _notify(False)
         return False
     _press(ctx, "UI_Select")
     ctx.sleeper(menu_settle_s)
-    # 2. CONTINUE (resume the last commander/session)
-    if _abort():
-        _notify(False)
-        return False
-    _press(ctx, "UI_Select")
-    ctx.sleeper(menu_settle_s)
-    # 2b. MODE-BUTTON READINESS GATE (operator 2026-07-12, STUB): the mode
-    # buttons behind CONTINUE stay GRAYED + non-responsive until the game
-    # authenticates with the servers -- blind-pressing Solo while grayed no-ops
-    # and desyncs recovery (likely a 1st-try FAILURE). Wait for them to be
-    # clickable before selecting. detect_mode_button_ready is a STUB (returns
-    # ready) until operator frames land, so this is a no-op today; the seam is
-    # wired for a one-function fill-in. See ed-connection-error-screens memory.
-    _wait_mode_buttons_ready(ctx, max_s=mode_ready_wait_s)
-    # 3. move the mode selector RIGHT to Solo (Open -> Private -> Solo)
+
+    # 3. Navigate to SOLO: OPEN (default) -> UI_Right -> PRIVATE -> UI_Right -> SOLO.
     if _abort():
         _notify(False)
         return False
@@ -928,31 +959,83 @@ def step_connection_recovery(
     ctx.sleeper(nav_gap_s)
     _press(ctx, "UI_Right")
     ctx.sleeper(nav_gap_s)
-    # 4. load into the game (arrives in normal/real-space)
-    _press(ctx, "UI_Select")
+
+    # 4. ENTER SOLO with a corner-black confirm + grayed-auth retry. A press on a
+    # still-grayed Solo is a no-op; re-press (Solo stays highlighted -- Select
+    # never moves the cursor) until the screen goes full black (past the menu,
+    # loading in) or LoadGame fires. Blind fallback (no grabber): a single press.
+    ctx.log("ConnectionRecoveryEnterSolo", {"have_grab": have_grab})
+    loaded = False
+    transitioned = False
+    if not have_grab:
+        _press(ctx, "UI_Select")
+    else:
+        budget_start = ctx.clock()
+        while ctx.clock() - budget_start < solo_budget_s:
+            if _abort():
+                _notify(False)
+                return False
+            _press(ctx, "UI_Select")
+            a0 = ctx.clock()
+            while ctx.clock() - a0 < solo_confirm_s:
+                if _abort():
+                    _notify(False)
+                    return False
+                if ctx.event_waiter is not None and ctx.event_waiter("LoadGame", poll_s):
+                    loaded = True
+                    break
+                if _corners_black("solo") is True:
+                    transitioned = True
+                    break
+                ctx.sleeper(poll_s)
+            if loaded or transitioned:
+                break
+            ctx.log("ConnectionRecoverySoloRetry",
+                    {"waited_s": round(ctx.clock() - budget_start, 1)})
+            ctx.sleeper(solo_retry_gap_s)
+        if not (loaded or transitioned):
+            ctx.log("ConnectionRecoverySoloStuck", {"budget_s": solo_budget_s})
+            _notify(False)
+            return False
     ctx.log("ConnectionRecoveryLoading", {})
-    # 5. FAIL-CLOSED re-entry gate (council 2026-07-12): the step used to discard
-    # the LoadGame result and `return True` unconditionally -- so a recovery that
-    # never left the menu (Solo still grayed) reported clean SUCCESS, cleared the
-    # latch, blind-pressed the galaxy map into the dead menu, and stranded. Now we
-    # gate on LoadGame and, on a TIMEOUT, log loudly + DO NOT press the map + tell
-    # the runner recovery FAILED (no re-arm; the watch stays able to re-fire).
-    reached_game = True
-    if ctx.event_waiter is not None:
-        reached_game = bool(ctx.event_waiter("LoadGame", load_wait_s))
-    if not reached_game:
+
+    # 5. FAIL-CLOSED re-entry gate (council 2026-07-12): LoadGame is the real
+    # "we are back in-game" signal. On a timeout (never reached the game) log
+    # loud, press NO map keys, tell the runner recovery FAILED (watch re-fires).
+    if not loaded:
+        if ctx.event_waiter is not None:
+            loaded = bool(ctx.event_waiter("LoadGame", load_wait_s))
+        else:
+            loaded = True                      # no journal wiring (unit tests)
+    if not loaded:
         ctx.log("ConnectionRecoveryLoadTimeout", {"waited_s": load_wait_s})
         _notify(False)
         return False
+
+    # NEVER-FLY-OPEN net (operator: the bot CANNOT play Open). If the GameMode
+    # latch resolved to a non-Solo mode, this reconnect landed wrong -> refuse to
+    # report success (do NOT re-plot / re-arm flight in Open); the watch re-fires.
+    gm = None
+    gms = getattr(ctx, "game_mode_supplier", None)
+    if callable(gms):
+        try:
+            gm = gms()
+        except Exception:  # noqa: BLE001
+            gm = None
+    if gm is not None and str(gm).strip().lower() != "solo":
+        ctx.log("ConnectionRecoveryWrongMode", {"game_mode": gm})
+        _notify(False)
+        return False
+
+    # 6. re-plot the last SAVED route: open the galaxy map, then close it.
     if _abort():
         _notify(False)
         return False
     ctx.sleeper(load_settle_s)   # real-space settle before any further input
-    # 6. re-plot the last SAVED route: open the galaxy map, then close it
     _press(ctx, "GalaxyMapOpen")
     ctx.sleeper(replot_gap_s)
     _press(ctx, "UI_Back")
-    ctx.log("ConnectionRecoveryReplotted", {})
+    ctx.log("ConnectionRecoveryReplotted", {"game_mode": gm})
     _notify(True)
     return True
 

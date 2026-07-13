@@ -290,6 +290,9 @@ class FlowRunner:
         # missed FSDJump line can never permanently wedge the bot. Event-gated
         # only — NO clock/timer (no-arbitrary-timed-waits rule).
         self._in_witchspace = False
+        # Latest LoadGame GameMode ("Open"/"Solo"/"Group"), latched in
+        # _apply_state. connection_recovery's never-fly-Open safety net reads it.
+        self._last_game_mode: Optional[str] = None
         self._latest_status: Optional[Any] = status_supplier()
         self._caught_up = False
         self._startup_done = False
@@ -636,6 +639,10 @@ class FlowRunner:
             navpanel_detail_grabber=self.navpanel_detail_grabber,
             navpanel_frame_grabber=self.navpanel_frame_grabber,
             hud_grabber=self.hud_grabber,
+            # Always-on (non-OCR-gated) full-frame grab + GameMode latch for
+            # connection_recovery's corner-black confirm and never-fly-Open net.
+            connection_grabber=self._connection_grabber,
+            game_mode_supplier=lambda: self._last_game_mode,
             # <7.5km docking gate read; unwired -> fail-closed default.
             dock_distance_km_supplier=(self.dock_distance_km_supplier
                                        or (lambda: None)),
@@ -1077,6 +1084,11 @@ class FlowRunner:
             ship = getattr(ev, "ship", None)
             if ship:
                 self._current_ship = ship.lower().strip()
+            # GameMode latch (operator 2026-07-13): connection_recovery verifies
+            # the reconnect landed in Solo (the bot must never fly Open).
+            gm = getattr(ev, "game_mode", None)
+            if gm:
+                self._last_game_mode = gm
         elif name == "Loadout":
             # Loadout always carries the Ship field; prefer it over LoadGame
             # because Loadout fires after an outfit change (ship_name updated).
@@ -1232,6 +1244,18 @@ class FlowRunner:
             return
         if not hit:
             return
+        # WITCHSPACE-LATCH RELEASE (operator 2026-07-13, LIVE session 031346): a
+        # CONNECTION ERROR that strikes DURING a Hyperspace jump leaves the
+        # witchspace latch stuck True -- the jump never lands, so no FSDJump /
+        # SupercruiseEntry / Docked / Location ever fires to clear it. The
+        # interpreter then WITCHSPACE-PAUSES connection_recovery at its first step
+        # and the bot HARD-FREEZES (_run clears _preempt on entry, so should_abort
+        # goes False and the pause loop spins forever on a latch nothing will
+        # clear). The modal is authoritative proof the jump is DEAD and we are not
+        # in a valid tunnel -> release the latch here, same posture as the
+        # Location/SC-entry/Docked releases. BEFORE the preempt so a running proc
+        # that is itself witchspace-paused unblocks, hits the preempt, and yields.
+        self._in_witchspace = False
         self._connection_error_seen = True
         if self._running_proc is not None:
             self._preempt = "connection_error"
@@ -1280,6 +1304,10 @@ class FlowRunner:
             except Exception:  # noqa: BLE001 — focus is best-effort, never fatal
                 pass
         self._connection_recovered = False
+        # Belt-and-suspenders: guarantee the recovery macro is never witchspace-
+        # paused even if a backlog StartJump re-set the latch after detection.
+        # THIS step's freeze is what dead-stopped session 031346.
+        self._in_witchspace = False
         try:
             self._run("connection_recovery")
         finally:

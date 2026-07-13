@@ -457,6 +457,45 @@ def test_engage_supercruise_press_false_waits_without_pressing():
     assert "Supercruise" not in sender.actions()
 
 
+def test_engage_supercruise_multipress_fails_fast_on_dead_press():
+    """OPERATOR 2026-07-12 (star smack): a DROPPED SC keypress must NOT idle the
+    full max_charge_s watchdog. In multi-press mode a press that never charges is
+    re-fired every between_press_s and, once the press budget is spent, FAILS
+    FAST (presses_exhausted) -- total ~= presses*between_press_s, never
+    max_charge_s. Guards the smack watchdog trap (presses=3, between_press_s=15,
+    max_charge_s=240): the OLD `attempt+1 < presses` break exempted the FINAL
+    attempt, so a keypress the game never registered sat ~4 minutes on the 240s
+    watchdog. FsdCharging is the game's own "it fired" signal -- a dead press
+    produces none, so no-charge-in-window IS "didn't fire, re-fire / give up."""
+    sender = FakeSender()
+    ctx = _climb_ctx(sender, lambda: _status())   # never charges, ever
+    ok = STEP_REGISTRY["engage_supercruise"](
+        ctx, poll_s=1.0, presses=3, between_press_s=5.0, max_charge_s=240.0)
+    assert ok is False
+    assert sender.actions().count("Supercruise") == 3   # each attempt fired once
+    # Fails at ~presses*between_press_s (~15s), NOT the 240s watchdog. Under the
+    # old code the final attempt idled to now>=12+240 -> this assertion fails.
+    assert ctx.clock() < 240.0
+    assert ctx.clock() < 3 * 5.0 + 10.0   # generous envelope around 15s
+
+
+def test_engage_supercruise_presses1_keeps_legacy_watchdog():
+    """REGRESSION GUARD for the fix above: presses==1 (the startup.toml default)
+    must keep the EXACT legacy single-press full-watchdog behavior -- the
+    multi-press fail-fast break is gated on presses>1, so a lone press with no
+    charge still idles max_charge_s (one keypress, no re-fire budget)."""
+    now = [0.0]
+    def waiter(event, timeout_s):
+        now[0] += timeout_s
+        return False
+    sender = FakeSender()
+    ctx = StepContext(sender=sender, clock=lambda: now[0],
+                      status_supplier=lambda: _status(), event_waiter=waiter)
+    assert STEP_REGISTRY["engage_supercruise"](ctx, max_charge_s=60.0) is False
+    assert sender.actions().count("Supercruise") == 1
+    assert now[0] >= 60.0   # full watchdog, unchanged
+
+
 # ---------------------------------------------------------------------------
 # Fix 2 — target_next_route fast-fail on empty/origin-only NavRoute
 # (2026-06-08 council, Wolf 359 no-route flail)

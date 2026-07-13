@@ -16,7 +16,9 @@ from pathlib import Path
 import pytest
 
 from ed_vision.hud_sc_indicators import (
+    CORNER_BLACK_MAX,
     ScHudState,
+    all_corners_black,
     classify_hud_text,
     detect_align_warning,
     detect_connection_error,
@@ -220,3 +222,56 @@ def test_real_sco_malfunction_full_frame():
     read = read_sc_hud(img)   # DEFAULT region — the live full-frame center band
     assert read.state is ScHudState.MALFUNCTION, f"got {read.state} ({read.text!r})"
     assert detect_sco_malfunction(img) is True
+
+
+# --------------------------------------------------------------------------
+# all_corners_black — the connection-recovery "past the menu, loading in" gate
+# (operator 2026-07-13). Pure numpy; always runs.
+# --------------------------------------------------------------------------
+
+def _frame(fill=0, size=200):
+    import numpy as np
+    return np.full((size, size, 3), fill, dtype=np.uint8)
+
+
+def test_all_corners_black_true_on_full_black():
+    """The LOADING screen the Solo select drops into is full black -> True."""
+    assert all_corners_black(_frame(0)) is True
+
+
+def test_all_corners_black_true_when_only_center_lit():
+    """LOADING GAME spinner / rotating-ship load: bright center, black corners
+    -> still True (only the four corners are read)."""
+    import numpy as np
+    f = _frame(0)
+    f[80:120, 80:120] = 255            # bright center blob (the spinner/ship)
+    assert all_corners_black(f) is True
+
+
+def test_all_corners_black_false_when_one_corner_lit():
+    """A single lit corner (a menu / hangar bleed) -> False: ANY lit corner means
+    we are still on a menu, so the Solo press has not taken."""
+    import numpy as np
+    f = _frame(0)
+    f[0:30, 0:30] = 200                # top-left lit
+    assert all_corners_black(f) is False
+
+
+def test_all_corners_black_false_on_menu_like_frame():
+    """A uniformly lit frame (the mode-select / main-menu backgrounds all keep
+    lit corners) -> False."""
+    assert all_corners_black(_frame(128)) is False
+
+
+def test_all_corners_black_threshold_boundary():
+    """<= CORNER_BLACK_MAX passes (capture noise on true black); one above fails."""
+    assert all_corners_black(_frame(CORNER_BLACK_MAX)) is True
+    assert all_corners_black(_frame(CORNER_BLACK_MAX + 1)) is False
+
+
+def test_all_corners_black_failsoft_on_bad_frame():
+    """A None / 1-D / tiny frame -> False (never a false 'we made it in')."""
+    import numpy as np
+    assert all_corners_black(None) is False
+    assert all_corners_black(np.zeros((3,), dtype=np.uint8)) is False
+    assert all_corners_black(np.zeros((2, 2, 3), dtype=np.uint8)) is False
