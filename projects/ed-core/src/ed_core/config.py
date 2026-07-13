@@ -304,10 +304,18 @@ class VisionConfig:
     # (operator: the target reticle lands "literally just outside" the old
     # 900x600 box after the coarse compass pass, so the fine reader saw nothing
     # and degraded): 1200x680 centred on (960,540). The reader derives the widget
-    # anchor from the crop centre (adaptive), so this size is a free knob;
-    # validated for no false rings on the milky-way + compass HUD.
+    # anchor from the crop centre (adaptive), so this size is a free knob.
+    # HEIGHT RE-CLIPPED 600 (2026-07-13, LIVE dense-Colonia phantom lock): the 680
+    # height pushed the crop bottom to screen-y 880, which swallowed the COCKPIT
+    # nav/radar disc (~screen-y 858). HoughCircles locked that FIXED orange
+    # cockpit ring as the target reticle on ~19% of jumps (all 6 timeouts locked
+    # the identical dx-213/dy+318 point) and pitched at it for the full timeout ->
+    # degrade -> jump on the loose 0.20 coarse -> operator nudged. 600 (centred ->
+    # bottom screen-y 840, the pre-widening bottom) excludes the disc while KEEPING
+    # the horizontal widening (1200). The step's phantom-lock movement guard is the
+    # general backstop for any other fixed cockpit ring (e.g. the D-scanner).
     widget_ring_alignment: bool = True
-    widget_crop: tuple[int, int, int, int] = (360, 200, 1200, 680)
+    widget_crop: tuple[int, int, int, int] = (360, 240, 1200, 600)
     # What a widget MISS does (operator decision 2026-06-06 -> 2026-07-12):
     #   "required"   (DEFAULT, operator 2026-07-12) — the widget is MANDATORY:
     #                 the launch preflight HALTS loudly and refuses to fly until
