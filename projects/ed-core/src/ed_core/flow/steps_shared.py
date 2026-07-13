@@ -596,6 +596,9 @@ def step_orient_widget_ring(
     gain_s_per_px: float = 0.18,     # press seconds per (|delta|/ring_r)
     min_press: float = 0.04,
     max_press: float = 0.25,
+    phantom_min_dist_px: float = 50.0,   # only a FAR ring can be a phantom lock
+    phantom_move_eps_px: float = 20.0,   # < this L1 move across a press = "did not respond"
+    phantom_stuck_iters: int = 4,        # consecutive far+unresponsive presses -> abort
 ) -> bool:
     """FINE alignment stage: drive the target reticle ring onto the mouse widget.
 
@@ -645,6 +648,8 @@ def step_orient_widget_ring(
 
     iterations = 0
     start = ctx.clock()
+    stuck_run = 0            # consecutive FAR + unresponsive correction presses
+    prev_delta = None        # last found ring position, to measure response to a press
     while ctx.clock() - start < timeout_s:
         if ctx.should_abort():
             ctx.log("WidgetRingAborted", {"iters": iterations})
@@ -691,6 +696,29 @@ def step_orient_widget_ring(
             "raw": [[r_.found, round(r_.delta_x, 2), round(r_.delta_y, 2),
                      round(r_.ring_radius_px, 2)] for r_ in raw_reads],
         })
+        # PHANTOM-LOCK GUARD (operator 2026-07-13, LIVE dense-Colonia): a real
+        # target reticle MOVES when the correction press pitches/yaws the ship; a
+        # FIXED cockpit HUD ring (locked when no real reticle is near the nose in a
+        # dense starfield) does NOT. A FAR ring whose position barely changes
+        # across `phantom_stuck_iters` correction presses is a phantom -> abort
+        # (degrade) rather than pitch at a cockpit element for the whole timeout
+        # (all 6 live timeouts pitched at the SAME fixed dx-213/dy+318 disc for 18
+        # iters). Distances OVERLAP real reticles (both reach ~385px), so only
+        # MOTION discriminates; the dist gate keeps near-centre fine-tuning safe.
+        if (read.found and action is not None and prev_delta is not None
+                and (read.delta_x ** 2 + read.delta_y ** 2) ** 0.5 > phantom_min_dist_px
+                and (abs(read.delta_x - prev_delta[0])
+                     + abs(read.delta_y - prev_delta[1])) < phantom_move_eps_px):
+            stuck_run += 1
+        else:
+            stuck_run = 0
+        if read.found:
+            prev_delta = (read.delta_x, read.delta_y)
+        if stuck_run >= max(1, phantom_stuck_iters):
+            ctx.log("WidgetRingPhantomStuck",
+                    {"iters": iterations, "dx": round(read.delta_x, 1),
+                     "dy": round(read.delta_y, 1), "degraded": degrade})
+            return degrade
         if aligned_now:
             ctx.log("WidgetRingAligned", {"iters": iterations,
                     "dx": read.delta_x, "dy": read.delta_y})

@@ -314,3 +314,67 @@ def test_supercruise_lost_fails_closed_even_in_degrade_mode():
 # follows orient_compass" order is now asserted for TRAVERSAL in
 # test_traversal_flow.test_step_order_is_operator_verbatim, and the widget's
 # no-op-when-off contract is covered by test_noop_true_when_flag_off above.
+
+
+# ---------------------------------------------------------------------------
+# 23. phantom-lock movement guard (operator 2026-07-13, LIVE dense-Colonia):
+# a FIXED far cockpit HUD ring that never moves under correction presses must
+# abort early (degrade) instead of pitching at it for the whole timeout.
+# ---------------------------------------------------------------------------
+
+def test_phantom_lock_aborts_early():
+    """A FIXED far ring (the cockpit nav/radar disc: dx-213/dy318, unmoving) ->
+    WidgetRingPhantomStuck after ~phantom_stuck_iters, NOT the full timeout.
+    All 6 live timeouts pitched at exactly this fixed point for 18 iters."""
+    logged = []
+    sender = FakeSender()
+    reader = _FakeRingReader([_read(-213, 318)])          # fixed far ring, repeats
+    ctx = StepContext(
+        sender=sender, clock=_Clock(step=1.0), sleeper=lambda s: None,
+        widget_ring_enabled=True, widget_ring_reader=reader,
+        widget_frame_grabber=lambda: object(),
+        widget_ring_on_miss="degrade",
+        record=lambda t, p: logged.append((t, p)),
+    )
+    assert step_orient_widget_ring(ctx, timeout_s=999.0, samples=1,
+                                   phantom_stuck_iters=4) is True     # degraded
+    assert any(t == "WidgetRingPhantomStuck" for t, _ in logged)
+    assert not any(t == "WidgetRingTimeout" for t, _ in logged)
+    iters = [p for t, p in logged if t == "WidgetRingIter"]
+    assert len(iters) <= 6                                # bailed early, not 999s
+
+
+def test_phantom_guard_lets_a_moving_ring_converge():
+    """A real reticle that MOVES toward the widget under correction must NOT trip
+    the phantom guard -- it converges and aligns normally."""
+    logged = []
+    sender = FakeSender()
+    reader = _FakeRingReader([_read(-200, 300), _read(-120, 180),
+                              _read(-40, 60), _read(0, 0)])
+    ctx = StepContext(
+        sender=sender, clock=_Clock(), sleeper=lambda s: None,
+        widget_ring_enabled=True, widget_ring_reader=reader,
+        widget_frame_grabber=lambda: object(),
+        widget_ring_on_miss="degrade",
+        record=lambda t, p: logged.append((t, p)),
+    )
+    assert step_orient_widget_ring(ctx, samples=1) is True
+    assert not any(t == "WidgetRingPhantomStuck" for t, _ in logged)
+
+
+def test_phantom_guard_ignores_near_ring_fine_tuning():
+    """Near-centre fine-tuning (dist < phantom_min_dist) is never a phantom even
+    if it hovers -- the distance gate protects it (only a FAR fixed ring is a
+    cockpit lock)."""
+    logged = []
+    sender = FakeSender()
+    reader = _FakeRingReader([_read(30, 0)])              # dist 30 < 50, unmoving
+    ctx = StepContext(
+        sender=sender, clock=_Clock(step=1.0), sleeper=lambda s: None,
+        widget_ring_enabled=True, widget_ring_reader=reader,
+        widget_frame_grabber=lambda: object(),
+        widget_ring_on_miss="degrade",
+        record=lambda t, p: logged.append((t, p)),
+    )
+    step_orient_widget_ring(ctx, timeout_s=5.0, samples=1)
+    assert not any(t == "WidgetRingPhantomStuck" for t, _ in logged)
