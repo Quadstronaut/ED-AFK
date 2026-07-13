@@ -275,3 +275,58 @@ def test_all_corners_black_failsoft_on_bad_frame():
     assert all_corners_black(None) is False
     assert all_corners_black(np.zeros((3,), dtype=np.uint8)) is False
     assert all_corners_black(np.zeros((2, 2, 3), dtype=np.uint8)) is False
+
+
+# --------------------------------------------------------------------------
+# highlighted_mode_index — reconnect mode-select "which card is lit" reader.
+# Validated LIVE on the operator's Open/Private/Solo frames (0/1/2, ~0.52 fill vs
+# ~0.02, 22x dominance; loading + main menu -> None). Here synthetic cards pin
+# the band math + dominance guard. (operator 2026-07-13.)
+# --------------------------------------------------------------------------
+
+def _mode_frame(k, *, fill=(30, 120, 240), bg=20, size=(1080, 1920)):
+    """Synthetic mode-select frame: dark (lit-corner) bg with one solid-orange
+    highlight block in card band k (BGR). k=None -> no highlight."""
+    import numpy as np
+    from ed_vision.hud_sc_indicators import MODE_SELECT_X_FRAC as X, MODE_SELECT_CARDS as N
+    h, w = size
+    f = np.full((h, w, 3), bg, dtype=np.uint8)
+    if k is not None:
+        x0 = int(X[0] * w); x1 = int(X[1] * w); bw = x1 - x0
+        cx0 = x0 + int(k * bw / N); cx1 = x0 + int((k + 1) * bw / N)
+        f[int(0.45 * h):int(0.85 * h), cx0:cx1] = fill
+    return f
+
+
+@pytest.mark.parametrize("k", [0, 1, 2, 3, 4])
+def test_highlighted_mode_index_each_card(k):
+    from ed_vision.hud_sc_indicators import highlighted_mode_index
+    assert highlighted_mode_index(_mode_frame(k)) == k
+
+
+def test_highlighted_mode_index_solo_constant():
+    from ed_vision.hud_sc_indicators import highlighted_mode_index, MODE_SOLO_INDEX
+    assert MODE_SOLO_INDEX == 2
+    assert highlighted_mode_index(_mode_frame(2)) == MODE_SOLO_INDEX
+
+
+def test_highlighted_mode_index_none_when_no_highlight():
+    """No solid highlight (all dim / not a mode-select) -> None, so recovery falls
+    back to the blind path rather than a confident wrong index."""
+    from ed_vision.hud_sc_indicators import highlighted_mode_index
+    assert highlighted_mode_index(_mode_frame(None)) is None
+
+
+def test_highlighted_mode_index_none_when_two_cards_tie():
+    """Two equally-lit bands -> not dominant -> None (never guess between them)."""
+    import numpy as np
+    from ed_vision.hud_sc_indicators import highlighted_mode_index
+    both = np.maximum(_mode_frame(0), _mode_frame(2))
+    assert highlighted_mode_index(both) is None
+
+
+def test_highlighted_mode_index_failsoft():
+    import numpy as np
+    from ed_vision.hud_sc_indicators import highlighted_mode_index
+    assert highlighted_mode_index(None) is None
+    assert highlighted_mode_index(np.zeros((5,), dtype=np.uint8)) is None

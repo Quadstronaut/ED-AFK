@@ -329,3 +329,25 @@ def test_recovery_blind_without_grabber_keeps_legacy_sequence():
     assert sender.actions() == [
         "UI_Select", "UI_Select", "UI_Right", "UI_Right",
         "UI_Select", "GalaxyMapOpen", "UI_Back"]
+
+
+def test_recovery_navigates_to_solo_by_sight(monkeypatch):
+    """With the mode-highlight detector the step drives the cursor to Solo BY
+    SIGHT -- pressing UI_Right until it READS Solo (index 2), never overshooting
+    and never blind-landing on Open. (operator 2026-07-13 mode-highlight detector.)"""
+    import ed_vision.hud_sc_indicators as hud
+    sender = FakeSender()
+    # the detector reports the cursor as (#UI_Right - #UI_Left), clamped 0..4:
+    def fake_idx(fr, **k):
+        a = sender.actions()
+        return max(0, min(4, a.count("UI_Right") - a.count("UI_Left")))
+    monkeypatch.setattr(hud, "highlighted_mode_index", fake_idx)
+    ccalls = {"n": 0}
+    monkeypatch.setattr(hud, "all_corners_black",
+                        lambda fr, **k: (ccalls.__setitem__("n", ccalls["n"] + 1)
+                                         or ccalls["n"] >= 2))   # menu-lit, then black
+    ctx, notified = _cv_ctx(sender, game_mode="Solo")
+    assert step_connection_recovery(ctx) is True
+    assert notified == [True]
+    assert sender.actions().count("UI_Right") == 2     # Open->Private->Solo, no overshoot
+    assert "UI_Left" not in sender.actions()
