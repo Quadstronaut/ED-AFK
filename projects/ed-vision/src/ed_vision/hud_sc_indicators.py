@@ -353,5 +353,63 @@ def detect_mode_button_ready(frame: Any, *,
     once the operator provides authenticated-vs-still-connecting frames; the
     connection_recovery step already polls this before the mode-select presses,
     so training it is a one-function change with no re-plumbing. `ocr`/`frame`
-    accepted now for signature stability."""
+    accepted now for signature stability.
+
+    SUPERSEDED (operator 2026-07-13): connection_recovery no longer waits on this
+    grayed-vs-enabled read. It instead PRESSES Solo and confirms the transition
+    with all_corners_black (below) -- the LOADING screen the select drops into is
+    full black, every menu keeps a lit corner -- retrying the press while the
+    modes are still grayed/authenticating. This stub is retained only for the
+    test that pins its default."""
     return True  # STUB: no detector yet -> keep the current blind timing
+
+
+# Per-channel ceiling for a "100% black" corner. The ED loading screens -- the
+# LOADING GAME spinner and the black rotating-ship load before the cockpit -- are
+# TRUE black (0,0,0); every menu screen (main-menu hangar, the mode-select
+# panels) keeps a non-black corner well above this. 8 leaves margin for capture /
+# compression noise on the true-black screen while staying far under any menu
+# corner. Tune against dumped connrec_* frames if a menu corner ever slips
+# through. (operator 2026-07-13.)
+CORNER_BLACK_MAX = 8
+
+
+def all_corners_black(frame: Any, *, margin_frac: float = 0.012,
+                      patch: int = 8, threshold: int = CORNER_BLACK_MAX) -> bool:
+    """True iff all FOUR corners of the frame are (near) pure black.
+
+    THE SIGNAL (operator 2026-07-13) that a menu SELECTION has TAKEN and the game
+    is loading in: the connection-recovery menus (main menu, the Open/Private/Solo
+    mode-select) all keep a lit corner, but the post-select LOADING screen is full
+    black. connection_recovery presses Solo, then polls this to confirm it got
+    PAST the menu -- distinguishing success from a grayed, still-authenticating
+    menu that ignored the press.
+
+    Samples a `patch`x`patch` block inset `margin_frac` of the short side from
+    each corner (so a 1px border, a lone hot pixel, or the top-left overlay text
+    can't flip it) and requires the MAX pixel of all four blocks to be <=
+    threshold -- strict, because a false 'we made it in' is worse than a retry.
+    Fail-soft: a bad/None frame or any error -> False (assume still on a menu)."""
+    try:
+        import numpy as np  # type: ignore
+        arr = np.asarray(frame)
+        if arr.ndim < 2:
+            return False
+        h, w = arr.shape[:2]
+        if h < 4 or w < 4:
+            return False
+        m = max(1, int(margin_frac * min(h, w)))
+        p = max(1, patch)
+        boxes = (
+            (slice(m, m + p), slice(m, m + p)),                    # top-left
+            (slice(m, m + p), slice(w - m - p, w - m)),            # top-right
+            (slice(h - m - p, h - m), slice(m, m + p)),            # bottom-left
+            (slice(h - m - p, h - m), slice(w - m - p, w - m)),    # bottom-right
+        )
+        for ys, xs in boxes:
+            block = arr[ys, xs]
+            if block.size == 0 or float(block.max()) > threshold:
+                return False
+        return True
+    except Exception:  # noqa: BLE001 — any frame/np problem -> not-confirmed (retry)
+        return False

@@ -201,3 +201,131 @@ def test_step_recovery_panic_aborts_early():
     assert step_connection_recovery(ctx) is False
     assert notified == [False]
     assert sender.actions() == []                # nothing pressed under panic
+
+
+# ---- witchspace-latch release on detection (operator 2026-07-13, LIVE 031346) -
+
+def test_connection_tick_releases_stuck_witchspace_latch(monkeypatch):
+    """LIVE 2026-07-13 (session 031346): a CONNECTION ERROR mid-Hyperspace-jump
+    leaves _in_witchspace stuck True (the jump never lands, so no
+    FSDJump/SC-entry/Docked/Location clears it) and the interpreter then
+    witchspace-pauses connection_recovery into a HARD FREEZE. Detecting the modal
+    must RELEASE the latch so recovery is not gagged before its first press."""
+    monkeypatch.setattr(_DETECT, lambda f: True)
+    r = _runner()
+    r._connection_grabber = lambda: object()
+    r._in_witchspace = True           # stuck from the interrupted mid-jump
+    r._running_proc = "traversal"
+    r._connection_tick()
+    assert r._in_witchspace is False       # released -> recovery won't be paused
+    assert r._connection_error_seen is True
+    assert r._preempt == "connection_error"
+
+
+def test_maybe_recover_clears_witchspace_before_running(monkeypatch):
+    """Belt-and-suspenders: the consumer clears the latch immediately before
+    running connection_recovery, so even a backlog StartJump that re-set it after
+    detection can't witchspace-pause the recovery macro (031346's dead-stop)."""
+    sender = FakeSender()
+    procs = {"connection_recovery": Procedure(
+        name="connection_recovery", steps=(Step("connection_recovery"),))}
+    r = _runner(procs, sender)
+    r._connection_error_seen = True
+    r._in_witchspace = True
+    r._maybe_recover_connection()
+    assert r._in_witchspace is False
+
+
+# ---- corner-black Solo confirm + grayed-auth retry + never-fly-Open net -------
+# (operator 2026-07-13 frames: press Solo, confirm the black loading screen, retry
+#  while the mode cards are grayed/authenticating, and refuse a non-Solo landing.)
+
+def _cv_ctx(sender, *, game_mode=None, load_result=None, abort=False):
+    """StepContext wired with a connection_grabber + an ADVANCING clock (sleeper
+    advances it) so the bounded confirm/retry windows actually elapse. event_waiter
+    defaults to None (LoadGame unwired) so tests exercise the CORNER-black path;
+    all_corners_black is monkeypatched per test. Returns (ctx, notified)."""
+    now = [0.0]
+    notified = []
+    ctx = StepContext(
+        sender=sender,
+        clock=lambda: now[0],
+        sleeper=lambda s: now.__setitem__(0, now[0] + s),
+        event_waiter=(None if load_result is None else (lambda n, t: load_result)),
+        should_abort=(lambda: abort),
+        record=lambda k, p: None,
+    )
+    ctx.connection_grabber = lambda: "frame"
+    ctx.game_mode_supplier = (lambda: game_mode)
+    ctx.connection_recovery_notify = notified.append
+    return ctx, notified
+
+
+def test_recovery_corner_black_confirms_solo(monkeypatch):
+    """Press Solo, confirm the transition via all-4-corners-black (the loading
+    screen) -> success, one Solo press."""
+    import ed_vision.hud_sc_indicators as hud
+    calls = {"n": 0}
+    monkeypatch.setattr(hud, "all_corners_black",
+                        lambda fr, **k: (calls.__setitem__("n", calls["n"] + 1)
+                                         or calls["n"] >= 2))  # call1 menu-lit, then black
+    sender = FakeSender()
+    ctx, notified = _cv_ctx(sender, game_mode="Solo")
+    assert step_connection_recovery(ctx) is True
+    assert notified == [True]
+    assert "GalaxyMapOpen" in sender.actions() and "UI_Back" in sender.actions()
+    assert sender.actions().count("UI_Select") == 3        # OK + CONTINUE + one Solo
+
+
+def test_recovery_retries_solo_while_grayed(monkeypatch):
+    """Grayed/authenticating modes ignore the Solo press (no corner-black); the
+    step RE-PRESSES until the screen finally goes black -> >=2 Solo presses."""
+    import ed_vision.hud_sc_indicators as hud
+    calls = {"n": 0}
+    def fake(fr, **k):
+        calls["n"] += 1
+        return calls["n"] != 1 and calls["n"] >= 8   # menu-lit call1; black only from call 8
+    monkeypatch.setattr(hud, "all_corners_black", fake)
+    sender = FakeSender()
+    ctx, notified = _cv_ctx(sender, game_mode="Solo")
+    assert step_connection_recovery(ctx) is True
+    assert notified == [True]
+    assert sender.actions().count("UI_Select") >= 4        # OK + CONTINUE + >=2 Solo
+
+
+def test_recovery_refuses_non_solo_mode(monkeypatch):
+    """NEVER-FLY-OPEN net: the reconnect loaded into OPEN -> refuse success, do
+    NOT re-plot, notify failure (the watch can re-fire)."""
+    import ed_vision.hud_sc_indicators as hud
+    calls = {"n": 0}
+    monkeypatch.setattr(hud, "all_corners_black",
+                        lambda fr, **k: (calls.__setitem__("n", calls["n"] + 1)
+                                         or calls["n"] >= 2))
+    sender = FakeSender()
+    ctx, notified = _cv_ctx(sender, game_mode="Open")
+    assert step_connection_recovery(ctx) is False
+    assert notified == [False]
+    assert "GalaxyMapOpen" not in sender.actions()         # never re-plots in Open
+
+
+def test_recovery_solo_stuck_fails_closed(monkeypatch):
+    """Modes grayed forever (auth never completes) -> the Solo-entry budget
+    exhausts, the step fails closed, presses no map keys, notifies failure."""
+    import ed_vision.hud_sc_indicators as hud
+    monkeypatch.setattr(hud, "all_corners_black", lambda fr, **k: False)  # never black
+    sender = FakeSender()
+    ctx, notified = _cv_ctx(sender, game_mode="Solo")
+    assert step_connection_recovery(ctx) is False
+    assert notified == [False]
+    assert "GalaxyMapOpen" not in sender.actions()
+
+
+def test_recovery_blind_without_grabber_keeps_legacy_sequence():
+    """No connection_grabber (grabber-unwired build) -> the exact legacy blind
+    macro: OK, CONTINUE, Right, Right, Solo, replot -- no corner logic, no retry."""
+    sender = FakeSender()
+    ctx, notified = _recovery_ctx(sender, load_result=True)   # no grabber set
+    assert step_connection_recovery(ctx) is True
+    assert sender.actions() == [
+        "UI_Select", "UI_Select", "UI_Right", "UI_Right",
+        "UI_Select", "GalaxyMapOpen", "UI_Back"]

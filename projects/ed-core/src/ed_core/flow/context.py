@@ -223,6 +223,21 @@ class StepContext:
     # observe / immediate best-effort True), no regression.
     hud_grabber: Optional[Callable[[], Any]] = None
 
+    # CONNECTION-ERROR full-frame .grab (operator 2026-07-13). The SAME bare grab
+    # the dispatcher's connection watch uses, but wired to the STEP so
+    # connection_recovery can read the recovery-menu screens (all_corners_black:
+    # confirm a Solo press got PAST the menu into the black loading screen).
+    # Deliberately NOT the OCR-gated hud_grabber -- the corner read needs no OCR,
+    # and the watch must work on every keyed run. None -> the step degrades to the
+    # legacy blind timed macro (no regression, exactly today's unit-test path).
+    connection_grabber: Optional[Callable[[], Any]] = None
+
+    # Latest LoadGame GameMode ("Open"/"Solo"/"Group"), or None if unseen. The
+    # never-fly-Open safety net: connection_recovery refuses to report success if
+    # the reconnect landed in a NON-Solo mode (the bot cannot play Open --
+    # automatons). None -> unknown (skip the check), exactly today's behavior.
+    game_mode_supplier: Callable[[], Optional[str]] = lambda: None
+
     # DOCKED-MENU detector frame source (full-frame BGR .grab). When wired,
     # confirm_menu_item / station_services_macro read the live docked menu via
     # vision.station_menu.detect_menu_item to know which item is highlighted
