@@ -187,8 +187,9 @@ def step_hold_until_event(
     bind: str,
     event: str,
     max_hold_s: float = 30.0,
+    reassert_s: float = 1.0,
 ) -> bool:
-    """Press the key DOWN, wait for `event` to be logged, then release.
+    """Press the key DOWN, hold it (re-asserting), wait for `event`, release.
 
     The success path is purely log-gated — the key is released the instant
     the journal records the event, not on a fixed timer. `max_hold_s` is a
@@ -196,9 +197,28 @@ def step_hold_until_event(
     track); the default 30s is way longer than any real honk and only fires
     if something has gone badly wrong (broken keybind, scanner disabled).
 
+    KEEP-ALIVE (CLASS B input-emission fix, 2026-07-14). Root cause from the
+    session_2026-07-14 recorder vs ED-journal cross-check: a LONE
+    ``scancode_keyDown`` followed by ~18s of silence does not sustain the
+    in-game hold — the game only registers the hold once the NEXT SendInput
+    injection lands through our code path. Traversal honks charged ~23s
+    because the only follow-on keypress (TargetNextRouteSystem) fired ~18s
+    after keydown, and FSSDiscoveryScan then landed exactly 5.25s after THAT
+    injection; sc_resume / smack_recovery honks charged 5.25s because a
+    follow-on keypress happened to land ~30ms after the honk keydown. The
+    mechanism is identical in both paths — only the follow-on input traffic
+    differed. A physically-held key emits typematic repeat make-codes for
+    its whole duration; we emulate that by re-issuing ``key_down`` between
+    short event-poll slices at a ``reassert_s`` cadence (<=1.0s). Re-down of
+    an already-down key is idempotent / repeat-equivalent at the game level
+    (operator-proven tolerant). The re-assert is PACING, never a success
+    gate — release stays journal-event-gated and ``max_hold_s`` is only a
+    safety backstop. With this fix the recorder legitimately shows REPEATED
+    ``<bind>:down`` rows per hold; a hold is first-down .. single-up.
+
     Returns True if the event fired before the safety cap, False otherwise.
-    The key is ALWAYS released (try/finally), even on the safety-cap path
-    or if the waiter raises."""
+    The key is ALWAYS released exactly once (try/finally), even on the
+    safety-cap path, on operator abort, or if the waiter raises."""
     try:
         ctx.sender.key_down(bind)
     except KeyError:
@@ -209,7 +229,41 @@ def step_hold_until_event(
             # No journal wiring (unit-test fallback with no waiter): no way
             # to learn of completion, so just release and report success.
             return True
-        return ctx.event_waiter(event, max_hold_s)
+        deadline = ctx.clock() + max_hold_s
+        last_assert = ctx.clock()
+        while True:
+            # Safety backstop FIRST: a missing event must never hold past the
+            # cap (that would strand the detached track on a stuck key).
+            if ctx.clock() - deadline >= 0.0:
+                return False
+            # Poll for the release event in a SHORT slice (never the whole
+            # budget) so the keep-alive can re-assert between polls. The slice
+            # is clamped to the remaining budget so the last poll can't overrun
+            # the safety cap.
+            remaining = deadline - ctx.clock()
+            slice_s = reassert_s if remaining > reassert_s else remaining
+            if ctx.event_waiter(event, slice_s):
+                return True
+            # Operator panic must break the hold even before the cap.
+            if ctx.should_abort():
+                return False
+            now = ctx.clock()
+            if now - deadline >= 0.0:
+                return False
+            # Keep the hold alive: re-issue the down at <=reassert_s cadence so
+            # the live process keeps seeing a continuous press. Gated on the
+            # cadence (not every loop turn) so a fake/instant waiter in tests
+            # can't spray extra downs inside a sub-cadence safety window.
+            if now - last_assert >= reassert_s:
+                try:
+                    ctx.sender.key_down(bind)
+                except KeyError:
+                    # Bind vanished mid-hold — impossible in practice (the first
+                    # down already resolved it). Fail closed; finally still
+                    # releases the key exactly once.
+                    ctx.log("BindMissing", {"action": bind, "phase": "reassert"})
+                    return False
+                last_assert = now
     finally:
         try:
             ctx.sender.key_up(bind)
