@@ -418,9 +418,10 @@ def all_corners_black(frame: Any, *, margin_frac: float = 0.012,
 # Reconnect mode-select layout (operator frames 2026-07-13, 1920x1080): five
 # horizontal cards Open / Private / Solo / Arena / Training span x 140..1780
 # (pitch ~328), highlight block in the card body y ~0.28..0.90. The HIGHLIGHTED
-# card renders a large SOLID bright-orange block; the rest are dim with only thin
-# orange text -- measured ~116k vs ~2-5k orange px (25x+). Fractions -> resolution
-# independent. 0=Open 1=Private 2=Solo 3=Arena 4=Training.
+# card renders a large SOLID fill block -- bright-ORANGE when the card is enabled
+# (connected), near-WHITE when it is GRAYED (disconnected reconnect mode-select) --
+# while the rest are dim with only thin text. Fractions -> resolution independent.
+# 0=Open 1=Private 2=Solo 3=Arena 4=Training.
 MODE_SELECT_CARDS = 5
 MODE_SELECT_X_FRAC = (0.0729, 0.9271)     # 140/1920 .. 1780/1920
 MODE_SELECT_Y_FRAC = (0.28, 0.90)
@@ -430,12 +431,32 @@ MODE_SOLO_INDEX = 2
 def _mode_orange_mask(bgr):
     """Boolean mask of the ED solid-orange card-highlight fill. Keyed on the
     bright-orange highlight block (strong R, mid G, low B, high R-B), NOT the thin
-    dim-orange text/underlines every card carries."""
+    dim-orange text/underlines every card carries. This is the highlight color of
+    an ENABLED (server-connected) card."""
     import numpy as np  # type: ignore
     b = bgr[:, :, 0].astype(np.int16)
     g = bgr[:, :, 1].astype(np.int16)
     r = bgr[:, :, 2].astype(np.int16)
     return (r > 170) & (g > 60) & (g < 180) & (b < 90) & ((r - b) > 110)
+
+
+def _mode_white_mask(bgr):
+    """Boolean mask of the near-WHITE card-highlight fill. When the game is
+    DISCONNECTED (CONNECTION ERROR -> reconnect mode-select) the Open/Private/Solo/
+    Arena cards are GRAYED (can't reach Frontier), and the highlighted card among
+    them renders as a solid bright near-white block, NOT orange -- so the orange
+    mask above is blind to it. Measured on the operator's real grayed frame
+    (2026-07-13): the highlighted Open card's fill is R217 G215 B214 (neutral,
+    fill ~0.53), while every other card only carries dim ~190 gray text (fill
+    <0.08 -> 7x dominance). Requiring all three channels >170 keeps it a white/
+    light detector: any saturated hue (the orange highlight's B=30, the amber
+    Training card) can never satisfy all-channels-high, so this never double-counts
+    an enabled/orange card."""
+    import numpy as np  # type: ignore
+    b = bgr[:, :, 0].astype(np.int16)
+    g = bgr[:, :, 1].astype(np.int16)
+    r = bgr[:, :, 2].astype(np.int16)
+    return (r > 170) & (g > 170) & (b > 170)
 
 
 def highlighted_mode_index(frame, *, min_fill_frac: float = 0.06,
@@ -445,16 +466,19 @@ def highlighted_mode_index(frame, *, min_fill_frac: float = 0.06,
     mode-select / unreadable). Lets connection_recovery drive the cursor to SOLO
     BY SIGHT instead of a blind Right x2 -- so it can never blind-land on OPEN.
 
-    Splits the card row into 5 equal x-bands, measures each band's solid-orange
-    FILL FRACTION, and returns the argmax ONLY when it exceeds `min_fill_frac` AND
-    is >= `dominance` x the runner-up. Validated on the operator's real frames:
-    the highlighted card fills ~0.52 vs ~0.02 for the rest (a 22x margin), while
-    the LOADING screen (fill ~0) and the vertical MAIN MENU (top fill ~0.10 but
-    only ~2.4x the runner-up -> below dominance) both correctly return None. The
-    grayed/authenticating card is dimmer -- thresholds may want a nudge once a
-    grayed frame lands; a mis-read tends to fall UNDER dominance (-> None ->
-    blind fallback) rather than to a confident wrong index. Fail-soft: bad frame /
-    no numpy -> None."""
+    Splits the card row into 5 equal x-bands, measures each band's highlight FILL
+    FRACTION -- the highlight block is solid-ORANGE when the card is server-enabled
+    but near-WHITE when the card is GRAYED (disconnected), so the mask is
+    orange-OR-white and hue-agnostic -- and returns the argmax ONLY when it exceeds
+    `min_fill_frac` AND is >= `dominance` x the runner-up. Validated on the
+    operator's real frames: connected, the highlighted card fills ~0.52 (orange) vs
+    ~0.02 for the rest (22x margin); DISCONNECTED (grayed mode-select, 2026-07-13),
+    highlighted Open fills ~0.53 (white) vs <0.08 for the rest (7x margin, and the
+    amber Training card's saturated fill trips neither mask). The LOADING screen
+    (fill ~0) and the vertical MAIN MENU (top fill ~0.10 but only ~2.4x the
+    runner-up -> below dominance) both correctly return None. A mis-read tends to
+    fall UNDER dominance (-> None -> blind fallback) rather than to a confident
+    wrong index. Fail-soft: bad frame / no numpy -> None."""
     try:
         import numpy as np  # type: ignore
         arr = np.asarray(frame)
@@ -465,7 +489,8 @@ def highlighted_mode_index(frame, *, min_fill_frac: float = 0.06,
         x0 = int(MODE_SELECT_X_FRAC[0] * w); x1 = int(MODE_SELECT_X_FRAC[1] * w)
         if y1 <= y0 or x1 <= x0:
             return None
-        mask = _mode_orange_mask(arr[y0:y1, x0:x1])
+        card_row = arr[y0:y1, x0:x1]
+        mask = _mode_orange_mask(card_row) | _mode_white_mask(card_row)
         bw = x1 - x0
         fills = [float(mask[:, int(k * bw / MODE_SELECT_CARDS):
                              int((k + 1) * bw / MODE_SELECT_CARDS)].mean())

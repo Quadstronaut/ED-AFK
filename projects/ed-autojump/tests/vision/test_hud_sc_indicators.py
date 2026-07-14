@@ -330,3 +330,20 @@ def test_highlighted_mode_index_failsoft():
     from ed_vision.hud_sc_indicators import highlighted_mode_index
     assert highlighted_mode_index(None) is None
     assert highlighted_mode_index(np.zeros((5,), dtype=np.uint8)) is None
+
+
+def test_highlighted_mode_index_grayed_open_real_frame():
+    """Real DISCONNECTED reconnect mode-select (operator 2026-07-13): the modes are
+    GRAYED and the highlighted Open card renders near-WHITE, not orange. The
+    orange-only reader returned None here; the white-mask OR must read index 0 so
+    recovery can drive to Solo by sight instead of blind. cf
+    ed-connection-error-screens memory."""
+    import os, pytest, cv2
+    from ed_vision.hud_sc_indicators import highlighted_mode_index
+    p = os.path.join(os.path.dirname(__file__), "..", "fixtures",
+                     "mode_select_grayed_open.png")
+    if not os.path.exists(p):
+        pytest.skip("grayed mode-select fixture not present")
+    frame = cv2.imread(p)  # BGR
+    assert frame is not None
+    assert highlighted_mode_index(frame) == 0  # Open highlighted (grayed/white)
