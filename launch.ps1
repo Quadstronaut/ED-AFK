@@ -33,6 +33,7 @@ param(
     [switch]$NoRecord,              # start with Record OFF
     [switch]$NoVisitedLog,          # start with the visited-systems log OFF
     [switch]$Yes,                   # skip the menu entirely; go straight to Jump from the flags
+    [switch]$Force,                 # override the single-instance guard (start even if a run is already alive)
     [switch]$NoFocus,               # do NOT focus the Elite window before starting (debugging only)
     [switch]$PrintCmd,              # resolve settings, PRINT the cli command, and exit (no focus, no run)
     [switch]$Help,
@@ -495,6 +496,28 @@ function Resolve-DurationIndex([double]$hours, [bool]$infinite) {
     return $bestI
 }
 
+function Get-RunningRunInstances {
+    # PIDs of python processes ALREADY running an `ed_autojump.cli run` flight.
+    #
+    # Py3.14 caveat: a venv launches via a THIN redirector (.venv\Scripts\
+    # python.exe, ~250KB) that re-execs the base interpreter with byte-identical
+    # argv -- so ONE live flight shows up as TWO python.exe (redirector + base,
+    # parent->child). We deliberately do NOT try to collapse the pair: any match
+    # means a flight is already up, which is all the guard needs to know. This
+    # runs PRE-spawn, so it can never match our own not-yet-created child.
+    #
+    # Fail-OPEN: if the CIM query errors (WMI hiccup, permissions), return empty
+    # so a query failure never blocks a legitimate launch -- the guard is a
+    # convenience against accidental double-launch, not a hard lock.
+    try {
+        return @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -match 'ed_autojump(\.cli)?\b.*\brun\b' } |
+            Select-Object -ExpandProperty ProcessId)
+    } catch {
+        return @()
+    }
+}
+
 function Get-CliArgs([hashtable]$s) {
     # Single source of truth for the cli invocation, shared by -PrintCmd and Jump.
     # Monitor-Only inverts engage-keys: checked == --no-engage-keys (NullSender).
@@ -924,6 +947,25 @@ if ($Yes) {
 }
 
 $cliArgs = Get-CliArgs $s
+
+# --- single-instance guard: never start a SECOND live flight ----------------
+# Two bots pressing keys into the SAME game fight over every input -- FSD,
+# nav-panel, throttle -- and corrupt each other's flight. Start-ChildInJob
+# spawns exactly one child per launch, and the Py3.14 venv redirector is NOT a
+# second flight (see Get-RunningRunInstances), so the only way to get two real
+# flights is a genuine double-launch of THIS script (two windows, a stray
+# second Enter, a scheduled run overlapping a manual one). Refuse it here,
+# BEFORE the focus countdown, so we bail fast. -Force overrides for a deliberate
+# restart while an old instance is still shutting down.
+$existingRun = Get-RunningRunInstances
+if ($existingRun.Count -gt 0 -and -not $Force) {
+    Write-Host ""
+    Write-Host "[launch] REFUSING to start: an ed-autojump 'run' is already alive."
+    Write-Host ("         python PID(s): {0}" -f ($existingRun -join ', '))
+    Write-Host "         Two bots would drive the same game and fight over inputs."
+    Write-Host "         Stop the other instance first, or re-run with -Force to override."
+    exit 1
+}
 
 # --- pre-flight: is Elite running? -----------------------------------------
 
