@@ -587,8 +587,26 @@ def cmd_run(args) -> int:
             mode = cfg.vision.widget_ring_on_miss
             missing = (widget_ring_reader is None
                        or widget_frame_grabber is None)
-            undetected = (not missing and not verify_widget_rendered(
-                widget_ring_reader, widget_frame_grabber))
+            # DOCKED-AT-BOOT DEFER (operator 2026-07-13, LIVE: a docked launch
+            # HALTed here and never undocked). The mouse widget is a FLIGHT-HUD
+            # element; a DOCKED ship has no flight HUD, so verify_widget_rendered
+            # ALWAYS misses and the 'required' HALT below would block the
+            # undock+resume path (dock_resume) from ever starting. DEFER the
+            # probe: keep the fine pass ENABLED so dock_resume's own in-flight
+            # `orient_widget_ring` (required=true) verifies the widget for real
+            # AFTER undock -- identical safety, checked when it can actually
+            # render. A `missing` reader is NOT a docked artifact, so it still
+            # falls through to the HALT/degrade block regardless of docked.
+            _boot_status = None
+            if status_reader is not None:
+                _boot_status = status_reader.poll()
+                if _boot_status is None:
+                    _boot_status = status_reader.current
+            defer_docked = (bool(getattr(_boot_status, "docked", False))
+                            and not missing)
+            undetected = (not missing and not defer_docked
+                          and not verify_widget_rendered(
+                              widget_ring_reader, widget_frame_grabber))
             if missing or undetected:
                 why = ("vision unavailable (install the [vision] extra)"
                        if missing else
