@@ -377,6 +377,41 @@ def run_arrival_then_branch(runner: Any) -> Optional[str]:
 # Boot classifier (surface #1)
 # ---------------------------------------------------------------------------
 
+def _docked_boot_resume(runner: Any) -> Optional[str]:
+    """Docked at boot/re-dispatch WITH a route plotted = pit-stop, not terminus:
+    undock + resume via the built, live-validated dock_resume flow. Returns
+    "dock_resume" when it dispatched, else None (stay docked/idle).
+
+    The DOCKED scene is otherwise a NOOP ("nothing to escape"), written when a
+    dock was only ever a route TERMINUS. But a route sitting in NavRoute.json
+    while docked is unambiguous intent to travel on -- the operator plotted
+    somewhere and expects the bot to leave the pad (2026-07-13 LIVE: bot booted
+    docked with a route and just idled; "it should realize i'm docked and undock
+    me"). The live pit-stop path (_route_nav_route -> dock_resume) only fires on
+    a NEW NavRoute EVENT during the run; a route plotted BEFORE boot is a backlog
+    event that updates state but never dispatches, so nothing undocked a
+    boot-docked ship. This wires the SAME dock_resume procedure to that gap.
+
+    Gate: the route has an onward hop (len >= 2 -- route[0] is the current system
+    by NavRoute invariant, route[1] is the first real destination). An empty or
+    origin-only route is a genuine terminus -> None (stay docked). Fails closed:
+    dock_resume not loaded -> None (never a bare/blank dispatch). dock_resume's
+    own steps (station_services -> auto_launch -> mass-lock wait -> target-next ->
+    orient -> jump) are re-entry-safe: auto_launch short-circuits on an
+    already-undocked ship."""
+    route = _route_of(runner)
+    if not route or len(route) < 2:
+        return None                          # no onward hop -> real terminus, stay docked
+    if "dock_resume" not in getattr(runner, "procedures", {}):
+        return None                          # proc not loaded -> can't resume; stay put
+    if runner.record is not None:
+        runner.record("DockBootResume",
+                      {"station": getattr(runner, "_docked_station", None),
+                       "route_len": len(route)})
+    runner._run("dock_resume")
+    return "dock_resume"
+
+
 def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
     """Legacy cold-start classifier — verbatim body of the original
     classify_startup, minus the hoisted prologue (_startup_done guard, st read,
@@ -390,7 +425,10 @@ def _classify_startup_legacy(runner: Any, st: Any) -> Optional[str]:
     and survives ONLY here — it is removed from the primary C-series path (AC8).
     """
     if getattr(st, "docked", False):
-        return None  # docked on load -> nothing to escape
+        resumed = _docked_boot_resume(runner)   # route plotted while docked -> undock+resume
+        if resumed is not None:
+            return resumed
+        return None  # docked on load, no onward route -> true terminus, nothing to escape
     if getattr(st, "in_supercruise", False):
         # Restart into a COMPLETED scene (route-complete terminal-idle
         # guard, council-ratified): a bot launched while parked at the
@@ -559,6 +597,12 @@ def classify_startup(runner: Any) -> Optional[str]:
         if kind == "fallback":
             return _classify_startup_legacy(runner, st)
         if kind == "idle":
+            if tmpl.state is CSeriesState.DOCKED:
+                # Docked-at-boot WITH a route plotted = pit-stop, not terminus:
+                # undock + resume (the boot gap the live pit-stop route missed).
+                resumed = _docked_boot_resume(runner)
+                if resumed is not None:
+                    return resumed
             _idle_side_effect(runner, tmpl.state, payload)
             return None
         # kind == "run" — per-state primary-path guards

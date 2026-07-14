@@ -35,6 +35,8 @@ def _procs():
         "sc_resume": Procedure(name="sc_resume", steps=(Step("target_ahead"),)),
         "smack_recovery": Procedure(
             name="smack_recovery", steps=(Step("set_throttle", {"pct": 50}),)),
+        "dock_resume": Procedure(
+            name="dock_resume", steps=(Step("set_throttle", {"pct": 100}),)),
     }
 
 
@@ -68,11 +70,64 @@ def test_realspace_cooldown_dispatches_smack_recovery():
     assert sender.actions() == ["SetSpeed50"]
 
 
-def test_docked_is_a_noop():
+def test_docked_no_route_is_a_noop():
+    """Docked with NO route = a genuine terminus -> stay docked, no undock."""
     sender = FakeSender()
     st = NS(docked=True, in_supercruise=False, fsd_charging=False,
            fsd_cooldown=False, fsd_mass_locked=False, overheating=False)
     r = _runner(sender, status=st)
+    assert redispatch_from_live_state(r) is None
+    assert sender.actions() == []
+
+
+def test_docked_with_route_undocks_and_resumes():
+    """Docked WITH a route plotted = pit-stop, not terminus. The DOCKED noop is
+    intercepted -> dock_resume undocks + resumes. This is the boot gap the live
+    NavRoute event route missed for a route plotted BEFORE launch (2026-07-13
+    LIVE: bot booted docked with a route and just idled)."""
+    sender = FakeSender()
+    records = []
+    st = NS(docked=True, in_supercruise=False, fsd_charging=False,
+           fsd_cooldown=False, fsd_mass_locked=False, overheating=False)
+    r = _runner(sender, status=st,
+                route=[NS(system_address=1, star_system="87 Mu Ceti"),
+                       NS(system_address=2, star_system="StKM 1-276")])
+    r.record = lambda n, p: records.append((n, p))
+    assert redispatch_from_live_state(r) == "dock_resume"
+    assert sender.actions() == ["SetSpeed100"]
+    assert any(n == "DockBootResume" for n, _ in records)
+
+
+def test_classify_startup_boot_docked_with_route_undocks():
+    """The BOOT path itself (C-series classify_startup front-end, not the
+    re-dispatch driver): a ship that boots DOCKED with a route plotted
+    intercepts the DOCKED idle noop and runs dock_resume. This is the exact
+    path `launch.ps1` hits while docked -- the one that silently idled."""
+    from ed_autojump.flow.boot_routes import classify_startup
+    sender = FakeSender()
+    records = []
+    st = NS(docked=True, in_supercruise=False, fsd_charging=False,
+           fsd_cooldown=False, fsd_mass_locked=False, overheating=False,
+           destination=None)
+    r = _runner(sender, status=st,
+                route=[NS(system_address=1, star_system="87 Mu Ceti"),
+                       NS(system_address=2, star_system="StKM 1-276")])
+    r._latest_status = st                    # classify_startup reads _latest_status
+    r.record = lambda n, p: records.append((n, p))
+    assert classify_startup(r) == "dock_resume"
+    assert sender.actions() == ["SetSpeed100"]
+    assert any(n == "DockBootResume" for n, _ in records)
+
+
+def test_docked_origin_only_route_stays_idle():
+    """A 'route' that is only the origin system (len < 2, no onward hop) is a
+    terminus, not a pit-stop -> stay docked. Guards against undocking on a
+    degenerate single-waypoint route."""
+    sender = FakeSender()
+    st = NS(docked=True, in_supercruise=False, fsd_charging=False,
+           fsd_cooldown=False, fsd_mass_locked=False, overheating=False)
+    r = _runner(sender, status=st,
+                route=[NS(system_address=1, star_system="87 Mu Ceti")])
     assert redispatch_from_live_state(r) is None
     assert sender.actions() == []
 
