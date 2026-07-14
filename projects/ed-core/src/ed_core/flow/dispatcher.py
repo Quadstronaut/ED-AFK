@@ -306,6 +306,17 @@ class FlowRunner:
         # beat late, never torn.
         self._running_proc: Optional[str] = None
         self._preempt: Optional[str] = None
+        # SINGLE-HOLDER GUARD (2026-07-14, live-proven honk bug): each procedure
+        # spawns a fresh honk track, and a discovery-scanner honk can OUTLIVE its
+        # procedure -- ~5s normally, but up to ~24-28s while the scanner cooldown
+        # clears (live-measured: PrimaryFire held continuously, scan just fires
+        # late). If the NEXT procedure spawns a second honk while the first still
+        # holds PrimaryFire, the first's key_up (on its own scan) releases the
+        # key the second is holding -> the second's charge resets ("starts/stops
+        # / never fires"). This set names the tracks currently live; the lock
+        # guards it across the main (spawn) thread and the daemon track threads.
+        self._track_lock = threading.Lock()
+        self._active_tracks: set[str] = set()
         # CONNECTION-ERROR latch (operator 2026-07-12). Set by the connection
         # watch daemon when it OCRs the CONNECTION ERROR modal; consumed on the
         # MAIN thread by run_live's _maybe_recover_connection (procedure
@@ -715,6 +726,18 @@ class FlowRunner:
                 track = self.procedures.get(track_name)
                 if track is None:
                     continue
+                # SINGLE-HOLDER GUARD: refuse to spawn a track whose name is
+                # already live (a slow cooldown-honk outliving its procedure).
+                # Claim the slot UNDER the lock so two rapid dispatches can't
+                # both pass the check; the track's own finally discards it.
+                with self._track_lock:
+                    if track_name in self._active_tracks:
+                        if self.record is not None:
+                            self.record("ParallelTrackSkipped",
+                                        {"track": track_name,
+                                         "reason": "already_holding"})
+                        continue
+                    self._active_tracks.add(track_name)
                 # FULLY DETACHED (#26, operator-ratified): the parent never
                 # joins a parallel track — the main scene hands off to its
                 # successor the instant it finishes, honk still charging or
@@ -723,10 +746,20 @@ class FlowRunner:
                 # parent's finally can't blind a still-holding honk mid-event
                 # (which would push the release to the 30s hold backstop).
                 # Threads are daemon: process exit reaps them.
-                track_ctx = self._make_context()
-                threading.Thread(
-                    target=self._run_track, args=(track, track_ctx), daemon=True
-                ).start()
+                try:
+                    track_ctx = self._make_context()
+                    threading.Thread(
+                        target=self._run_track,
+                        args=(track_name, track, track_ctx), daemon=True
+                    ).start()
+                except Exception:
+                    # Spawn failed AFTER the slot was claimed (e.g. thread
+                    # exhaustion): release it so the guard can't wedge honks off
+                    # for the rest of the run, then re-raise (the live loop
+                    # crash-parks on this exactly as before this diff).
+                    with self._track_lock:
+                        self._active_tracks.discard(track_name)
+                    raise
             result = run_procedure(proc, ctx)
             # THREE-WAY DISAMBIGUATION (workstream A, 2026-07-07 council) on a
             # required-step exhaustion (result.aborted). Order is LOAD-BEARING:
@@ -822,7 +855,8 @@ class FlowRunner:
                     if h is not None:
                         self._hub.unsubscribe(h)
 
-    def _run_track(self, track: Any, track_ctx: StepContext) -> None:
+    def _run_track(self, track_name: str, track: Any,
+                   track_ctx: StepContext) -> None:
         """Detached parallel-track runner (#26): run the track to completion on
         its own daemon thread, then release its tail subscription. The parent
         scene never waits on this — a leaked queue is prevented HERE, by the
@@ -830,6 +864,9 @@ class FlowRunner:
         try:
             run_procedure(track, track_ctx)
         finally:
+            # Release the single-holder slot so the NEXT procedure may honk.
+            with self._track_lock:
+                self._active_tracks.discard(track_name)
             if self._hub is not None:
                 h = getattr(track_ctx, "_tail_handle", None)
                 if h is not None:

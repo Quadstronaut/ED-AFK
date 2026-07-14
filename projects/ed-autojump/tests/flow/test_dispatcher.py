@@ -869,6 +869,58 @@ def test_parallel_track_runs_alongside_main():
     assert "ExplorationFSSDiscoveryScan" in sender.actions()   # honk fired, detached
 
 
+def test_single_holder_guard_skips_overlapping_honk():
+    """SINGLE-HOLDER GUARD (2026-07-14): a honk still HOLDING the key (its name
+    in _active_tracks) must NOT be re-spawned by the next procedure -- else the
+    finishing honk's key_up releases the key the new honk holds (live cooldown-
+    honk race). Simulate a live honk, dispatch again, assert no second honk."""
+    import time
+    sender = FakeSender()
+    procs = {
+        "arrival": Procedure(name="arrival", steps=(Step("target_next_route"),),
+                             parallel_tracks=("honk",)),
+        "honk": Procedure(name="honk", parallel=True,
+                          steps=(Step("press", {"bind": "ExplorationFSSDiscoveryScan", "hold_s": 0.01}),)),
+    }
+    r = _runner(procs, sender, clock=lambda: 0.0)
+    with r._track_lock:                       # a slow cooldown-honk still holds the key
+        r._active_tracks.add("honk")
+    _dispatch(r, _ev("FSDJump", body_type="Star"))
+    assert "TargetNextRouteSystem" in sender.actions()   # arrival's own steps still ran
+    time.sleep(0.2)                           # a wrongly-spawned honk would fire in this window
+    assert "ExplorationFSSDiscoveryScan" not in sender.actions()   # guard refused the 2nd honk
+
+
+def test_single_holder_guard_releases_after_honk_completes():
+    """The guard blocks only OVERLAP, never permanently: once a honk completes,
+    its finally discards the slot so the NEXT dispatch spawns a fresh honk."""
+    import time
+    sender = FakeSender()
+    procs = {
+        "arrival": Procedure(name="arrival", steps=(Step("target_next_route"),),
+                             parallel_tracks=("honk",)),
+        "honk": Procedure(name="honk", parallel=True,
+                          steps=(Step("press", {"bind": "ExplorationFSSDiscoveryScan", "hold_s": 0.01}),)),
+    }
+    r = _runner(procs, sender, clock=lambda: 0.0)
+    _dispatch(r, _ev("FSDJump", body_type="Star"))
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if "ExplorationFSSDiscoveryScan" in sender.actions():
+            break
+        time.sleep(0.01)
+    assert "ExplorationFSSDiscoveryScan" in sender.actions()   # first honk fired
+    deadline = time.monotonic() + 2.0                          # then its slot is released
+    while time.monotonic() < deadline:
+        with r._track_lock:
+            done = "honk" not in r._active_tracks
+        if done:
+            break
+        time.sleep(0.01)
+    with r._track_lock:
+        assert "honk" not in r._active_tracks   # released -> next procedure may honk
+
+
 # ---------------------------------------------------------------------------
 # Witchspace latch (operator rule: "we should NOT move during that screen").
 # Journal-confirmed: Hyperspace StartJump → FSDJump is ~18s; that is the
