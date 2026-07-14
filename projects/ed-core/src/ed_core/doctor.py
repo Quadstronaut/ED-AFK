@@ -150,10 +150,20 @@ def check_panic_hotkey() -> CheckResult:
     return _pass("panic_hotkey", f"{type(backend).__name__} ready")
 
 
-def run_all_checks(cfg: Config) -> list[CheckResult]:
-    """Execute every check; return the list (ordered)."""
+def run_all_checks(cfg: Config, binds_path: "Path | None" = None) -> list[CheckResult]:
+    """Execute every check; return the list (ordered).
+
+    `binds_path`: the bundled preset to validate. The caller supplies it because
+    the file lives in the ed_autojump package (ed_autojump/binds/ED-AFK.4.2.binds
+    -- the exact file the run loads for key dispatch), and ed_core (this lower
+    layer) must not import ed_autojump to find it. When None, fall back to an
+    ed_core-relative path for standalone/legacy callers; cmd_doctor passes the
+    real ed_autojump path so the check matches what actually flies. (The old
+    unconditional ed_core-relative path reported a FALSE 'missing' -- there is no
+    ed_core/binds/ dir -- even though the bot ran fine.)"""
     from . import __file__ as pkg_file
-    binds_path = Path(pkg_file).parent / "binds" / "ED-AFK.4.2.binds"
+    if binds_path is None:
+        binds_path = Path(pkg_file).parent / "binds" / "ED-AFK.4.2.binds"
     journal_dir = cfg.paths.journal_dir_expanded()
     sessions_dir = Path(os.environ.get(
         "ED_AFK_SESSIONS_DIR",

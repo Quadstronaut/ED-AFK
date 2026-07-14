@@ -1193,7 +1193,11 @@ def cmd_doctor(args) -> int:
     cfg = load_config(args.config if args.config.is_file() else None)
     print(f"ed-autojump {__version__}")
     print(f"  config:        {args.config}")
-    results = run_all_checks(cfg)
+    # Validate the SAME bundled preset the run loads for key dispatch (see the
+    # DirectInputSender setup below) -- it lives in THIS package's binds/ dir, not
+    # ed_core's. Passing it explicitly fixes the doctor's false "missing" report.
+    binds_path = Path(__file__).parent / "binds" / "ED-AFK.4.2.binds"
+    results = run_all_checks(cfg, binds_path=binds_path)
     print(format_results(results))
     rc = overall_status(results)
     print()
