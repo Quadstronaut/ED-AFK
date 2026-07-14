@@ -33,15 +33,31 @@
 #   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 #   observe reads the screen, presses nothing (never gates)
 #   wait    passive block on a journal edge — no input sent
-parallel_tracks = ["honk"]   # honk fires on this arrival like any other
 [on_required_fail]
 retry_from = "nav_supercruise_unexplored"
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  { action = "wait", s = 7 },
-  { action = "nav_supercruise_unexplored" },
+  # HONK, inlined (operator: the parallel honk track "never fired", and
+  # { action = "honk" } does NOT parse -- honk is a PROCEDURE, not a step
+  # action). These are honk.toml's two real steps, run BLOCKING here so the
+  # discovery scan reliably REVEALS the system's bodies before the tour reads
+  # the nav list (no honk -> nothing discovered -> nothing to explore). Fires
+  # ONCE per system: the loop_to back-edge below re-enters at
+  # nav_supercruise_unexplored, past these. ensure_analysis_mode stays required
+  # AND first -- PrimaryFire in the COMBAT HUD is live weapons.
+  { action = "ensure_analysis_mode", required = true },
+  { action = "hold_until_event", bind = "PrimaryFire", event = "FSSDiscoveryScan" },
+  { action = "target_ahead" },
+  # skip_to RESTORED (it was dropped in the prior edit -- the root cause of
+  # "won't turn toward anything / won't skip a star-only system"). This step's
+  # contract is required=false + skip_to: on False (SYSTEM terminator = no more
+  # unexplored bodies, star-only, unreadable, or CV-refused) it MUST vault to the
+  # jump tail. Without skip_to a False fell THROUGH to the body-tour steps with no
+  # target -> orient had nothing to steer to and the required orient_widget_ring
+  # then failed-retried instead of jumping on.
+  { action = "nav_supercruise_unexplored", skip_to = "target_next_route" },
   { action = "set_throttle", pct = 25 },
   { action = "orient_compass" },
   { action = "orient_widget_ring", required = true },
