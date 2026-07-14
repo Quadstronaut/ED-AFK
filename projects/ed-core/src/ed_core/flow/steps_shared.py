@@ -599,6 +599,23 @@ def step_orient_widget_ring(
     phantom_min_dist_px: float = 50.0,   # only a FAR ring can be a phantom lock
     phantom_move_eps_px: float = 20.0,   # < this L1 move across a press = "did not respond"
     phantom_stuck_iters: int = 4,        # consecutive far+unresponsive presses -> abort
+    # --- coarse->fine ACQUISITION bridge (council 2026-07-14, option a-1) ---
+    # A not-found widget beat used to press NOTHING and idle to timeout_s (an
+    # ~18s dead-wait). It now takes ONE compass read + correction per not-found
+    # beat (reusing align._measure/_correct -- NOT align_to_target, whose blind
+    # search-on-miss would violate the "no blind press when both are blind"
+    # contract), bounded by acquire_max_iters CONSECUTIVE not-found beats --
+    # never by the 18s clock. acquire_deadzone stays < the coarse stage's
+    # align_tol (config.py:290, 0.20) so acquisition tightens PAST a residual the
+    # coarse stage already blessed. Gentle gains (0.5/0.05/0.15) = "nudge, not
+    # swing": the council rejected align_to_target's 2.0/0.10/0.70 coarse gains
+    # as unsafe at this step's 0.45s settle (too high a press/settle duty cycle).
+    acquire_max_iters: int = 12,
+    acquire_deadzone: float = 0.05,
+    acquire_gain: float = 0.5,
+    acquire_min_press: float = 0.05,
+    acquire_max_press: float = 0.15,
+    acquire_samples: int = 1,
 ) -> bool:
     """FINE alignment stage: drive the target reticle ring onto the mouse widget.
 
@@ -616,6 +633,17 @@ def step_orient_widget_ring(
     Sign convention is the locked widget-ring contract (spec §2): delta_y>0
     (ring below) -> PitchDown, delta_x>0 (ring right) -> YawRight, NO
     inversion. NOT shared with align.py.
+
+    ACQUISITION bridge (council 2026-07-14, the coarse->fine dead-wait fix): a
+    not-found widget beat takes ONE compass read (ctx.compass_reader /
+    ctx.frame_grabber -- the SAME pair orient_compass uses) and, if found,
+    presses via align._correct on the COMPASS sign convention (offset_y>0 ->
+    PitchUp, offset_x>0 -> YawRight -- the OPPOSITE of this step's own widget
+    convention). It NEVER blind-searches: a compass miss / unwired compass
+    presses nothing that beat. Exhausting acquire_max_iters CONSECUTIVE not-found
+    beats returns the miss-policy value (WidgetRingAcquireExhausted) -- bounded
+    by iterations, not the 18s timeout_s, which now backstops only the
+    FOUND-but-never-converges case.
     """
     # Flag off -> no-op success (NOT a passthrough — compass is its own prior
     # step now, so passing through would double-run it).
@@ -633,6 +661,7 @@ def step_orient_widget_ring(
         return False  # a map/panel owns the screen — every read is garbage
 
     from ed_vision.widget_ring import median_of
+    from ed_core.executor.align import _correct, _measure  # acquisition reuse only
 
     # Supercruise-lost guard: losing SC mid-step is NOT a vision miss (see
     # test_supercruise_lost_fails_closed_even_in_degrade_mode). Arm only when
@@ -650,6 +679,7 @@ def step_orient_widget_ring(
     start = ctx.clock()
     stuck_run = 0            # consecutive FAR + unresponsive correction presses
     prev_delta = None        # last found ring position, to measure response to a press
+    acquire_iters = 0        # consecutive not-found beats since the last found beat
     while ctx.clock() - start < timeout_s:
         if ctx.should_abort():
             ctx.log("WidgetRingAborted", {"iters": iterations})
@@ -696,6 +726,51 @@ def step_orient_widget_ring(
             "raw": [[r_.found, round(r_.delta_x, 2), round(r_.delta_y, 2),
                      round(r_.ring_radius_px, 2)] for r_ in raw_reads],
         })
+
+        if not read.found:
+            # ACQUISITION beat (council 2026-07-14): a bounded, compass-directed
+            # continuation of the coarse tighten instead of the old idle-to-
+            # timeout beat. SEPARATE telemetry (WidgetRingAcquire) from the
+            # WidgetRingIter above, which stays the byte-for-byte pre-fix
+            # widget-domain record. Only a FOUND compass read presses; a compass
+            # miss / unwired compass presses nothing (no blind search).
+            acquire_iters += 1
+            comp_found = False
+            comp_ox = comp_oy = 0.0
+            acq_action = None
+            acq_hold = None
+            if ctx.compass_reader is not None and ctx.frame_grabber is not None:
+                comp_read = _measure(ctx.compass_reader, ctx.frame_grabber,
+                                     acquire_samples)
+                comp_found = comp_read.found
+                comp_ox, comp_oy = comp_read.offset_x, comp_read.offset_y
+                if comp_found:
+                    try:
+                        pressed = _correct(
+                            ctx.sender, comp_read, gain=acquire_gain,
+                            min_press=acquire_min_press,
+                            max_press=acquire_max_press, deadzone=acquire_deadzone)
+                    except KeyError as e:
+                        ctx.log("BindMissing", {"action": str(e),
+                                "step": "orient_widget_ring_acquire"})
+                        pressed = None
+                    if pressed is not None:
+                        acq_action, acq_hold = pressed
+            ctx.log("WidgetRingAcquire", {
+                "i": iterations - 1, "acquire_iters": acquire_iters,
+                "compass_found": comp_found,
+                "ox": round(comp_ox, 4), "oy": round(comp_oy, 4),
+                "action": acq_action, "hold": acq_hold,
+            })
+            if acquire_iters >= acquire_max_iters:
+                ctx.log("WidgetRingAcquireExhausted", {
+                    "iters": iterations, "acquire_iters": acquire_iters,
+                    "degraded": degrade,
+                })
+                return degrade
+        else:
+            acquire_iters = 0    # any found beat resets the acquisition budget
+
         # PHANTOM-LOCK GUARD (operator 2026-07-13, LIVE dense-Colonia): a real
         # target reticle MOVES when the correction press pitches/yaws the ship; a
         # FIXED cockpit HUD ring (locked when no real reticle is near the nose in a
