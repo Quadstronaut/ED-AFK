@@ -35,7 +35,7 @@ from .compass import CompassRead, _clamp_unit
 
 # Fixed confidence for this heuristic reader — intentionally modest so a
 # confident YOLO read (if available) beats it in a CompositeCompassReader.
-_CONFIDENCE = 0.6
+_CONFIDENCE = 0.7
 _MIN_AREA = 4  # ignore noise specks smaller than 4 pixels
 # Largest plausible dot, as a fraction of ring_radius². Live data (2026-06-06,
 # 4,481 real reads): front areas IQR 36-44 px, behind 10-25 px at ring r≈25

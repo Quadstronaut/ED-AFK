@@ -21,8 +21,9 @@
 #   tap     atomic keypress, no precondition, no wait
 #   gated   keypress with Status.json precondition (fails closed on bad flag)
 #   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
-parallel_tracks = ["honk"]   # honk fires every system, no matter what (step 2)
-
+# parallel_tracks = ["honk"]   # honk fires every system, no matter what (step 2)
+# commented out because this is a short scene, and the honk delays progress
+# when it can be done in parallel on the longer Traverse
 [on_required_fail]
 # A required nav_supercruise_star fail re-runs from the scoop: a retry must
 # re-settle the post-scoop pose the SC-assist grab relies on, not just re-press
@@ -58,6 +59,5 @@ steps = [
   # the star is correctly re-read as CLOSE. FAR -> skip_to "__end__" finishes
   # arrival with no landing step (a `wait` terminal is forbidden here), and the
   # orchestrator then branches to traversal (orient + jump direct).
-  # { action = "star_distance_gate", skip_to = "__end__", threshold_ls = 15.0 },
   { action = "nav_supercruise_star", required = true },
 ]
