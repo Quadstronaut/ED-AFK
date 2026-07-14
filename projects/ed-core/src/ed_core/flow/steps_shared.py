@@ -219,6 +219,12 @@ def step_hold_until_event(
     Returns True if the event fired before the safety cap, False otherwise.
     The key is ALWAYS released exactly once (try/finally), even on the
     safety-cap path, on operator abort, or if the waiter raises."""
+    # Cadence guard (council 2026-07-14 boundaries follow-up): a non-positive
+    # reassert_s would re-issue key_down every loop turn (spin-spray). Not
+    # reachable via the frozen TOMLs (they pass no kwarg; code default 1.0);
+    # this defends an explicit misconfig by falling back to the default.
+    if reassert_s <= 0:
+        reassert_s = 1.0
     try:
         ctx.sender.key_down(bind)
     except KeyError:
