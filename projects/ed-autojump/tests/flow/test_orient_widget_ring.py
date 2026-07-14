@@ -378,3 +378,178 @@ def test_phantom_guard_ignores_near_ring_fine_tuning():
     )
     step_orient_widget_ring(ctx, timeout_s=5.0, samples=1)
     assert not any(t == "WidgetRingPhantomStuck" for t, _ in logged)
+
+
+# ---------------------------------------------------------------------------
+# ACQUISITION bridge (council 2026-07-14): a not-found widget beat now takes a
+# bounded, compass-directed nudge instead of dead-waiting to timeout_s. Reuses
+# align._measure/_correct on the COMPASS sign convention.
+# ---------------------------------------------------------------------------
+
+class _FakeCompassReader:
+    """read() ignores the frame, returns queued CompassReads (last repeats).
+    Counts calls so AC7 can prove the found-path never consults the compass."""
+
+    def __init__(self, reads):
+        self._reads = list(reads)
+        self.calls = 0
+
+    def read(self, frame):
+        self.calls += 1
+        if not self._reads:
+            return CompassRead.not_found()
+        if len(self._reads) == 1:
+            return self._reads[0]
+        return self._reads.pop(0)
+
+
+def _cread(ox, oy, in_front=True, found=True):
+    if not found:
+        return CompassRead.not_found()
+    return CompassRead(found=True, offset_x=ox, offset_y=oy,
+                       in_front=in_front, confidence=1.0, front_fill=1.0)
+
+
+def _acq_ctx(sender, ring, comp, *, on_miss, clock, logged, status=None):
+    # comp=None -> compass unwired (frame_grabber also None), so acquisition
+    # cannot press (AC6). Otherwise wire the compass pair orient_compass uses.
+    # status_supplier is only passed when given: StepContext defaults it to
+    # `lambda: None` (a callable) and _ensure_cockpit_focus calls it directly,
+    # so an explicit None would crash — omit it to keep the SC guard unarmed.
+    kw = dict(
+        sender=sender, clock=clock, sleeper=lambda s: None,
+        widget_ring_enabled=True, widget_ring_reader=ring,
+        widget_frame_grabber=lambda: object(),
+        compass_reader=comp,
+        frame_grabber=(None if comp is None else (lambda: object())),
+        widget_ring_on_miss=on_miss,
+        record=lambda t, p: logged.append((t, p)),
+    )
+    if status is not None:
+        kw["status_supplier"] = status
+    return StepContext(**kw)
+
+
+# AC1 — widget never found + compass off-centre: the step ACTS and exits BOUNDED
+# via WidgetRingAcquireExhausted, never the 18s WidgetRingTimeout dead-wait.
+def test_ac1_acquires_and_exits_bounded_not_timeout():
+    logged = []
+    sender = FakeSender()
+    ring = _FakeRingReader([_read(0, 0, found=False)])   # widget never found
+    comp = _FakeCompassReader([_cread(0.0, 0.30)])       # dot ABOVE centre
+    ctx = _acq_ctx(sender, ring, comp, on_miss="degrade",
+                   clock=_Clock(step=1.0), logged=logged)
+    # timeout_s huge so ONLY the acquire cap can end it; it must still finish fast.
+    assert step_orient_widget_ring(ctx, timeout_s=999.0, samples=1,
+                                   acquire_max_iters=5) is True   # degrade miss
+    assert "PitchUpButton" in sender.actions()   # AC2: compass conv oy>0 -> pitch UP
+    assert any(t == "WidgetRingAcquireExhausted" for t, _ in logged)   # bounded
+    assert not any(t == "WidgetRingTimeout" for t, _ in logged)        # no dead-wait
+    acq = [p for t, p in logged if t == "WidgetRingAcquire"]
+    assert len(acq) == 5                          # exactly acquire_max_iters beats
+
+
+# AC2 — the acquisition press follows the COMPASS convention (offset_x>0 -> yaw
+# right), NOT the inverted widget convention.
+def test_ac2_acquisition_yaws_right_on_positive_offset_x():
+    logged = []
+    sender = FakeSender()
+    ring = _FakeRingReader([_read(0, 0, found=False)])
+    comp = _FakeCompassReader([_cread(0.30, 0.0)])       # dot RIGHT of centre
+    ctx = _acq_ctx(sender, ring, comp, on_miss="degrade",
+                   clock=_Clock(step=1.0), logged=logged)
+    step_orient_widget_ring(ctx, timeout_s=999.0, samples=1, acquire_max_iters=3)
+    assert "YawRightButton" in sender.actions()
+
+
+# AC3 — acquire (compass axis) for K not-found beats, then found-off-axis
+# fine-tune (widget axis), then aligned.
+def test_ac3_acquire_then_fine_tune_then_aligned():
+    logged = []
+    sender = FakeSender()
+    ring = _FakeRingReader([_read(0, 0, found=False), _read(0, 0, found=False),
+                            _read(80, 0), _read(0, 0)])
+    comp = _FakeCompassReader([_cread(0.0, 0.30)])       # acquire -> PitchUp
+    ctx = _acq_ctx(sender, ring, comp, on_miss="fail_closed",
+                   clock=_Clock(), logged=logged)
+    assert step_orient_widget_ring(ctx, samples=1) is True
+    acts = sender.actions()
+    assert "PitchUpButton" in acts               # acquisition phase (compass oy>0)
+    assert "YawRightButton" in acts              # fine-tune phase (widget dx>0)
+    assert any(t == "WidgetRingAcquire" for t, _ in logged)
+    assert any(t == "WidgetRingAligned" for t, _ in logged)
+
+
+# AC4 — both widget AND compass blind: ZERO presses (no blind search), bounded
+# miss per policy.
+def test_ac4_no_blind_press_when_both_blind():
+    logged = []
+    sender = FakeSender()
+    ring = _FakeRingReader([_read(0, 0, found=False)])
+    comp = _FakeCompassReader([CompassRead.not_found()])
+    ctx = _acq_ctx(sender, ring, comp, on_miss="fail_closed",
+                   clock=_Clock(step=1.0), logged=logged)
+    assert step_orient_widget_ring(ctx, timeout_s=999.0, samples=1,
+                                   acquire_max_iters=6) is False    # fail_closed
+    assert sender.actions() == []                # NO blind press
+    assert any(t == "WidgetRingAcquireExhausted" for t, _ in logged)
+    assert not any(t == "WidgetRingTimeout" for t, _ in logged)
+
+
+# AC5 — losing supercruise during acquisition fails CLOSED even under degrade.
+def test_ac5_sc_loss_during_acquire_fails_closed():
+    logged = []
+    sender = FakeSender()
+    ring = _FakeRingReader([_read(0, 0, found=False)])   # never found -> acquiring
+    comp = _FakeCompassReader([_cread(0.0, 0.30)])
+    ctx = _acq_ctx(sender, ring, comp, on_miss="degrade",
+                   clock=_Clock(), logged=logged, status=_FlipStatus(n_true=2))
+    assert step_orient_widget_ring(ctx, timeout_s=999, samples=1) is False
+    assert any(t == "WidgetRingAbort" and p.get("why") == "supercruise_lost"
+               for t, p in logged)
+
+
+# AC6 — widget not-found + compass UNWIRED: bounded miss, zero presses, no
+# dead-wait.
+def test_ac6_compass_unwired_bounded_miss():
+    logged = []
+    sender = FakeSender()
+    ring = _FakeRingReader([_read(0, 0, found=False)])
+    ctx = _acq_ctx(sender, ring, None, on_miss="degrade",   # comp None -> grabber None
+                   clock=_Clock(step=1.0), logged=logged)
+    assert step_orient_widget_ring(ctx, timeout_s=999.0, samples=1,
+                                   acquire_max_iters=7) is True
+    assert sender.actions() == []
+    assert not any(t == "WidgetRingTimeout" for t, _ in logged)
+    assert any(t == "WidgetRingAcquireExhausted" for t, _ in logged)
+
+
+# AC7 — the widget-found-from-start path is byte-for-byte unchanged and NEVER
+# consults the compass.
+def test_ac7_found_from_start_never_consults_compass():
+    logged = []
+    sender = FakeSender()
+    ring = _FakeRingReader([_read(80, 0), _read(0, 0)])
+    comp = _FakeCompassReader([_cread(0.0, 0.30)])
+    ctx = _acq_ctx(sender, ring, comp, on_miss="fail_closed",
+                   clock=_Clock(), logged=logged)
+    assert step_orient_widget_ring(ctx, samples=1) is True
+    assert comp.calls == 0                        # never needed the compass
+    assert sender.actions() == ["YawRightButton"] # identical to pre-fix
+    assert not any(t == "WidgetRingAcquire" for t, _ in logged)
+
+
+# AC9 — acquire_deadzone is strictly < orient_compass's coarse align_tol, so a
+# residual the coarse stage already blessed as "aligned" is still pressable.
+def test_ac9_gap_inside_coarse_deadzone_still_pressable():
+    from ed_core.config import VisionConfig
+    assert 0.05 < VisionConfig().align_tol       # acquire_deadzone < coarse gate
+    logged = []
+    sender = FakeSender()
+    ring = _FakeRingReader([_read(0, 0, found=False)])
+    comp = _FakeCompassReader([_cread(0.0, 0.10)])   # inside align_tol 0.20, outside 0.05
+    ctx = _acq_ctx(sender, ring, comp, on_miss="degrade",
+                   clock=_Clock(step=1.0), logged=logged)
+    step_orient_widget_ring(ctx, timeout_s=999.0, samples=1,
+                            acquire_max_iters=4, acquire_deadzone=0.05)
+    assert "PitchUpButton" in sender.actions()    # pressed despite tiny residual
