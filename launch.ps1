@@ -33,6 +33,7 @@ param(
     [switch]$NoRecord,              # start with Record OFF
     [switch]$NoVisitedLog,          # start with the visited-systems log OFF
     [switch]$Yes,                   # skip the menu entirely; go straight to Jump from the flags
+    [switch]$Explore,               # force the in-system body-tour ON for THIS run (non-sticky env override)
     [switch]$Force,                 # override the single-instance guard (start even if a run is already alive)
     [switch]$NoFocus,               # do NOT focus the Elite window before starting (debugging only)
     [switch]$PrintCmd,              # resolve settings, PRINT the cli command, and exit (no focus, no run)
@@ -137,6 +138,9 @@ THE SEED FLAGS  (just set the menu's starting values)
   -NoRecord          start with Record OFF.
   -NoVisitedLog      start with the visited-systems log OFF.
   -Yes               skip the menu + confirm; Jump straight from the flags.
+  -Explore           turn the in-system body-tour ON for THIS run only
+                     (non-sticky env override; the menu's Explore toggle is the
+                     persistent one). Pairs with -Yes for unattended explore runs.
   -NoFocus           do not grab the Elite window (debugging only).
 
 PASS-THROUGH (advanced; skips the menu + focus)
@@ -912,6 +916,19 @@ $s = @{
     DurationIndex = (Resolve-DurationIndex $DurationHours $Infinite.IsPresent)
 }
 $visionOn = Test-VisionEnabled $configPath
+
+# --- -Explore: force the in-system body-tour ON for THIS run ----------------
+# The flag form of the Explore menu toggle. Exploration is config, not a CLI arg
+# (cfg.exploration.body_tour_enabled), read via the env-override the bot honors.
+# We set it as a PROCESS env var (the run child inherits it), which WINS over
+# .env per config precedence -- so it is NON-STICKY: this run only, it does NOT
+# persist to future launches the way the menu toggle (which writes .env) does.
+# Set here, AFTER the passthrough short-circuit, so doctor/calibrate never get it
+# and BEFORE the menu, so the menu's Explore tag reflects it too.
+if ($Explore) {
+    $env:ED_AUTOJUMP_EXPLORATION_BODY_TOUR_ENABLED = '1'
+    Write-Host "[launch] -Explore: in-system body-tour ON for this run (env override; not persisted)."
+}
 
 # --- -PrintCmd: resolve + print the cli command, then exit (no focus/run) ---
 
