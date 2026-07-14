@@ -21,7 +21,6 @@
 #   wait    passive block on journal event or Status flag — no input sent
 #   macro   multi-key UI-state sequence — EXCLUSIVE, owns input
 #   vision  closed-loop CV read/confirm — may be EXCLUSIVE (see step tags)
-parallel_tracks = ["honk"]   # honk fires on the arrival jump like any other
 
 [on_required_fail]
 # A required fail from dock_close_to_range or dock_request re-runs the
@@ -41,7 +40,11 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
+  { action = "set_throttle", pct = 75 },
+  { action = "orient_compass" },
+  { action = "orient_widget_ring", required = false },
   { action = "nav_supercruise_target", required = true },
+  { action = "confirm_sc_assist_active" },
   { action = "dock_await_exit", required = true },
   { action = "set_throttle", pct = 100 },
   { action = "dock_close_to_range", required = true },

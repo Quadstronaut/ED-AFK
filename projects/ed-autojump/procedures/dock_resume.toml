@@ -32,11 +32,12 @@ max_retries = 3
 backoff_s = 2.0
 
 steps = [
+  { action = "station_services_macro" },
   { action = "auto_launch", required = true },
-  { action = "set_throttle", pct = 100 },
+  { action = "set_throttle", pct = 0 },
   { action = "wait_masslock_clear", required = true },
-  { action = "target_next_route", required = true },
   { action = "set_throttle", pct = 75 },
+  { action = "target_next_route", required = true },
   { action = "orient_compass", required = true },
   { action = "orient_widget_ring", required = true },
   { action = "set_throttle", pct = 100 },

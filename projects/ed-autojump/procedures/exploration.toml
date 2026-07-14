@@ -33,10 +33,15 @@
 #   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 #   observe reads the screen, presses nothing (never gates)
 #   wait    passive block on a journal edge — no input sent
+parallel_tracks = ["honk"]   # honk fires on this arrival like any other
+[on_required_fail]
+retry_from = "nav_supercruise_unexplored"
+max_retries = 3
+backoff_s = 2.0
 
 steps = [
   { action = "wait", s = 7 },
-  { action = "nav_supercruise_unexplored", skip_to = "target_next_route" },
+  { action = "nav_supercruise_unexplored" },
   { action = "set_throttle", pct = 25 },
   { action = "orient_compass" },
   { action = "orient_widget_ring", required = true },
@@ -44,10 +49,14 @@ steps = [
   { action = "wait_sc_assist_orbiting" },
   { action = "confirm_orbiting" },
   { action = "wait_body_scanned" },
+  { action = "target_ahead" },
+  { action = "set_throttle", pct = 100 },
+  { action = "wait", s = 4.20 },
   { action = "set_throttle", pct = 0, loop_to = "nav_supercruise_unexplored", loop_max = 128 },
   { action = "target_next_route" },
-  { action = "set_throttle", pct = 75 },
+  { action = "set_throttle", pct = 100 },
   { action = "wait", s = 4.20 },
+  { action = "set_throttle", pct = 75 },
   { action = "orient_compass", required = true },
   { action = "orient_widget_ring", required = true },
   { action = "set_throttle", pct = 100 },

@@ -11,19 +11,19 @@
   "$COMMS_entered;": {
     "category": "other",
     "channel": "npc",
-    "count": 3090,
+    "count": 3469,
     "first_seen": "2025-08-24T00:29:30Z",
     "from_example": "",
-    "last_seen": "2026-07-12T21:44:30Z",
+    "last_seen": "2026-07-14T02:35:16Z",
     "message_localised": "Entered Channel: Wregoe IE-G d11-10"
   },
   "$Commuter_AuthorityScan01;": {
     "category": "other",
     "channel": "npc",
-    "count": 6,
+    "count": 7,
     "first_seen": "2025-12-22T05:33:05Z",
     "from_example": "Peter sanders",
-    "last_seen": "2026-06-22T05:19:07Z",
+    "last_seen": "2026-07-14T00:44:27Z",
     "message_localised": "Is there a problem here, officer?"
   },
   "$Commuter_AuthorityScan02;": {
@@ -62,13 +62,22 @@
     "last_seen": "2026-06-21T10:09:17Z",
     "message_localised": "On what grounds are you scanning this vessel, officer?"
   },
+  "$Commuter_AuthorityScan07;": {
+    "category": "other",
+    "channel": "npc",
+    "count": 1,
+    "first_seen": "2026-07-13T10:50:40Z",
+    "from_example": "Wayne Nicoll",
+    "last_seen": "2026-07-13T10:50:40Z",
+    "message_localised": "There's no need to scan me, officer. I have nothing to find."
+  },
   "$Commuter_AuthorityScan08;": {
     "category": "other",
     "channel": "npc",
-    "count": 3,
+    "count": 4,
     "first_seen": "2026-06-09T23:23:51Z",
     "from_example": "Alana Clarke",
-    "last_seen": "2026-06-17T08:26:14Z",
+    "last_seen": "2026-07-14T00:36:17Z",
     "message_localised": "You've got no right to scan me, officer!"
   },
   "$ConvoyWedding_Patrol06;": {
@@ -92,55 +101,55 @@
   "$CruiseLiner_SCPatrol01;": {
     "category": "other",
     "channel": "npc",
-    "count": 73,
+    "count": 74,
     "first_seen": "2026-05-25T09:49:31Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-07-07T01:08:51Z",
+    "last_seen": "2026-07-14T01:41:54Z",
     "message_localised": "And don't forget, this Liner is in the top 1% of all Liners out there."
   },
   "$CruiseLiner_SCPatrol02;": {
     "category": "other",
     "channel": "npc",
-    "count": 67,
+    "count": 68,
     "first_seen": "2026-05-25T09:46:41Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-07-06T23:30:34Z",
+    "last_seen": "2026-07-14T01:43:24Z",
     "message_localised": "We will be cruising in-system for a while, please feel free to take advantage of our in-flight entertainment."
   },
   "$CruiseLiner_SCPatrol03;": {
     "category": "other",
     "channel": "npc",
-    "count": 107,
+    "count": 111,
     "first_seen": "2026-05-25T03:44:04Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-07-06T01:05:00Z",
+    "last_seen": "2026-07-14T02:00:18Z",
     "message_localised": "Today's cruise includes some delightful views, our flight attendants are on hand with full details."
   },
   "$CruiseLiner_SCPatrol04;": {
     "category": "other",
     "channel": "npc",
-    "count": 66,
+    "count": 67,
     "first_seen": "2026-05-25T09:42:02Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-07-07T00:58:00Z",
+    "last_seen": "2026-07-14T01:40:52Z",
     "message_localised": "I'd like to direct your attention to our flight attendants for a brief safety demonstration."
   },
   "$CruiseLiner_SCPatrol05;": {
     "category": "other",
     "channel": "npc",
-    "count": 68,
+    "count": 69,
     "first_seen": "2026-05-25T09:42:32Z",
     "from_example": "Cruise Ship",
-    "last_seen": "2026-06-15T02:55:59Z",
+    "last_seen": "2026-07-14T01:40:04Z",
     "message_localised": "This is your captain. Due to some unforeseen delays, we will be arriving at our next destination later than scheduled."
   },
   "$DockingChatter_Allied;": {
     "category": "station",
     "channel": "npc",
-    "count": 11,
+    "count": 13,
     "first_seen": "2026-01-10T04:10:34Z",
     "from_example": "Jameson Memorial",
-    "last_seen": "2026-06-21T10:39:56Z",
+    "last_seen": "2026-07-13T10:48:55Z",
     "message_localised": "An ally like you is always welcome here."
   },
   "$DockingChatter_Cordial;": {
@@ -155,10 +164,10 @@
   "$DockingChatter_Neutral;": {
     "category": "station",
     "channel": "npc",
-    "count": 40,
+    "count": 42,
     "first_seen": "2025-09-18T14:19:12Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-15T07:23:46Z",
+    "last_seen": "2026-07-14T01:30:01Z",
     "message_localised": "Ensure to observe starport protocol during your visit, pilot."
   },
   "$DockingFailed_Distance;": {
@@ -290,10 +299,10 @@
   "$Police_ThankYouPassedStopAndSearch03;": {
     "category": "authority",
     "channel": "npc",
-    "count": 6,
+    "count": 7,
     "first_seen": "2026-05-05T05:43:36Z",
     "from_example": "System Authority Vessel",
-    "last_seen": "2026-06-07T23:49:45Z",
+    "last_seen": "2026-07-14T00:54:35Z",
     "message_localised": "All clear. Carry on, pilot."
   },
   "$Police_ThankYouPassedStopAndSearch04;": {
@@ -317,10 +326,10 @@
   "$Police_ThankYouPassedStopAndSearch06;": {
     "category": "authority",
     "channel": "npc",
-    "count": 4,
+    "count": 5,
     "first_seen": "2026-06-01T05:33:00Z",
     "from_example": "System Authority Vessel",
-    "last_seen": "2026-06-09T21:55:53Z",
+    "last_seen": "2026-07-14T01:18:00Z",
     "message_localised": "We're done here pilot, move along."
   },
   "$Police_ThankYouPassedStopAndSearch08;": {
@@ -335,10 +344,10 @@
   "$Police_ThankYouPassedStopAndSearch09;": {
     "category": "authority",
     "channel": "npc",
-    "count": 3,
+    "count": 4,
     "first_seen": "2026-01-10T04:11:00Z",
     "from_example": "System Authority Vessel",
-    "last_seen": "2026-06-17T06:37:22Z",
+    "last_seen": "2026-07-14T01:29:42Z",
     "message_localised": "Move along, Commander, we're done here."
   },
   "$Police_ThankYouPassedStopAndSearch10;": {
@@ -416,10 +425,10 @@
   "$STATION_NoFireZone_entered;": {
     "category": "station",
     "channel": "npc",
-    "count": 53,
+    "count": 56,
     "first_seen": "2025-09-18T14:19:11Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-22T05:39:24Z",
+    "last_seen": "2026-07-14T01:17:21Z",
     "message_localised": "No fire zone entered."
   },
   "$STATION_NoFireZone_entered_deployed;": {
@@ -434,19 +443,19 @@
   "$STATION_NoFireZone_exited;": {
     "category": "station",
     "channel": "npc",
-    "count": 49,
+    "count": 52,
     "first_seen": "2025-09-18T14:17:12Z",
     "from_example": "THE WALKING CANE | OWCH",
-    "last_seen": "2026-06-22T05:39:27Z",
+    "last_seen": "2026-07-14T01:35:57Z",
     "message_localised": "No fire zone exited."
   },
   "$STATION_docking_granted;": {
     "category": "station",
     "channel": "npc",
-    "count": 53,
+    "count": 57,
     "first_seen": "2025-09-18T14:19:12Z",
     "from_example": "cane-tankerous K3Z-G7Z",
-    "last_seen": "2026-06-21T10:39:56Z",
+    "last_seen": "2026-07-14T01:30:01Z",
     "message_localised": "Docking request granted."
   },
   "$Smuggler_NearDeath04;": {
@@ -470,10 +479,10 @@
   "$Trader_OnEnemyShipDetection03;": {
     "category": "other",
     "channel": "npc",
-    "count": 2,
+    "count": 4,
     "first_seen": "2026-01-10T04:24:53Z",
     "from_example": "Ellie Rose",
-    "last_seen": "2026-01-10T04:24:53Z",
+    "last_seen": "2026-07-14T00:52:03Z",
     "message_localised": "Oh no you don't!"
   },
   "$Trader_OnEnemyShipDetection05;": {

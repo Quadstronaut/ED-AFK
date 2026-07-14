@@ -30,22 +30,23 @@
 #   B3 should `wait 5s` (idx 0) gate on an SC-assist/orbit-acquired signal
 #      (esp. the Smack->Traversal path)? Operator literal kept verbatim.
 #   B4 Exploration->Traversal entry throttle/SC state (C2/C6-owned).
-
+parallel_tracks = ["honk"]   # honk fires on this arrival like any other
 [on_required_fail]
 retry_from = "target_next_route"
 max_retries = 3
 backoff_s = 2.0
 
 steps = [
-  { action = "wait", s = 3.33 },
+  { action = "wait", s = 4.20 },
   { action = "wait_sc_assist_orbiting" },
   { action = "confirm_orbiting" },
   { action = "wait", s = 13.0 },
   { action = "target_next_route", required = true },
   { action = "set_throttle", pct = 100 },
-  { action = "wait", s = 3.33 },
+  { action = "wait", s = 4.20 },
   { action = "set_throttle", pct = 75 },
   { action = "orient_compass", required = true },
+  { action = "wait", s = 1.0 },
   { action = "orient_widget_ring", required = true },
   { action = "set_throttle", pct = 100 },
   { action = "engage_jump_clearance", required = true },
