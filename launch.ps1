@@ -2,16 +2,12 @@
 .SYNOPSIS
     Game-like launcher for ED-AFK -- the menu front-end to the ed-autojump CLI.
 
-    A main menu (Jump / Scenes / Explore / Combat / Trade / Settings / Quit)
-    declares your INTENT on entry:
+    A main menu (Jump / Scenes / Settings / Quit) declares your INTENT on entry:
       Jump     runs the full ed-autojump loop -- the steady-state A->B jump
                loop plus its real-time recovery paths (new-system arrival,
                star-smack, connection-error). This is the live-validated core.
       Scenes   one-shot: drive EXACTLY ONE named procedure (arrival,
                smack_recovery, dock, ...) with the full live wiring, then exit.
-      Explore  a persistent ON/off TOGGLE of the in-system body-tour
-               exploration program (persisted to .env), NOT a launcher.
-      Combat / Trade are Soon(TM) placeholders (empty Phase-1 scaffolds).
 
     Picking Jump (or a Scene) focuses the Elite window, counts down, and starts
     the bot so its keypresses land in the game instead of wherever your mouse
@@ -33,7 +29,6 @@ param(
     [switch]$NoRecord,              # start with Record OFF
     [switch]$NoVisitedLog,          # start with the visited-systems log OFF
     [switch]$Yes,                   # skip the menu entirely; go straight to Jump from the flags
-    [switch]$Explore,               # force the in-system body-tour ON for THIS run (non-sticky env override)
     [switch]$Force,                 # override the single-instance guard (start even if a run is already alive)
     [switch]$NoFocus,               # do NOT focus the Elite window before starting (debugging only)
     [switch]$PrintCmd,              # resolve settings, PRINT the cli command, and exit (no focus, no run)
@@ -41,13 +36,6 @@ param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Extra
 )
-
-# TODO (next pass -- Operator 2026-06-13): wire the FEATURES section in Settings.
-#   Ship features (scoop-refuel...) and Script features (dock-servicing, smack-
-#   recovery, interdiction, body-tour...) get checkbox toggles grouped by kind.
-#   Several map to config.local.toml rather than CLI flags -- map each honestly
-#   before exposing it. Shown today as a dim "Soon(TM)" placeholder so the
-#   structure is visible without faking a toggle that connects to nothing.
 
 $ErrorActionPreference = "Stop"
 $env:PYTHONUTF8 = "1"
@@ -83,13 +71,10 @@ THE MENU
   E D - A F K
     Jump        runs the full jump loop (arrival / traversal / recovery)
     Scenes      one-shot: run ONE named procedure with full wiring, then exit
-    Explore     [ON]/[off] toggle of the in-system body-tour program (.env)
-    Combat      Soon(TM)   (empty scaffold)
-    Trade       Soon(TM)   (empty scaffold)
     Settings    knobs (see below)
     Quit
 
-  Arrow keys move; Enter selects (on Explore, Enter flips the toggle); Q quits.
+  Arrow keys move; Enter selects; Q quits.
   Picking Jump or a Scene focuses Elite, counts down 5..1, and starts the bot.
   KEEP ELITE IN FRONT after that -- if you click away, the next keypress
   misses. Ctrl+C in this terminal stops a run.
@@ -99,7 +84,7 @@ SCENES  (one-shot -- drive a single procedure, full live wiring, then exit)
   that one procedure. Handy for testing a recovery path on command. The
   procedures live as editable TOML under projects\ed-autojump\procedures\:
     startup  sc_resume  arrival  traversal  smack_recovery
-    exploration  dock  dock_resume  route_complete_park  honk
+    dock  dock_resume  route_complete_park  honk
 
 SETTINGS  (RUN + VISION groups -- all live today)
   RUN
@@ -138,9 +123,6 @@ THE SEED FLAGS  (just set the menu's starting values)
   -NoRecord          start with Record OFF.
   -NoVisitedLog      start with the visited-systems log OFF.
   -Yes               skip the menu + confirm; Jump straight from the flags.
-  -Explore           turn the in-system body-tour ON for THIS run only
-                     (non-sticky env override; the menu's Explore toggle is the
-                     persistent one). Pairs with -Yes for unattended explore runs.
   -NoFocus           do not grab the Elite window (debugging only).
 
 PASS-THROUGH (advanced; skips the menu + focus)
@@ -386,38 +368,28 @@ $script:DurationPresets = @(
     @{ Label = 'Infinite'; Seconds = 31536000 }
 )
 
-# Main-menu rows. Live=$false rows are navigable + show their tag but Enter is a
-# no-op (Soon(TM)). Only Jump runs the bot today.
+# Main-menu rows. Every row is Live: the menu lists only what actually runs.
+# Explore / Combat / Trade were removed 2026-07-28 -- Combat and Trade were
+# never more than empty scaffolds, and the body-tour behind Explore fails live
+# (bodies time out with no AutoScan), so none of the three earned a menu slot.
 $script:MainItems = @(
     @{ Key = 'jump';     Label = 'Jump';     Tag = 'ready';    Live = $true },
     # Scenes (OPERATOR 2026-07-07): drive ONE named procedure with the full
     # live wiring, then exit -- the cli --scene RC mode, now menu-reachable.
     @{ Key = 'scenes';   Label = 'Scenes';   Tag = 'one-shot'; Live = $true },
-    # Explore (OPERATOR 2026-07-07: "enable/disable the exploration program"):
-    # a persistent TOGGLE of the body-tour flag, NOT a launcher. Enter flips
-    # ED_AUTOJUMP_EXPLORATION_BODY_TOUR_ENABLED in .env (config env-override
-    # -> cfg.exploration.body_tour_enabled -> runner._body_tour_enabled ->
-    # the arrival branch runs the exploration scene on every onward hop).
-    # Tag is rendered LIVE from the effective value in Build-MainLines.
-    @{ Key = 'explore';  Label = 'Explore';  Tag = '';         Live = $true },
-    @{ Key = 'combat';   Label = 'Combat';   Tag = ("Soon" + [char]0x2122); Live = $false },
-    @{ Key = 'trade';    Label = 'Trade';    Tag = ("Soon" + [char]0x2122); Live = $false },
     @{ Key = 'settings'; Label = 'Settings'; Tag = '';         Live = $true },
     @{ Key = 'quit';     Label = 'Quit';     Tag = '';         Live = $true }
 )
-
-$script:ExploreEnvKey = 'ED_AUTOJUMP_EXPLORATION_BODY_TOUR_ENABLED'
 
 # Scene picker rows (Scenes menu). Order = frequency of live use. Names must
 # match the procedure TOMLs in projects\ed-autojump\procedures\.
 $script:SceneNames = @(
     'startup', 'sc_resume', 'arrival', 'traversal', 'smack_recovery',
-    'exploration', 'dock', 'dock_resume', 'route_complete_park', 'honk'
+    'dock', 'dock_resume', 'route_complete_park', 'honk'
 )
 
 # Settings rows. Only toggle/envtoggle/cycle/action/back are navigable;
-# header/blank/soon are decoration. RUN + VISION groups are wired today;
-# FEATURES is still a placeholder.
+# header/blank are decoration. Every group here is wired to something real.
 #   toggle    -> RUN flags; flow into Get-CliArgs (CLI args).
 #   envtoggle -> persistent config opt-in written to $ProjectRoot\.env via
 #                Set-DotEnvKey. NEVER touches Get-CliArgs. EnvKey names the var.
@@ -431,9 +403,6 @@ $script:SettingsRows = @(
     @{ Kind = 'blank' },
     @{ Kind = 'header'; Label = 'VISION' },
     @{ Kind = 'envtoggle'; EnvKey = 'ED_AUTOJUMP_OVERLAY_CV_DEBUG'; Label = 'CV debug overlay (boxes + labels where the CV looks)' },
-    @{ Kind = 'blank' },
-    @{ Kind = 'header'; Label = 'FEATURES' },
-    @{ Kind = 'soon';   Label = 'Ship / Script toggles' },
     @{ Kind = 'blank' },
     @{ Kind = 'back';   Label = 'Back to menu' }
 )
@@ -660,10 +629,6 @@ function Build-MainLines([int]$sel) {
         $isSel = ($i -eq $sel)
         $marker = if ($isSel) { '> ' } else { '  ' }
         $tag = $it.Tag
-        if ($it.Key -eq 'explore') {
-            # LIVE toggle state (real env var > .env > off), same rule as VISION.
-            $tag = if (Get-CvDebugEnv $ProjectRoot $script:ExploreEnvKey) { '[ON]' } else { '[off]' }
-        }
         $text = "    {0}{1}{2}" -f $marker, $it.Label.PadRight(12), $tag
         & $add $text $isSel (-not $it.Live)
     }
@@ -728,7 +693,7 @@ function Invoke-SceneMenu {
 }
 
 function Invoke-MainMenu {
-    # Returns 'jump' | 'scenes' | 'settings' | 'quit'. Soon(TM) rows are navigable no-ops.
+    # Returns 'jump' | 'scenes' | 'settings' | 'quit'. Every row is live.
     if (-not (Test-Interactive)) {
         Write-Host "`n=== ED-AFK ===   1) Jump   2) Scenes   3) Settings   4) Quit"
         $a = Read-Host "choose"
@@ -753,15 +718,8 @@ function Invoke-MainMenu {
                 $it = $script:MainItems[$sel]
                 if ($it.Key -eq 'jump')     { return 'jump' }
                 if ($it.Key -eq 'scenes')   { return 'scenes' }
-                if ($it.Key -eq 'explore') {
-                    # Toggle the exploration program (persist to .env), keep drawing.
-                    $cur = Get-CvDebugEnv $ProjectRoot $script:ExploreEnvKey
-                    Set-DotEnvKey (Join-Path $ProjectRoot '.env') $script:ExploreEnvKey $(if ($cur) { '0' } else { '1' })
-                    continue
-                }
                 if ($it.Key -eq 'settings') { return 'settings' }
                 if ($it.Key -eq 'quit')     { return 'quit' }
-                # Soon(TM): no-op, fall through and keep drawing.
             }
         }
     }
@@ -801,7 +759,6 @@ function Build-SettingsLines([int]$sel, [hashtable]$s, [bool]$vis, $nav) {
                 $st = if ($vis) { 'ON (compass)' } else { 'OFF - blind' }
                 & $add ("    {0}  : {1}" -f $r.Label, $st) $sl $false
             }
-            'soon' { & $add ("    {0}    Soon{1} (next pass)" -f $r.Label, [char]0x2122) $false $true }
             'back' { & $add ("    {0}" -f $r.Label) $sl $false }
         }
     }
@@ -917,19 +874,6 @@ $s = @{
 }
 $visionOn = Test-VisionEnabled $configPath
 
-# --- -Explore: force the in-system body-tour ON for THIS run ----------------
-# The flag form of the Explore menu toggle. Exploration is config, not a CLI arg
-# (cfg.exploration.body_tour_enabled), read via the env-override the bot honors.
-# We set it as a PROCESS env var (the run child inherits it), which WINS over
-# .env per config precedence -- so it is NON-STICKY: this run only, it does NOT
-# persist to future launches the way the menu toggle (which writes .env) does.
-# Set here, AFTER the passthrough short-circuit, so doctor/calibrate never get it
-# and BEFORE the menu, so the menu's Explore tag reflects it too.
-if ($Explore) {
-    $env:ED_AUTOJUMP_EXPLORATION_BODY_TOUR_ENABLED = '1'
-    Write-Host "[launch] -Explore: in-system body-tour ON for this run (env override; not persisted)."
-}
-
 # --- -PrintCmd: resolve + print the cli command, then exit (no focus/run) ---
 
 if ($PrintCmd) {
@@ -958,7 +902,7 @@ if ($Yes) {
             }
             'settings' { Invoke-SettingsMenu $s $visionOn; $visionOn = Test-VisionEnabled $configPath }
             'quit'     { Write-Host "`n[launch] quit."; exit 0 }
-            default    { }   # Soon(TM) no-op
+            default    { }   # unreachable today -- keeps the switch total
         }
     }
 }
