@@ -44,7 +44,7 @@
 |---|---|
 | **Platform** | Windows (PC *Elite Dangerous: Odyssey*) |
 | **Language** | Python 3.11+ |
-| **Status** | Alpha — working experiment, not a finished product |
+| **Status** | Alpha — the **jump loop works well**; exploration, combat and trading do **not** ([details](#what-actually-works)) |
 | **Latest release** | [**v0.2.0 — Jump Release**](https://github.com/Quadstronaut/ED-AFK/releases/tag/v0.2.0) · A→B jump + refuel + honk, tested ~24h live on Twitch (900+ jumps) |
 | **License (root)** | MIT |
 | **License (ed-autojump)** | AGPL-3.0-or-later |
@@ -88,14 +88,28 @@ re-enters the game in Solo, then re-plots the route). The discovery-scanner
 honk, an FSD-malfunction wait-and-refire, an obstruction get-around, and a
 never-strand re-dispatch all live in the same loop.
 
-Maturity, honestly: this is **alpha** software, but the core is no longer
-paper-only. The steady-state jump loop is **live-validated over hundreds of
-consecutive jumps** — including a cross-galaxy run toward Colonia — while the
-offline suite covers the engine, routing, and step library against recorded data
-and fakes. Docking and the rarer recovery paths are still under active live
-validation, there are open edges that can occasionally strand a run, and the
-combat and trading packages are Phase-1 scaffolds that register nothing yet. No
-finished-product claims — a working experiment that now actually flies.
+### What actually works
+
+Stated plainly, because "alpha" covers too much ground. **The jump loop is the
+finished part.** Everything else ranges from partially validated to not built.
+
+| Subsystem | State |
+|---|---|
+| **A→B jump loop** — arrival, traversal, orient, jump, scoop, honk | ✅ **Works, and works well.** Live-validated over hundreds of consecutive jumps, including a cross-galaxy run toward Colonia and a ~24h run on stream. This is the reason the project exists. |
+| **Real-time recovery** — star-smack, connection-error, FSD malfunction, obstruction get-around, never-strand re-dispatch | ✅ Exercised live alongside the jump loop; the rarer branches see less traffic. |
+| **Docking / route completion** | 🟡 Under live validation. Works, with open edges that can occasionally strand a run. |
+| **In-system body tour** — `ed-explore` | ❌ **Does not work.** In live testing every body timed out at 120s with no `AutoScan` — the ship simply never flew to it. Disabled in config and removed from the launcher menu. |
+| **Combat** — `ed-combat` | ❌ **Not implemented.** Phase-1 scaffold; registers nothing. |
+| **Trading** — `ed-trading` | ❌ **Not implemented.** Phase-1 scaffold; registers nothing. |
+
+The offline unit + replay suite covers the engine, routing, step library, and CV
+against recorded data and fakes — but offline green says nothing about the ❌
+rows, which fail (or don't exist) at the point where they meet the live game.
+
+**Further live testing is currently blocked** — the accounts used to develop this
+were banned (see the Terms-of-Service section). The ❌ rows stay exactly as they
+are until that changes. No finished-product claims: one part flies well, the
+rest is honest scaffolding.
 
 ---
 
@@ -138,10 +152,10 @@ The domain packages depend on `ed-core`; `ed-core` depends on `ed-vision`;
 
 ```mermaid
 flowchart TD
-    autojump[ed-autojump exploration harness] --> core[ed-core engine]
-    explore[ed-explore in-system exploration] --> core
-    combat[ed-combat Phase-1 scaffold] --> core
-    trading[ed-trading Phase-1 scaffold] --> core
+    autojump[ed-autojump jump harness -- WORKING] --> core[ed-core engine]
+    explore[ed-explore body tour -- NON-FUNCTIONAL] --> core
+    combat[ed-combat Phase-1 scaffold -- NOT IMPLEMENTED] --> core
+    trading[ed-trading Phase-1 scaffold -- NOT IMPLEMENTED] --> core
     core --> vision[ed-vision pure perception]
 ```
 
@@ -151,11 +165,12 @@ One line of intent per package (all six):
   determination, and the shared flight primitives every domain reuses.
 - **ed-vision** — pure perception: frames in, measurements out; it sends no keys
   and depends on nothing else in the workspace.
-- **ed-autojump** — the exploration harness and the one shippable tool
-  (AGPL-3.0-or-later); it bundles the editable TOML procedures.
+- **ed-autojump** — the jump harness and the one shippable tool
+  (AGPL-3.0-or-later); it bundles the editable TOML procedures. ✅ the working part.
 - **ed-explore** — in-system exploration (body tour and the autoexplore tour).
-- **ed-combat** — combat domain, a Phase-1 scaffold that registers nothing yet.
-- **ed-trading** — trading domain, a Phase-1 scaffold that registers nothing yet.
+  ❌ **non-functional**: the tour never completes a body in live testing.
+- **ed-combat** — combat domain, a Phase-1 scaffold that registers nothing yet. ❌
+- **ed-trading** — trading domain, a Phase-1 scaffold that registers nothing yet. ❌
 
 ---
 
