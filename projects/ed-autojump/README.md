@@ -236,7 +236,7 @@ historical per-step audit is [`docs/ACTION_MEGASHEET.md`](../../docs/ACTION_MEGA
 | Steady-state jump loop (`arrival` / `traversal` + escape + danger filter) | **live-validated — hundreds of consecutive jumps** |
 | Real-time scene monitor (FSDJump / star-smack / connection-error preempts + never-strand re-dispatch) | shipped |
 | `connection_recovery` (server-drop modal → Solo re-enter → re-plot) | shipped — under live validation |
-| `exploration` in-system unexplored body tour | shipped |
+| `exploration` in-system unexplored body tour | **DOES NOT WORK** — code ships, behaviour fails: every body times out at 120s with no `AutoScan`. Disabled in config, removed from the launcher menu. |
 | Fuel scoop (`scoop_refuel`) | shipped — **NOT live-tested** |
 | EDDN publisher (opt-in) | shipped |
 | EDHM detect + vision calibration | shipped |
