@@ -171,6 +171,12 @@ One line of intent per package (all six):
 > provided for **LEARNING PURPOSES ONLY** — as a study of AI-driven workflows
 > against a structured external data source.
 >
+> **This is not hypothetical.** Accounts used to develop and test this project
+> have been actioned by Frontier: **2 confirmed bans, and 2 further accounts
+> suspected.** The consequence described above is the observed outcome of
+> running this software against the live service — not boilerplate. If you run
+> it on an account you care about, expect to lose that account.
+>
 > *Elite Dangerous* was chosen for exactly one reason: it exposes a **unique,
 > highly structured, high-output log format.** The game continuously writes the
 > **Player Journal** (a line-delimited JSON event stream), **Status.json** (a
