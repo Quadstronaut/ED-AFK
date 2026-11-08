@@ -79,8 +79,8 @@ The engine watches the external data source, decides what state the world is
 in, and runs the procedure that matches. For the *Elite Dangerous* fixture it
 flies a repetitive multi-jump loop **and recovers from the things that go wrong
 along the way**: on arrival at a star it idles the throttle, optionally scoops
-fuel, locks the next route hop, clears the geometry, orients (nav-compass coarse
-+ mouse-widget fine), and jumps; at the end of a route it parks or docks. A
+fuel, locks the next route hop, clears the geometry, orients (nav-compass coarse,
+mouse-widget fine), and jumps; at the end of a route it parks or docks. A
 **real-time scene monitor** preempts the running procedure to recover from
 mid-flight events — a fresh system arrival, a star-smack drop back into normal
 space, or a server-drop **CONNECTION ERROR** screen (which it clears and
