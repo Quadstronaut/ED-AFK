@@ -22,7 +22,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
   per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This bullet records the
   design-only round this council ran; NO-GUESSING + fail-closed still bind.)*
 - **NO GUESSING.** Unknown mechanic/bind/journal field/layout not settled in the cited sources →
-  `BLOCKED-ON-KYLE: <question>`. Read repo code/docs AND community ED docs (journal + Status.json schema)
+  `BLOCKED-ON-OPERATOR: <question>`. Read repo code/docs AND community ED docs (journal + Status.json schema)
   before asserting.
 - Honor `no-arbitrary-timed-waits` except where the operator explicitly wrote `wait Ns`.
 
@@ -54,4 +54,4 @@ Design the **section-transition / control-flow machinery** the redesigned flow n
 
 ## Deliverable
 A ratified DESIGN DOC for the transition/branch machinery (mechanism, where it lives, how each section
-hands off, the flag/discriminator reads) + a `BLOCKED-ON-KYLE:` list. Do NOT modify flight code.
+hands off, the flag/discriminator reads) + a `BLOCKED-ON-OPERATOR:` list. Do NOT modify flight code.

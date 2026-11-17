@@ -5,7 +5,7 @@ BEFORE plan/implement (by design) and surfaced blockers instead of guessing.
 Authored 2026-06-08. BC1 resumes once Operator answers the in-game tests below.
 
 The blockers are real and several depend on **unverified ED mechanics** — per the
-standing rule ([[ask-kyle-to-test-game-mechanics]], [[no-assumptions-ever]]), these
+standing rule ([[ask-operator-to-test-game-mechanics]], [[no-assumptions-ever]]), these
 must be tested in-game, not coded against an assumption.
 
 ---

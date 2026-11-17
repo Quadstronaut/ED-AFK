@@ -66,7 +66,7 @@ A NEW core-respecting CLI module. (Placement: a submodule reachable as
 ed_autojump.<x>` invocation pattern and CWD/venv resolution are reused
 verbatim. The IMPLEMENTATION may live in `ed_core` and re-export, identical to
 how `cv_debug_cli` lives in `ed_core` but is invoked via `ed_autojump.cli`.
-**BLOCKED-ON-KYLE #6** picks the exact module home.)
+**BLOCKED-ON-OPERATOR #6** picks the exact module home.)
 
 Subcommands (machine-readable I/O so PS can parse):
 
@@ -106,7 +106,7 @@ python -m ed_autojump.debug fire <id> [--arg NAME=VALUE ...] [--live] [--yes]
     #     interpreter path: run_procedure() on a synthetic single-step Procedure
     #     (preferred — exercises the input_exclusive/exclusive_guard wrap exactly
     #     as a flight does) OR a documented thin call of fn(ctx, **args) that
-    #     reproduces interpreter.py:92-99 byte-for-byte. (BLOCKED-ON-KYLE #5:
+    #     reproduces interpreter.py:92-99 byte-for-byte. (BLOCKED-ON-OPERATOR #5:
     #     which of the two; default = synthetic Procedure, most faithful.)
     #   - kind=keybind → fire the press through the SAME sender the steps use
     #     (sender.press(action)); this is what `step_press` does
@@ -186,7 +186,7 @@ re-implement a keypress, or read the registry's backing dict directly.
   …): default no-ops for a one-shot fire. A step that needs live journal state
   (e.g. `wait_cooldown_clear`) will report it can't confirm and return per its
   own fail-closed contract — acceptable for a manual "does the press fire" test.
-  **BLOCKED-ON-KYLE #4:** whether `fire --live` should also spin up a real
+  **BLOCKED-ON-OPERATOR #4:** whether `fire --live` should also spin up a real
   `JournalTail`/`StatusReader` so event-gated steps can actually complete, or
   stay context-light (a press-only smoke test). Default = context-light.
 
@@ -267,7 +267,7 @@ anything. **Invariant INV-6.**
   safety class, then offers **Dry-run fire** (always) and **LIVE fire**
   (gated, §5). After firing, the captured stdout + PASS/FAIL (by exit code) is
   shown in place.
-- Ordering: **BLOCKED-ON-KYLE #1** (below). The menu is built from an ordered
+- Ordering: **BLOCKED-ON-OPERATOR #1** (below). The menu is built from an ordered
   list the Python layer emits; the ONLY open question is the sort key. Until
   answered, the harness emits registration order and the spec does not commit a
   default.
@@ -299,7 +299,7 @@ Firing a live step/keybind moves the real ship/UI. Guardrails:
      `auto_launch`. These require the foreground gate + an EXTRA explicit
      confirm, and the harness prints a per-step "out of context this will …"
      warning. `engage_jump`/`engage_jump_clearance` (fires the FSD) and
-     `auto_launch` (undocks) are the sharpest. **BLOCKED-ON-KYLE #2** ratifies
+     `auto_launch` (undocks) are the sharpest. **BLOCKED-ON-OPERATOR #2** ratifies
      the exact gated set + whether any are dry-run-ONLY (never live from the
      harness).
    - **press-safe** — single discrete keypress, harmless in the cockpit
@@ -501,7 +501,7 @@ expected; `cv --draw` boxes track the compass/navpanel on-screen.
 
 ---
 
-## 9. BLOCKED-ON-KYLE (every unknown — no guessing)
+## 9. BLOCKED-ON-OPERATOR (every unknown — no guessing)
 
 1. **List ordering (REQ, explicit).** Operator wants entries "in the opposite
    order of what I just listed" — he'd listed pip directions Left, Up, Right,

@@ -6,7 +6,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
 - **DESIGN-ONLY.** Ratified design + Operator-blocker list. *(STATUS 2026-06-18: the no-build clause is LIFTED
   per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This bullet records the
   design-only round this council ran; NO-GUESSING + fail-closed still bind.)*
-- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-KYLE: <question>`. Read docs.
+- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-OPERATOR: <question>`. Read docs.
 - Honor `no-arbitrary-timed-waits` except where the operator explicitly wrote `wait Ns`.
 
 ## Shared context — read FIRST
@@ -32,4 +32,4 @@ against their stated contracts (in the master spec) and FLAG every cross-council
 
 ## Deliverable
 The redesigned ARRIVAL procedure DESIGN — as a proposed `.toml` sketch INSIDE the design doc (do NOT
-write a real procedure file) — + a `BLOCKED-ON-KYLE:` list. Do NOT modify flight code.
+write a real procedure file) — + a `BLOCKED-ON-OPERATOR:` list. Do NOT modify flight code.

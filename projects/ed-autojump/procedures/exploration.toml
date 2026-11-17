@@ -23,7 +23,7 @@
 #   (c) should_abort, checked every step by the interpreter.
 # Any read failure exits the loop and jumps on — never drives blind.
 #
-# BLOCKED-ON-KYLE carried, not resolved:
+# BLOCKED-ON-OPERATOR carried, not resolved:
 #   BK-1  wait_body_scanned gates on the AutoScan seq-advance; confirm AutoScan
 #         (not Scan / FSSBodySignals) is the right per-body edge live.
 #

@@ -8,7 +8,7 @@ DESIGN-ONLY for the flight path: no arrival.toml edit, no live STEP_REGISTRY wir
 ### Files created (all absolute paths)
 
 1. `<repo-root>/.claude/worktrees/wf_a772b12a-a2c-2/docs/superpowers/specs/2026-06-17-c6-exploration-scene-design.md`
-   The deliverable doc: proposed `exploration.toml` sketch (NOT written to disk), the `nav_supercruise_unexplored` loop contract (L0..L6 state machine), the three-way classifier design, the selector-floor `sel` mechanics enforcing INV-3, ENTRY/EXIT reconciled with C2, the Â§F supersession statement, all 9 invariants, and the BLOCKED-ON-KYLE list (B1-B7).
+   The deliverable doc: proposed `exploration.toml` sketch (NOT written to disk), the `nav_supercruise_unexplored` loop contract (L0..L6 state machine), the three-way classifier design, the selector-floor `sel` mechanics enforcing INV-3, ENTRY/EXIT reconciled with C2, the Â§F supersession statement, all 9 invariants, and the BLOCKED-ON-OPERATOR list (B1-B7).
 
 2. `<repo-root>/.claude/worktrees/wf_a772b12a-a2c-2/projects/ed-vision/src/ed_vision/navpanel_icon.py`
    Three-way column-0 icon discriminator, split into PURE decision `classify_icon_features(IconFeatures)->{unexplored,system,body,unknown}` (green-field testable, no cv2) and CV layer `extract_icon_features` (calibration-pending behind B2, raises NotImplementedError) + `classify_row_icon` fail-closed wrapper. Fail-closed ordering: confidence floor first, then box-in-box (>=2 nested contours) before âœ¦ (point-symmetry) before filled-disc (centre fill), else "unknown". Resolves region via `resolve_nav_region` (INV-9).

@@ -1307,7 +1307,7 @@ def step_dock_approach(ctx: StepContext, *, approach_pct: int = 25,
 # (Navigation -> Transactions -> Contacts tab), UI_Right (onto REQUEST DOCKING),
 # UI_Select (press it). NOT the proven ed_core.executor.navpanel.request_docking
 # macro (which brackets an equivalent tail with FocusLeftPanel open + a pin +
-# an extra UI_Select to select the row first) -- see the BLOCKED-ON-KYLE note
+# an extra UI_Select to select the row first) -- see the BLOCKED-ON-OPERATOR note
 # in step_dock_request below.
 _REQUEST_TAIL = ("CycleNextPanel", "CycleNextPanel", "UI_Right", "UI_Select")
 
@@ -1325,7 +1325,7 @@ def step_dock_request(ctx: StepContext, *, settle_s: float = 0.5,
     the throttle is zeroed (autodock will not engage above 0 throttle).
 
     PANEL AMBIGUITY RESOLVED BY OPERATOR (2026-07-03, LIVE class — supersedes
-    the council's BLOCKED-ON-KYLE flag): from the flow's normal state here
+    the council's BLOCKED-ON-OPERATOR flag): from the flow's normal state here
     (panel closed after 4.1), "e>e>d>space will definitely request it but you
     will stay on the nav panel. once the docking request is confirmed accepted,
     throttle 0 and '1' to stop looking at navpanel and the ship will dock
@@ -2280,7 +2280,7 @@ def step_wait_body_scanned(ctx: StepContext, *, poll_s: float = 0.5,
     gate). Blocks until ctx.autoscan_supplier()'s seq COUNTER advances past the
     snapshot taken at entry — the per-body "we reached it and it scanned" edge.
 
-    BLOCKED-ON-KYLE (BK-1): the exact per-body journal edge is live-adjustable.
+    BLOCKED-ON-OPERATOR (BK-1): the exact per-body journal edge is live-adjustable.
     Memory says "AutoScan BodyName = per-body arrival signal"; this gates on the
     autoscan_supplier seq-advance. Confirm AutoScan (not Scan / FSSBodySignals)
     is the right live edge before trusting the count in anger.

@@ -6,8 +6,8 @@ settled game-truths; councils design AGAINST it. **It decides the WHAT; councils
 
 ## STANDING RULES (binding on every council)
 - **NO GUESSING.** Any unknown game behaviour, bind, journal field, or screen layout that isn't settled
-  here or in the cited memories → **flag `BLOCKED-ON-KYLE: <question>`** in the design + ledger. Do NOT
-  invent it. (Ref [[no-assumptions-ever]], [[ask-kyle-to-test-game-mechanics]].)
+  here or in the cited memories → **flag `BLOCKED-ON-OPERATOR: <question>`** in the design + ledger. Do NOT
+  invent it. (Ref [[no-assumptions-ever]], [[ask-operator-to-test-game-mechanics]].)
 - **Read the documentation** — repo code/docs AND community ED references (journal/Status.json schema,
   nav-panel behaviour) before asserting a mechanic.
 - **DESIGN-ONLY / no-build is LIFTED (operator 2026-06-18).** Building is now **authorized** for ratified
@@ -83,7 +83,7 @@ verbal-vs-written contradiction" framing was a **Claude error** and is struck �
 6. `engage_supercruise` (Key_J) — **SETTLED.** Re-enter SC from normal space after the smack; this
    spawns the BLUE/CYAN escape vector the ship ALIGN-AND-HOLDs to `SupercruiseEntry`. This is the SC-entry
    mechanic, **NOT** `engage_jump_clearance` (Key_K, the hyperspace jump-clearance loop). No longer a
-   `BLOCKED-ON-KYLE`.
+   `BLOCKED-ON-OPERATOR`.
 7. `nav_supercruise_star`
 8. → **Traversal**
 
@@ -107,7 +107,7 @@ verbal-vs-written contradiction" framing was a **Claude error** and is struck �
 4. **elif** destination == station →
    1. `nav_supercruise_target` (station row)
    2. wait for the journal entry that drops out of supercruise (`SupercruiseExit`)
-   3. get station name from `Status.json`? journal? — **BLOCKED-ON-KYLE / READ-DOCS:** determine the
+   3. get station name from `Status.json`? journal? — **BLOCKED-ON-OPERATOR / READ-DOCS:** determine the
       authoritative source (do not guess the field).
    4. `boost`
    5. `set_throttle 50`
@@ -115,7 +115,7 @@ verbal-vs-written contradiction" framing was a **Claude error** and is struck �
    7. nav-panel OCR distance to station, loop until **< 7.5 km**
    8. send `E` bind → `wait 0.5s` → send `E` bind → `wait 0.5s` → send `D` bind → send `spacebar` bind →
       `set_throttle 0`  — **(operator-specified exact sequence; implement as written. Confirm each bind
-      exists via binds_validate; flag any missing as BLOCKED-ON-KYLE.)**
+      exists via binds_validate; flag any missing as BLOCKED-ON-OPERATOR.)**
    9. done — autodock takes over
 
 ## CROSS-CUTTING / OPEN QUESTIONS (flag, don't guess)

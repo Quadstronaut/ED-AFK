@@ -18,7 +18,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
   LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This bullet is
   the historical record of the design-only round the council ran; NO-GUESSING + fail-closed below still
   bind.)*
-- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-KYLE: <question>`. Read docs.
+- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-OPERATOR: <question>`. Read docs.
 
 ## Shared context — read FIRST
 - `docs/superpowers/specs/2026-06-17-flow-redesign-MASTER-SPEC.md` (operator intent + settled truths).
@@ -34,7 +34,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
    `SupercruiseEntry`. This is the SC-entry mechanic, **NOT** `engage_jump_clearance` (Key_K, the
    hyperspace jump-clearance loop). The earlier "(enter supercruise)" note vs the
    `engage_jump_clearance` token was resolved in the operator's favour of `engage_supercruise` — it is
-   no longer a `BLOCKED-ON-KYLE`. (`engage_jump_clearance` named here only to mark what was NOT chosen.)
+   no longer a `BLOCKED-ON-OPERATOR`. (`engage_jump_clearance` named here only to mark what was NOT chosen.)
 7. `nav_supercruise_star`
 8. → **Traversal**
 
@@ -52,4 +52,4 @@ from council **C1** — design against their contract and flag assumptions.
 
 ## Deliverable
 The redesigned SMACK procedure DESIGN as a proposed `.toml` sketch inside the doc (no real file) +
-a `BLOCKED-ON-KYLE:` list (the step-6 ambiguity is the headline one). Do NOT modify flight code.
+a `BLOCKED-ON-OPERATOR:` list (the step-6 ambiguity is the headline one). Do NOT modify flight code.
