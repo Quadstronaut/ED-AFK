@@ -23,7 +23,7 @@
 #   tap     atomic keypress, no precondition
 #   vision  closed-loop pitch/yaw + frame capture — EXCLUSIVE, owns input + screen
 
-# BLOCKED-ON-KYLE (carried from C5 design; NOT resolved in this build):
+# BLOCKED-ON-OPERATOR (carried from C5 design; NOT resolved in this build):
 #   B1 inter-scene ENTRY contract (C2-owned) — traversal built standalone here.
 #   B2 should `wait 5s` (idx 3) gate on an at-speed Status/journal signal?
 #      Operator literal kept verbatim.

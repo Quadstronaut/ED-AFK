@@ -20,7 +20,7 @@ edits in the worktree** + a list of every file changed + every doc flagged super
 
 **IS NOT:** a rewrite of history (HISTORICAL/SUPERSEDED docs are only *marked* superseded, never
 re-narrated); a code/flow change (zero non-`.md` edits); an invention of any decision not in the
-locked list (anything else → `BLOCKED-ON-KYLE`, never guessed).
+locked list (anything else → `BLOCKED-ON-OPERATOR`, never guessed).
 
 The single hardest correction is **decision #1**: the C4 smack routine is now LAW, and the prior
 "verbal-vs-written contradiction / DEVIATION-BLOCKED" framing was a **Claude error** that must be
@@ -36,7 +36,7 @@ candidate's own design/answer doc** (NOT a new tracked repo file unless it is th
 1. **FILES-CHANGED** — every doc touched, absolute path, one-line summary of the edit class applied.
 2. **SUPERSEDED-FLAGGED** — every HISTORICAL doc that was confirmed-or-made to carry a superseded
    marker, absolute path, and whether the marker was already present or added.
-3. **BLOCKED-ON-KYLE** — every needed change NOT covered by the locked list (§1.4), surfaced not
+3. **BLOCKED-ON-OPERATOR** — every needed change NOT covered by the locked list (§1.4), surfaced not
    invented.
 
 ### 1.2 In-scope files (AUTHORITATIVE / CURRENT — these get CONTENT edits)
@@ -71,7 +71,7 @@ The reconciliation target set. Every path is under
 
 ### 1.4 The 6 LOCKED operator decisions (the ONLY authorized content changes)
 Verbatim source of authority. A candidate may make exactly the edits these license, plus mechanical
-superseded-marking (§1.5). Anything else → `BLOCKED-ON-KYLE`.
+superseded-marking (§1.5). Anything else → `BLOCKED-ON-OPERATOR`.
 
 - **L1 — SMACK ROUTINE IS LAW.** Resolve C4 `DEVIATION-BLOCKED` → `LOCKED/RESOLVED` everywhere. The
   confirmed law, verbatim and in order: (1) `set_throttle 100` (2) `nav_target_star` (3) `pitch_compass`
@@ -113,13 +113,13 @@ rewrite their bodies. If a historical doc already carries a marker, leave it. Th
 - **INV-2 (frozen file untouched).** `2026-06-18-AUDIT-INVENTORY.md` has zero diff. [executable]
 - **INV-3 (no invention / ground every edit).** Every content change traces to exactly one of L1–L6
   (or §1.5 superseded-marking). A change not so traceable is a guess and is forbidden → must instead
-  be a `BLOCKED-ON-KYLE` line. The candidate's FILES-CHANGED report cites the governing L# per edit.
+  be a `BLOCKED-ON-OPERATOR` line. The candidate's FILES-CHANGED report cites the governing L# per edit.
 - **INV-4 (L1 fully propagated, contradiction framing eradicated).** After the edit, NO in-scope doc
   retains the strings `DEVIATION-BLOCKED`, `DO NOT RE-FIRE` / `DO-NOT-RE-FIRE`, `target NOTHING` /
   `target nothing` (as the smack routine), or "verbal-vs-written contradiction" framing as a LIVE
   status. (Past-tense, struck-through, or "(corrected: was a Claude error)" annotations are
   acceptable — the test checks these tokens are not presented as a current blocker.) Step 6 reads
-  `engage_supercruise` (Key_J) as settled, not as an open `BLOCKED-ON-KYLE`. [executable, see T-3]
+  `engage_supercruise` (Key_J) as settled, not as an open `BLOCKED-ON-OPERATOR`. [executable, see T-3]
 - **INV-5 (L1 keeps the safety guards).** The smack-glare guards (`behind_confirm_reads`,
   `behind_fill_max`) and the escape-vector ALIGN-AND-HOLD-to-`SupercruiseEntry` mechanic remain
   documented in the C4 docs. L1 resolves a STATUS, it does not delete the ship-safety content.
@@ -157,12 +157,12 @@ Line numbers are as-read 2026-06-18 and are guidance, not contracts.
   already the authored 8 steps) but resolve step 6 from `engage_jump_clearance`/BLOCKED to
   `engage_supercruise` (Key_J) settled.
 - `council-briefs/C4-smack-recovery-STAGE0-SPEC.md`: title line 1 "(DESIGN-ONLY)"; §1.2 step 6 line 44
-  "`engage_jump_clearance` … **BLOCKED-ON-KYLE #1 (headline)**"; the whole of §4 "THE STEP-6 CONFLICT";
-  §5 item 1 "BLOCKED-ON-KYLE #1"; AC-3 (line 83) which *requires* step 6 stay unresolved; T-2's
+  "`engage_jump_clearance` … **BLOCKED-ON-OPERATOR #1 (headline)**"; the whole of §4 "THE STEP-6 CONFLICT";
+  §5 item 1 "BLOCKED-ON-OPERATOR #1"; AC-3 (line 83) which *requires* step 6 stay unresolved; T-2's
   `STEP6_BLOCKER_NOT_FLAGGED` assertion (lines 153–154). These now INVERT: step 6 is resolved to
   `engage_supercruise`; the design-only banner is lifted (L5). This file is the densest single edit.
 - `2026-06-17-flow-redesign-MASTER-SPEC.md` §"Smack Recovery" step 6 (lines 75–77): the inline
-  `engage_jump_clearance *(operator note: "enter supercruise")* — **BLOCKED-ON-KYLE**`. Resolve to
+  `engage_jump_clearance *(operator note: "enter supercruise")* — **BLOCKED-ON-OPERATOR**`. Resolve to
   `engage_supercruise` (Key_J), settled.
 - `2026-06-17-flow-redesign-CONSOLIDATED-BLOCKERS.md`: the `### ⚠ C4 SMACK IS DEVIATION-BLOCKED`
   section (lines 51–57); the original §C item 6 (lines 61–63) framing step-6 as an open question; the
@@ -208,7 +208,7 @@ HTML-comment `DESIGN-ONLY (not built/wired)` header marker. Decision: these coun
 HISTORICAL records of a design-only round; the cleanest faithful edit is a top-level note in the
 MASTER-SPEC standing rules (the live source of truth) that DESIGN-ONLY/no-build is LIFTED as of
 2026-06-18, and a one-line status note on each brief/DESIGN pointing to that — NOT a deletion of the
-historical "this council ran design-only" record. **BLOCKED-ON-KYLE candidate** if it is unclear
+historical "this council ran design-only" record. **BLOCKED-ON-OPERATOR candidate** if it is unclear
 whether the operator wants the per-brief bullets rewritten vs annotated: surface it, default to
 annotate-not-delete (preserves the audit trail; INV-7 spirit).
 
@@ -245,10 +245,10 @@ authoritative doc makes the permanent claim, L6 may yield only a confirming line
   in-scope doc recommends blind-keypressing the nav panel as the chosen path or frames CV as too risky
   to pursue (fail-closed fallback language is explicitly allowed). [T-3b/T-8b reviewer + grep]
 - **AC-10 (reporting).** The candidate emits FILES-CHANGED (every touched file + governing L#),
-  SUPERSEDED-FLAGGED, and BLOCKED-ON-KYLE sections; every touched `.md` appears in FILES-CHANGED and
+  SUPERSEDED-FLAGGED, and BLOCKED-ON-OPERATOR sections; every touched `.md` appears in FILES-CHANGED and
   every FILES-CHANGED entry was actually touched. [T-9]
-- **AC-11 (no invention).** Every BLOCKED-ON-KYLE item is a real gap not covered by L1–L6; no content
-  edit lacks an L# justification. A change that should have been BLOCKED-ON-KYLE but was guessed is a
+- **AC-11 (no invention).** Every BLOCKED-ON-OPERATOR item is a real gap not covered by L1–L6; no content
+  edit lacks an L# justification. A change that should have been BLOCKED-ON-OPERATOR but was guessed is a
   **spec-conformance fail → routes to Stage 0**. [reviewer-checked]
 - **AC-12 (historical preserved).** Historical docs (§1.5 set) carry only top-of-file superseded
   markers, no body rewrite. [T-2-bounds + reviewer]
@@ -318,7 +318,7 @@ docs/superpowers/specs/2026-06-17-flow-redesign-CONSOLIDATED-BLOCKERS.md \
 docs/superpowers/specs/council-briefs/C4-smack-recovery.md \
 docs/superpowers/specs/council-briefs/C4-smack-recovery-STAGE0-SPEC.md"
 rg -q -i 'engage_supercruise' $S6DOCS \
-  && ( rg -n -i 'BLOCKED-ON-KYLE.*step.?6|step.?6.*BLOCKED-ON-KYLE|step.?6.*\?' $S6DOCS \
+  && ( rg -n -i 'BLOCKED-ON-OPERATOR.*step.?6|step.?6.*BLOCKED-ON-OPERATOR|step.?6.*\?' $S6DOCS \
        | rg -v -i 'RESOLVED|LOCKED|settled|was|corrected' >/dev/null && echo "STEP6_STILL_OPEN_FAIL" \
        || echo "STEP6_SETTLED" ) \
   || echo "STEP6_VERB_MISSING_FAIL"
@@ -417,7 +417,7 @@ routes to Stage 0**. AC-11 (a guessed edit) is reviewer-judged and is likewise a
   "DESIGN-ONLY … do NOT build" bullet *rewritten* vs *annotated* (pointer to the master-spec lift) is
   not pinned by the locked list. Default per INV-7: annotate-not-delete (preserve the audit trail of
   what each council was told). If a candidate believes the briefs must be rewritten, that is a
-  `BLOCKED-ON-KYLE`, not a unilateral rewrite.
+  `BLOCKED-ON-OPERATOR`, not a unilateral rewrite.
 - **N-2 (historical pip docs).** `2026-06-16-c3-smack-ratified-spec.md` and `DEBUG-MENU-STAGE0-SPEC.md`
   describe pips as "ripped-out" — historically accurate. Per §1.5 these are NOT rewritten; they get a
   superseded/historical marker only if they are in the HISTORICAL set and lack one. They are NOT in
@@ -429,5 +429,5 @@ routes to Stage 0**. AC-11 (a guessed edit) is reviewer-judged and is likewise a
   SCOPE — it is not repo documentation; the task scope is `docs/**/*.md` + README. Do not edit memory.
 - **N-5 (the C4-STAGE0-SPEC is self-referential).** This very spec's sibling
   `C4-smack-recovery-STAGE0-SPEC.md` is BOTH in-scope-to-edit (it carries the struck framing) AND was
-  arbiter-authored. Reconciling it means inverting its step-6 BLOCKED-ON-KYLE and its design-only
+  arbiter-authored. Reconciling it means inverting its step-6 BLOCKED-ON-OPERATOR and its design-only
   banner — the candidate edits it like any other in-scope doc.

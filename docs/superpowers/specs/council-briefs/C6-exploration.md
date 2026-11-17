@@ -6,7 +6,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
 - **DESIGN-ONLY.** Ratified design + Operator-blocker list. *(STATUS 2026-06-18: the no-build clause is LIFTED
   per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This bullet records the
   design-only round this council ran; NO-GUESSING + fail-closed still bind.)*
-- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-KYLE: <question>`. Read docs.
+- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-OPERATOR: <question>`. Read docs.
 
 ## Shared context — read FIRST
 - `docs/superpowers/specs/2026-06-17-flow-redesign-MASTER-SPEC.md` (operator intent + settled truths).
@@ -37,4 +37,4 @@ operator's loop SUPERSEDES the old body_tour; state what is replaced.
 ## Deliverable
 The EXPLORATION scene DESIGN (loop termination logic + the column-0 icon discrimination + scene entry/exit)
 as a proposed `.toml` sketch + the `nav_supercruise_unexplored` loop contract inside the doc (no real
-file) + a `BLOCKED-ON-KYLE:` list. Do NOT modify flight code.
+file) + a `BLOCKED-ON-OPERATOR:` list. Do NOT modify flight code.

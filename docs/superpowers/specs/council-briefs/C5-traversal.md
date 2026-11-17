@@ -7,7 +7,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
   per the MASTER-SPEC standing rules — building is authorized for ratified scenes; C5 Traversal is RATIFIED
   and buildable now. This bullet records the design-only round this council ran; NO-GUESSING + fail-closed
   still bind.)*
-- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-KYLE: <question>`. Read docs.
+- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-OPERATOR: <question>`. Read docs.
 - Honor `no-arbitrary-timed-waits` except where the operator explicitly wrote `wait Ns` (steps 1 & 4).
 
 ## Shared context — read FIRST
@@ -36,7 +36,7 @@ that transition mechanism is council **C2**; design against it and flag assumpti
 
 ## Deliverable
 The TRAVERSAL procedure DESIGN as a proposed `.toml` sketch inside the doc (no real file) +
-a `BLOCKED-ON-KYLE:` list. Do NOT modify flight code.
+a `BLOCKED-ON-OPERATOR:` list. Do NOT modify flight code.
 
 ## ROUND-2 PINNED FIXES (round 1, task ws7q708sc, route_back to Stage 0 — apply these, do not re-litigate)
 - **FACT FIX (T3):** `arrival.toml` `on_required_fail.retry_from` = **`scoop_refuel`** (NOT

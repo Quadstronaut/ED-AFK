@@ -7,7 +7,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
   clause is LIFTED per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This
   bullet records the design-only round this council ran; NO-GUESSING + fail-closed below still bind.)*
 - **NO GUESSING.** Any unknown game-mechanic / bind / journal field / screen layout not settled in the
-  cited sources → flag `BLOCKED-ON-KYLE: <question>` in the design + ledger. Read repo code/docs AND
+  cited sources → flag `BLOCKED-ON-OPERATOR: <question>` in the design + ledger. Read repo code/docs AND
   community ED references (journal & Status.json schema, nav-panel behaviour) before asserting a mechanic.
 - Ship-safety: every new action fails closed; nothing drives blind on an unread frame.
 - Per-ship CV regions (#19): region comes from `navpanel_reader.resolve_nav_region`, not a constant
@@ -41,9 +41,9 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
 - Pinned frames `projects/ed-autojump/tests/fixtures/navpanel/*.png` (populated + unexplored).
 - The operator's detail-page frames are described in the master spec (image #6 = supercruise button
   highlighted/active; image #7 = UNLOCK DESTINATION). **More detail-page frames (LOCK state + exact button
-  positions) are likely needed → flag as BLOCKED-ON-KYLE.**
+  positions) are likely needed → flag as BLOCKED-ON-OPERATOR.**
 
 ## Deliverable
 A ratified DESIGN DOC (modules, action contracts, CV crops + region source, exact key sequences,
 fail-closed behaviour, verification predicate) as your candidate output, + a consolidated
-`BLOCKED-ON-KYLE:` list. The other councils (C3–C7) consume these action contracts. Do NOT modify flight code.
+`BLOCKED-ON-OPERATOR:` list. The other councils (C3–C7) consume these action contracts. Do NOT modify flight code.

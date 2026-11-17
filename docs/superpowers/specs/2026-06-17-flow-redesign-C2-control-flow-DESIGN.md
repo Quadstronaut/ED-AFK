@@ -4,7 +4,7 @@
 ## C2 Control-Flow / Section-Transition â€” DESIGN (DESIGN-ONLY, no flight-code edits, no commit)
 
 Two new files (verified via `git status`: only these, no flight-code touched):
-- **`docs/superpowers/specs/2026-06-17-c2-control-flow-DESIGN.md`** â€” the ratified design doc + BLOCKED-ON-KYLE list.
+- **`docs/superpowers/specs/2026-06-17-c2-control-flow-DESIGN.md`** â€” the ratified design doc + BLOCKED-ON-OPERATOR list.
 - **`projects/ed-autojump/tests/flow/test_c2_section_transition.py`** â€” 29 PURE acceptance tests (no game/CV/network), GREEN against the real `Status`/`_Destination`/`NavRoute` parsers, the settled `_destination_is_local_star`/`_dest_is_named_station` predicates, and the real `ArrivalLatch`. Verified: `29 passed in 0.52s` under both the package config and the repo-root `pytest.ini` (`not requires_game`).
 
 ### THE ONE DECISION (AC1, D4): Python orchestrator in `ed_autojump`, NOT a TOML `goto` step.
@@ -25,7 +25,7 @@ Procâ†’proc transition does not exist in the interpreter/loader/model: `mod
 
 ### Placement (AC8): predicates in ed_core (domain-free); orchestrator in ed_autojump via register_classifier_rule/register_event_route at activate() (no coreâ†’domain import, no lazy register in run_live); consistent with `_STATE_TO_PROC`/`scene_for`.
 
-### BLOCKED-ON-KYLE (AC7): D1 (Status.Destination station schema, LIVE-TEST-GATED â€” undockâ†’plot-to-stationâ†’read Body!=0), D2 (exploration source: body_tour_enabled vs new flag â€” _exploration_mode unwired), D3 (engage_jump_clearance semantics), D4 (transition mechanism ratification), D5 (Explorationâ†’Traversal hand-off via completion), D6 (route_complete_park scoop knob).
+### BLOCKED-ON-OPERATOR (AC7): D1 (Status.Destination station schema, LIVE-TEST-GATED â€” undockâ†’plot-to-stationâ†’read Body!=0), D2 (exploration source: body_tour_enabled vs new flag â€” _exploration_mode unwired), D3 (engage_jump_clearance semantics), D4 (transition mechanism ratification), D5 (Explorationâ†’Traversal hand-off via completion), D6 (route_complete_park scoop knob).
 
 ## ASSUMPTIONS ()
 - Acceptance tests belong under projects/ed-autojump/tests/flow/ (the only collected tests dir with a conftest+FakeSender; projects/ed-core/tests does not exist yet, and pytest.ini skips non-existent testpaths). The test imports ed_core.flow.predicates directly, so it does not need to live in ed-core's tree.

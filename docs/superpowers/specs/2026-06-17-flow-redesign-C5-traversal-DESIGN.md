@@ -9,7 +9,7 @@
 # traversal.toml â€” SKETCH ONLY (C5 design doc, 2026-06-17)
 # Steady-state Aâ†’B hop. Operator-verbatim sequence (master spec Â§"Traversal").
 # Entered via C2's dispatcher mechanism (no goto primitive exists in
-# model/loader/interpreter today â€” see Â§5 BLOCKED-ON-KYLE B1).
+# model/loader/interpreter today â€” see Â§5 BLOCKED-ON-OPERATOR B1).
 #
 # HONK TRACK OMITTED (I2): Arrival owns honking; FSSDiscoveryScan already
 # fired in the Arrival scene. A re-subscribed honk track here would call
@@ -119,16 +119,16 @@ Both `wait` steps are **operator-chosen pacing â€” NOT success/failure gate
 
 **`wait 5s` (index 0):**
 - Classification: **operator-chosen pacing**. Provides settle time for the SC scene to stabilize after entry from Arrival / Smack / Exploration before pressing `TargetNextRouteSystem`.
-- Event-gate flag (B2, REQUIRED): FLAG: Should this wait gate on a specific SC-assist release signal or SC-stable status rather than a fixed 5s? The 5s is the operator's authored value and is preserved in the sketch regardless. Whether 5s is sufficient for all three entry sources (post-orbit Arrival, Smack Recovery SC-acquired state, Exploration exit) is C2/C4-owned. **BLOCKED-ON-KYLE: B3** (see Â§5).
+- Event-gate flag (B2, REQUIRED): FLAG: Should this wait gate on a specific SC-assist release signal or SC-stable status rather than a fixed 5s? The 5s is the operator's authored value and is preserved in the sketch regardless. Whether 5s is sufficient for all three entry sources (post-orbit Arrival, Smack Recovery SC-acquired state, Exploration exit) is C2/C4-owned. **BLOCKED-ON-OPERATOR: B3** (see Â§5).
 - Per [[no-arbitrary-timed-waits]] in MEMORY.md: this wait does NOT gate success or failure â€” it is passive pacing. Permitted because the operator wrote it explicitly.
 
 **`wait 3s` (index 3):**
 - Classification: **operator-chosen pacing**. Provides settle time after `set_throttle 100` before the compass orient loop begins (allowing the ship to build velocity and for the HUD reticle to stabilize at speed).
-- Event-gate flag (B2, REQUIRED): FLAG: Should this gate on a Status.json throttle-confirmed flag or a NavRoute stability signal rather than a fixed 3s? The 3s is the operator's authored value and is preserved in the sketch regardless. Status.json does not expose a "at-speed" flag â€” the closest proxy would be a speed-in-set-speed-band derived from the StatusFlags, which is not a standard check in any existing procedure. **BLOCKED-ON-KYLE: B2** (operator decision on whether 3s is a sufficient post-throttle settle or whether a journal/Status gate exists and is preferred).
+- Event-gate flag (B2, REQUIRED): FLAG: Should this gate on a Status.json throttle-confirmed flag or a NavRoute stability signal rather than a fixed 3s? The 3s is the operator's authored value and is preserved in the sketch regardless. Status.json does not expose a "at-speed" flag â€” the closest proxy would be a speed-in-set-speed-band derived from the StatusFlags, which is not a standard check in any existing procedure. **BLOCKED-ON-OPERATOR: B2** (operator decision on whether 3s is a sufficient post-throttle settle or whether a journal/Status gate exists and is preferred).
 
 ---
 
-### 5. BLOCKED-ON-KYLE LIST
+### 5. BLOCKED-ON-OPERATOR LIST
 
 **B1 â€” C2 ENTRY CONTRACT (CRITICAL)**
 
@@ -139,7 +139,7 @@ ASSUMED ENTRY-STATE CONTRACT (to be confirmed/corrected by C2):
 - The arrival star is already cleared (orbited or sufficiently distant) â€” the `wait 5s` opening assumes this.
 - Throttle state on entry: UNKNOWN. The 5s wait + `target_next_route` opening sequence is assumed correct for all three entry sources. C5 does NOT invent inter-procedure control flow to enforce this.
 
-BLOCKED-ON-KYLE: What is the ship state (in SC? star cleared? throttle level?) on entry from each of the three sources (Arrival, Smack Recovery, Exploration)? Is the `wait 5s â†’ target_next_route` opening sequence correct for ALL three?
+BLOCKED-ON-OPERATOR: What is the ship state (in SC? star cleared? throttle level?) on entry from each of the three sources (Arrival, Smack Recovery, Exploration)? Is the `wait 5s â†’ target_next_route` opening sequence correct for ALL three?
 
 **B2 â€” WAIT EVENT-GATE QUESTION (I7)**
 
@@ -202,7 +202,7 @@ All claims cite live file:line references. No claim rests on memory alone.
 
 ## RISKS (gen-sonnet-2)
 - @{lens=spec-conformance; note=The sketch sets required=false on set_throttle (index 2) following dock_resume.toml's pattern, but dock_resume.toml has no explicit required= annotation on its set_throttle line (line 41) â€” the default is false per model.py:15. If the arbiter reads 'implicit false' as ambiguous and expects an explicit required=false tag, the sketch should be explicit. The sketch is explicit (required=false is not written â€” matching the source pattern of omission). Risk: a strict literal reading could flag the omission as missing evidence.}
-- @{lens=spec-conformance; note=The design states no retry_anchor is needed in traversal. The spec does not require one, but if C2 dispatches traversal from a state where orient_compass could fail while the ship is transitioning from normal space (e.g. Smack-to-Traversal via a brief normal-space window before SC-assist completes), the missing retry_from_if_supercruise could cause the retry lane to run target_next_route (index 1) while still in normal space â€” where it would succeed (press sends) but the SC-entry assumption for the rest of the lane holds. This is B3 (BLOCKED-ON-KYLE), not a known bug, but it is the highest-risk entry path.}
+- @{lens=spec-conformance; note=The design states no retry_anchor is needed in traversal. The spec does not require one, but if C2 dispatches traversal from a state where orient_compass could fail while the ship is transitioning from normal space (e.g. Smack-to-Traversal via a brief normal-space window before SC-assist completes), the missing retry_from_if_supercruise could cause the retry lane to run target_next_route (index 1) while still in normal space â€” where it would succeed (press sends) but the SC-entry assumption for the rest of the lane holds. This is B3 (BLOCKED-ON-OPERATOR), not a known bug, but it is the highest-risk entry path.}
 - @{lens=boundaries; note=The wait 5s (index 0) is classified as operator-chosen pacing and flagged for B3 (Smack->Traversal SC-assist acquire window). If 5s is insufficient for SC-assist to acquire orbit after Smack Recovery, target_next_route (index 1) may press TargetNextRouteSystem while SC-assist is still engaged on the arrival star â€” cancelling the orbit and pointing at the next hop before the star is cleared. This is the exact design tension the 13s orbit-acquire wait in arrival.toml addresses. The 5s vs 13s distinction is a C2/C4 boundary question flagged as B3.}
 - @{lens=failure-recovery; note=The retry lane re-runs wait 3s (index 3) on every retry pass. If orient_compass fails repeatedly (e.g. vision glare or frame-grabber failure), each retry adds 2s (backoff) + the wait at index 1 (TargetNextRouteSystem press duration) + 3s (index 3 wait) + compass loop overhead before hitting the next orient attempt. With max_retries=3, worst-case retry overhead is ~3 * (2 + 3 + orient_timeout) seconds of throttle-at-100 while unoriented. This is an inherited pattern from dock_resume/sc_resume and is not a new risk, but it is the weakest point in the procedure under repeated orient failure.}
 - @{lens=concurrency; note=engage_jump_clearance is registered input_exclusive=True (steps.py:318-319) and the interpreter wraps it in ctx.exclusive_guard() (interpreter.py:92-97). If a parallel track were present (e.g. if a future operator added one), it would be paused during engage_jump_clearance's entire duration including the pitch+burn obstruction moves. Since this design explicitly OMITS parallel_tracks (I2), this is not an active risk â€” but any future addition of a parallel track must account for the exclusive guard duration, which can be multiple poll+pitch+burn cycles under obstruction.}

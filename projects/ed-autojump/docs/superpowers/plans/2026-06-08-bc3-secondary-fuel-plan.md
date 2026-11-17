@@ -185,7 +185,7 @@ The bot needs the human ONLY for the galaxy-map legs (coordinate provision / sea
 
 ---
 
-## 8. OPEN QUESTIONS FOR KYLE
+## 8. OPEN QUESTIONS FOR OPERATOR
 
 (Carried from all three seats; deduplicated; the two material divergences flagged.)
 

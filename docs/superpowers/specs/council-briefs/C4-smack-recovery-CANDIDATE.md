@@ -119,7 +119,7 @@ open blocker. The REJECTED token at step 6 was `engage_jump_clearance`
   (`binds_validate.py`).
 
 This is operator-LOCKED (2026-06-18) and is NOT re-opened. Re-opening step 6 as
-an unresolved BLOCKED-ON-KYLE, or selecting engage_jump_clearance, FAILS
+an unresolved BLOCKED-ON-OPERATOR, or selecting engage_jump_clearance, FAILS
 spec-conformance and routes to Stage 0.
 
 ## 4a. Smack-glare / escape-vector guards preserved (AC-4 / INV-1 / INV-8)
@@ -162,7 +162,7 @@ Status flag:
 - The v7 `{ action = "wait", s = 13.0 }` trajectory-pacing step is GONE (it
   lived in the removed jump tail); no unlabelled `wait Ns =` survives in C4.
 
-## 5. Consolidated BLOCKED-ON-KYLE / BLOCKED-ON-CONTRACT (AC-6 / AC-8)
+## 5. Consolidated BLOCKED-ON-OPERATOR / BLOCKED-ON-CONTRACT (AC-6 / AC-8)
 
 **Step 6 is NOT on this list — it is LOCKED (engage_supercruise).**
 
@@ -178,16 +178,16 @@ Status flag:
   `transition_to(runner,"traversal")` at the smack dispatch site (built,
   `boot_routes.py`). The MARKER form a standalone `.toml` should emit (if any)
   is C2-owned; a `.toml` has no successor field, so C4 emits NO TOML goto.
-- **BLOCKED-ON-KYLE: retry-split + in-SC anchor location** — the v7 retry split
+- **BLOCKED-ON-OPERATOR: retry-split + in-SC anchor location** — the v7 retry split
   ("fail in real space → 0, fail in SC → the hop") is carried as
   `retry_from = "set_throttle"` + `retry_from_if_supercruise =
   "nav_supercruise_star"` + `retry_anchor` on step 7. Confirm the anchor lands
   on `nav_supercruise_star` in the new 8-step shape.
-- **BLOCKED-ON-KYLE: step-7-vs-escape-vector ordering** — is
+- **BLOCKED-ON-OPERATOR: step-7-vs-escape-vector ordering** — is
   `nav_supercruise_star` pressed AFTER `SupercruiseEntry` (current authored
   order), or can SC-assist be armed while the escape-vector charge is still
   live? Authored order kept (7 after 6).
-- **BLOCKED-ON-KYLE: planet-smack vs star-smack parameterization** — are the
+- **BLOCKED-ON-OPERATOR: planet-smack vs star-smack parameterization** — are the
   pitch / escape-vector params identical for `smack_kind=="planet"` vs
   `"star"`? Single param set kept; `smack_kind` is known at entry but unused
   in-body until the operator distinguishes.
@@ -229,7 +229,7 @@ under C1's gate). NO COMMIT by council agents.
 | Test | Target | Why it passes |
 |---|---|---|
 | T-1 | this doc | all 8 step tokens present: `set_throttle`, `nav_target_star`, `pitch_compass`, `target_ahead`, `wait_cooldown_clear`, `engage_supercruise`, `nav_supercruise_star`, `Traversal` |
-| T-2 | this doc | `engage_supercruise` present; step 6 NOT an open BLOCKED-ON-KYLE and NOT engage_jump_clearance (the only engage_jump_clearance mentions are tagged REJECTED/struck) |
+| T-2 | this doc | `engage_supercruise` present; step 6 NOT an open BLOCKED-ON-OPERATOR and NOT engage_jump_clearance (the only engage_jump_clearance mentions are tagged REJECTED/struck) |
 | T-3 | this doc | guards present: `behind_confirm_reads`, `behind_fill_max`, `escape vector`, `SupercruiseEntry` |
 | T-4 | this doc | no unlabelled `wait Ns =`; the removed 13s wait is gone |
 | T-5 | live repo | `binds_validate.py` has distinct `"Supercruise"` / `"Hyperspace"` |

@@ -42,7 +42,7 @@ steps = [
 
 (d) nav_supercruise_star CONTRACT REQUEST TO C1 (Section 3): what arrival expects it to do, success predicate arrival gates on, fail-closed requirement, what arrival does not define.
 
-(e) BLOCKED-ON-KYLE list (Section 7): 8 items:
+(e) BLOCKED-ON-OPERATOR list (Section 7): 8 items:
   BK-1: system vs station Destination discriminator
   BK-2: exploration == active flag source
   BK-3: honk_dscanner parallel_tracks vs step decision (C2)

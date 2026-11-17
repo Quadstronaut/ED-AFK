@@ -33,7 +33,7 @@ C1: nav_supercruise_target/nav_supercruise_star don't exist; design against deta
 == 8. STANDING RULES ==
 no-arbitrary-timed-waits: wait 1s + two wait 0.5s kept as operator literals; SupercruiseExit = event+state gate; <7.5km loop = state gate with bounded backstop + throttle-zero ram-guard. Ship-safety: all NEW steps fail closed, nothing drives on unread frame.
 
-== 9. CONSOLIDATED BLOCKED-ON-KYLE (8 items) ==
+== 9. CONSOLIDATED BLOCKED-ON-OPERATOR (8 items) ==
 station-name source+use; E/E/D/space panel-open+pin; station-distance unit+tab+calibration frame; boost semantics; await-docked/services omission; NFZ->OCR regression; C1 shape; C2 shape. PLUS cite-error: spec Â§6 claims binds_validate is in ed_autojump but it lives at projects/ed-core/src/ed_core/binds_validate.py (REQUIRED_ACTIONS at line 43); brief's Ground-in path is correct.
 
 == 10. .toml SKETCH embedded in doc (NOT a real file). ==

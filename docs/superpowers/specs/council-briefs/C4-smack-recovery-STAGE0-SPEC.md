@@ -3,7 +3,7 @@
 > ✅ **RECONCILED (operator 2026-06-18).** Two status inversions from the original arbiter draft, applied
 > per the locked decisions:
 > - **L1 — step 6 is RESOLVED/LOCKED: `engage_supercruise` (Key_J).** The original "STEP-6 CONFLICT /
->   BLOCKED-ON-KYLE #1 (headline)" framing is **struck** — step 6 is settled (re-enter SC, spawn the
+>   BLOCKED-ON-OPERATOR #1 (headline)" framing is **struck** — step 6 is settled (re-enter SC, spawn the
 >   escape vector, ALIGN-AND-HOLD to `SupercruiseEntry`); it is **NOT** `engage_jump_clearance` (Key_K).
 >   The "DEVIATION-BLOCKED / target-nothing / verbal-vs-written contradiction" framing was a Claude error.
 > - **L5 — DESIGN-ONLY is LIFTED.** Building is authorized for ratified scenes (the master-spec standing
@@ -14,7 +14,7 @@
 > `behind_confirm_reads` / `behind_fill_max`, the escape-vector ALIGN-AND-HOLD ladder) is RETAINED — the
 > resolution settles a status, it does not delete safety.
 
-Arbiter-authored Stage-0 spec, reconciled. Remaining unknowns are still flagged `BLOCKED-ON-KYLE:` /
+Arbiter-authored Stage-0 spec, reconciled. Remaining unknowns are still flagged `BLOCKED-ON-OPERATOR:` /
 `BLOCKED-ON-CONTRACT:` — those are real contract gaps (C1/C2), not the struck framing. Downstream stages
 are judged against this doc.
 
@@ -37,7 +37,7 @@ out of scope here. This scene DEPENDS on it only for entry (the scene never runs
 `smack_kind ∈ {star, planet}` already latched).
 
 DELIVERABLE of C4 = a redesigned `smack_recovery.toml` **sketch inside this doc** that realises the
-operator's authored 8-step flow, plus the consolidated `BLOCKED-ON-KYLE` / `BLOCKED-ON-CONTRACT` list.
+operator's authored 8-step flow, plus the consolidated `BLOCKED-ON-OPERATOR` / `BLOCKED-ON-CONTRACT` list.
 Step 6 is now LOCKED to `engage_supercruise` (Key_J) — no longer the headline blocker.
 
 ---
@@ -100,11 +100,11 @@ Step 6 is now LOCKED to `engage_supercruise` (Key_J) — no longer the headline 
 - **AC-1.** The C4 candidate is a `smack_recovery.toml` SKETCH embedded in the design doc. (Building is now
   authorized per L5; a Stage-1 build candidate MAY also produce the real `.toml` — but the design
   deliverable itself is the embedded sketch + blocker list.)
-- **AC-2.** The sketch realises all 8 authored steps in order, mapping each to a named action (existing or C1-contract), with no invented action that lacks a C1 contract or a `BLOCKED-ON-KYLE`.
+- **AC-2.** The sketch realises all 8 authored steps in order, mapping each to a named action (existing or C1-contract), with no invented action that lacks a C1 contract or a `BLOCKED-ON-OPERATOR`.
 - **AC-3 (REVISED — step 6 is LOCKED).** Step 6 is documented as `engage_supercruise` (Key_J), settled —
   re-enter SC, align-and-hold the spawned escape vector to `SupercruiseEntry`. The doc states explicitly
   that `engage_jump_clearance` (Hyperspace/K) was the rejected token, NOT the chosen action. A candidate
-  that RE-OPENS step 6 as an unresolved `BLOCKED-ON-KYLE`, or picks `engage_jump_clearance`, FAILS
+  that RE-OPENS step 6 as an unresolved `BLOCKED-ON-OPERATOR`, or picks `engage_jump_clearance`, FAILS
   spec-conformance (routes to Stage 0). *(This inverts the original AC-3, which required step 6 stay
   unresolved — that requirement was struck per L1.)*
 - **AC-4.** Every smack-glare guard from the current proc (`behind_confirm_reads`, `behind_fill_max`, the
@@ -114,7 +114,7 @@ Step 6 is now LOCKED to `engage_supercruise` (Key_J) — no longer the headline 
 - **AC-6.** `nav_target_star` / `nav_supercruise_star` are cited as C1 deliverables with a contract-assumption list; the design does not assume capabilities C1 has not published. Unsettled C1 surface → `BLOCKED-ON-CONTRACT(C1)`.
 - **AC-7.** The `→ Traversal` transition is delegated to C2's section-transition mechanism (Python
   orchestrator `transition_to`), not hand-rolled.
-- **AC-8.** A consolidated `BLOCKED-ON-KYLE` / `BLOCKED-ON-CONTRACT` list is present (step 6 is NO LONGER
+- **AC-8.** A consolidated `BLOCKED-ON-OPERATOR` / `BLOCKED-ON-CONTRACT` list is present (step 6 is NO LONGER
   on it) and includes every unknown surfaced in §5.
 - **AC-9.** The design preserves the entry-only escape-vector dependency (INV-5): no in-scene call to the
   escape-vector detector; the scene assumes confirmed entry.
@@ -139,25 +139,25 @@ mechanics (so a builder never substitutes one for the other):
   exclusion zone does NOT produce the escape vector and is wrong by game-truth.
 
 The two use **different binds** (J vs K) and **different game mechanics**; they are not interchangeable.
-The smack-recovery step 6 is the SC re-entry (J). This is no longer a `BLOCKED-ON-KYLE`.
+The smack-recovery step 6 is the SC re-entry (J). This is no longer a `BLOCKED-ON-OPERATOR`.
 
-> **(STRUCK — Claude error.)** ~~BLOCKED-ON-KYLE #1 (HEADLINE): Step 6 says `engage_jump_clearance` but is
+> **(STRUCK — Claude error.)** ~~BLOCKED-ON-OPERATOR #1 (HEADLINE): Step 6 says `engage_jump_clearance` but is
 > annotated "(enter supercruise)"…~~ — RESOLVED above; the routine is law, step 6 is `engage_supercruise`.
 
 ---
 
-## 5. CONSOLIDATED BLOCKED-ON-KYLE / BLOCKED-ON-CONTRACT LIST
+## 5. CONSOLIDATED BLOCKED-ON-OPERATOR / BLOCKED-ON-CONTRACT LIST
 
-1. **(RESOLVED — struck.)** ~~BLOCKED-ON-KYLE #1 (headline): step-6 `engage_jump_clearance` vs "(enter
+1. **(RESOLVED — struck.)** ~~BLOCKED-ON-OPERATOR #1 (headline): step-6 `engage_jump_clearance` vs "(enter
    supercruise)".~~ Step 6 = `engage_supercruise` (Key_J), LOCKED 2026-06-18 (§4). No longer a blocker.
 2. **BLOCKED-ON-CONTRACT(C1).** `nav_target_star` exact contract: idempotent single-lock semantics, the `UNLOCK DESTINATION` already-locked detection, and the `Status.Destination == system` verification predicate must be PUBLISHED by C1 before C4 can pin step 2.
 3. **BLOCKED-ON-CONTRACT(C1).** `nav_supercruise_star` exact contract: detail-page SUPERCRUISE-ASSIST single-press, success predicate (SC-assist active? `SupercruiseEntry`? a HUD CV?), and fail-closed behaviour — needed to pin step 7.
 4. **BLOCKED-ON-CONTRACT(C2).** Section-transition mechanism for `→ Traversal` (step 8) — RESOLVED to the
    Python orchestrator `transition_to(runner, "traversal")`; the exact marker/return form C4 emits is
    pinned at design-merge with C2.
-5. **BLOCKED-ON-KYLE.** Smack-recovery RETRY policy under the new actions: the current proc splits real-space-fail (→ throttle-0/100 restart) vs in-SC-fail (→ hop lock). Does the redesigned 8-step flow keep that split, and where is the in-SC anchor now that the explicit hop-lock step is gone from the authored sequence?
-6. **BLOCKED-ON-KYLE.** Does step 7 `nav_supercruise_star` REPLACE the escape-vector ALIGN-AND-HOLD ladder, or run AFTER it? In the current proc, SC entry happens via the escape-vector dance (step 6, `engage_supercruise`), and `nav_supercruise_star` is a DIFFERENT thing (SC-assist toward the star, already in SC). Confirm the ordering: enter-SC (escape vector) THEN SC-assist-to-star.
-7. **BLOCKED-ON-KYLE.** Planet-smack vs star-smack: `smack_kind` can be `planet` (purple vector). The
+5. **BLOCKED-ON-OPERATOR.** Smack-recovery RETRY policy under the new actions: the current proc splits real-space-fail (→ throttle-0/100 restart) vs in-SC-fail (→ hop lock). Does the redesigned 8-step flow keep that split, and where is the in-SC anchor now that the explicit hop-lock step is gone from the authored sequence?
+6. **BLOCKED-ON-OPERATOR.** Does step 7 `nav_supercruise_star` REPLACE the escape-vector ALIGN-AND-HOLD ladder, or run AFTER it? In the current proc, SC entry happens via the escape-vector dance (step 6, `engage_supercruise`), and `nav_supercruise_star` is a DIFFERENT thing (SC-assist toward the star, already in SC). Confirm the ordering: enter-SC (escape vector) THEN SC-assist-to-star.
+7. **BLOCKED-ON-OPERATOR.** Planet-smack vs star-smack: `smack_kind` can be `planet` (purple vector). The
    master-spec LOCKED note says planet-smack is the same procedure parameterized, EXCEPT the compass is
    usable the whole time (no flip-about — a planet has no superbright glare). Confirm
    `nav_target_star`/`nav_supercruise_star` (star-specific) behaviour for a planet-smack.
@@ -181,9 +181,9 @@ done
 ### T-2 (AC-3, REVISED): step 6 is LOCKED to engage_supercruise, NOT an open blocker.
 ```bash
 DOC="docs/superpowers/specs/council-briefs/C4-smack-recovery-CANDIDATE.md"
-# Step 6 must be engage_supercruise and must NOT be re-opened as a live BLOCKED-ON-KYLE.
+# Step 6 must be engage_supercruise and must NOT be re-opened as a live BLOCKED-ON-OPERATOR.
 grep -qi "engage_supercruise" "$DOC" \
-  && ! ( grep -ni "BLOCKED-ON-KYLE" "$DOC" | grep -i "step.*6\|engage_jump_clearance" | grep -vi "resolved\|locked\|struck\|was\|rejected" ) \
+  && ! ( grep -ni "BLOCKED-ON-OPERATOR" "$DOC" | grep -i "step.*6\|engage_jump_clearance" | grep -vi "resolved\|locked\|struck\|was\|rejected" ) \
   && echo "STEP6_LOCKED_OK" || echo "STEP6_REOPENED_FAIL"
 ```
 

@@ -20,7 +20,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
 - **DESIGN-ONLY.** Ratified design + Operator-blocker list. *(STATUS 2026-06-18: the no-build clause is LIFTED
   per the MASTER-SPEC standing rules — building is authorized for ratified scenes. This bullet records the
   design-only round this council ran; NO-GUESSING + fail-closed still bind.)*
-- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-KYLE: <question>`. Read repo +
+- **NO GUESSING.** Unknown not settled in the cited sources → `BLOCKED-ON-OPERATOR: <question>`. Read repo +
   community ED docs (Status.json + journal schema, request-docking flow) before asserting.
 - Honor `no-arbitrary-timed-waits` except where the operator explicitly wrote `wait Ns`.
 
@@ -34,7 +34,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
 4. **elif** destination == station →
    1. `nav_supercruise_target` (station row)
    2. wait for the journal entry that drops out of supercruise (`SupercruiseExit`)
-   3. get station name from `Status.json` or journal — **BLOCKED-ON-KYLE / READ-DOCS:** determine the
+   3. get station name from `Status.json` or journal — **BLOCKED-ON-OPERATOR / READ-DOCS:** determine the
       AUTHORITATIVE source + exact field (do NOT guess).
    4. `boost`
    5. `set_throttle 50`
@@ -43,7 +43,7 @@ You are a council-v2 instance. **This brief is SELF-CONTAINED and AUTHORITATIVE.
       the live READ layer)
    8. send `E` bind → `wait 0.5s` → send `E` bind → `wait 0.5s` → send `D` bind → send `spacebar` bind →
       `set_throttle 0`  — operator-specified EXACT sequence; design it as written. **Confirm each bind
-      exists via `binds_validate`; flag any missing as BLOCKED-ON-KYLE.** Identify what E/E/D/space map to
+      exists via `binds_validate`; flag any missing as BLOCKED-ON-OPERATOR.** Identify what E/E/D/space map to
       in the ED-AFK preset (UI navigation to request-docking?) from the binds, do not assume.
    9. done — autodock takes over.
 
@@ -61,5 +61,5 @@ branch are council **C2**.
 
 ## Deliverable
 The DOCKING scene DESIGN as a proposed `.toml` sketch inside the doc (no real file) + the bind-mapping
-for E/E/D/space + a `BLOCKED-ON-KYLE:` list (station-name source + any missing bind are the headline ones).
+for E/E/D/space + a `BLOCKED-ON-OPERATOR:` list (station-name source + any missing bind are the headline ones).
 Do NOT modify flight code.
